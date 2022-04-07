@@ -32,5 +32,16 @@ jobs:
         with:
           go-version: ^1.18
 
+      - name: Build
+        run: |
+          export GOAMD64=v3
+          go build -v -trimpath -ldflags '-s -w -buildid=' ./cmd/swgp-go
+
       - name: Test
         run: go test -v -benchmem -bench . ./...
+
+      - name: Upload Binaries
+        uses: actions/upload-artifact@v3
+        with:
+          name: swgp-go-${{ github.sha }}-${{ matrix.os }}-x86-64-v3
+          path: swgp-go*
