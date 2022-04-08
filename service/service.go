@@ -53,7 +53,7 @@ type ServiceConfig struct {
 }
 
 // Start starts all configured server (interface) and client (peer) services.
-func (sc ServiceConfig) Start(logger *zap.Logger) error {
+func (sc *ServiceConfig) Start(logger *zap.Logger) error {
 	sc.logger = logger
 	serverCount := len(sc.Interfaces)
 	clientCount := len(sc.Peers)
@@ -88,7 +88,7 @@ func (sc ServiceConfig) Start(logger *zap.Logger) error {
 }
 
 // Stop stops all running services.
-func (sc ServiceConfig) Stop() {
+func (sc *ServiceConfig) Stop() {
 	for _, s := range sc.services {
 		err := s.Stop()
 		if err != nil {
