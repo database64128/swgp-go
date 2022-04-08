@@ -64,57 +64,38 @@ func ListenUDP(network string, laddr string, fwmark int) (conn *net.UDPConn, err
 	return
 }
 
-type inet4pktinfo struct {
-	cmsghdr unix.Cmsghdr
-	pktinfo unix.Inet4Pktinfo
-}
-
-type inet6pktinfo struct {
-	cmsghdr unix.Cmsghdr
-	pktinfo unix.Inet6Pktinfo
-}
-
 // GetOobForCache filters out irrelevant OOB messages
 // and returns only IP_PKTINFO or IPV6_PKTINFO socket control messages.
 //
 // Errors returned by this function can be safely ignored,
 // or printed as debug logs.
 func GetOobForCache(oob []byte, logger *zap.Logger) ([]byte, error) {
-	for {
-		if len(oob) < unix.SizeofCmsghdr {
-			return nil, nil
-		}
+	msgs, err := unix.ParseSocketControlMessage(oob)
+	if err != nil {
+		return nil, err
+	}
 
-		cmsghdr := (*unix.Cmsghdr)(unsafe.Pointer(&oob))
-
+	for _, msg := range msgs {
 		switch {
-		case cmsghdr.Len == unix.SizeofCmsghdr+unix.SizeofInet4Pktinfo && cmsghdr.Level == unix.IPPROTO_IP && cmsghdr.Type == unix.IP_PKTINFO:
-			pktinfo := (*unix.Inet4Pktinfo)(unsafe.Pointer(&oob[unix.SizeofCmsghdr]))
-			return (*[unix.SizeofCmsghdr + unix.SizeofInet4Pktinfo]byte)(unsafe.Pointer(&inet4pktinfo{
-				cmsghdr: *cmsghdr,
-				pktinfo: unix.Inet4Pktinfo{
-					Ifindex:  pktinfo.Ifindex,
-					Spec_dst: pktinfo.Spec_dst,
-				},
-			}))[:], nil
+		case msg.Header.Level == unix.IPPROTO_IP && msg.Header.Type == unix.IP_PKTINFO && len(msg.Data) >= unix.SizeofInet4Pktinfo:
+			pktinfo := (*unix.Inet4Pktinfo)(unsafe.Pointer(&msg.Data[0]))
+			return unix.PktInfo4(&unix.Inet4Pktinfo{
+				Ifindex:  pktinfo.Ifindex,
+				Spec_dst: pktinfo.Spec_dst,
+			}), nil
 
-		case cmsghdr.Len == unix.SizeofCmsghdr+unix.SizeofInet6Pktinfo && cmsghdr.Level == unix.IPPROTO_IPV6 && cmsghdr.Type == unix.IPV6_PKTINFO:
-			pktinfo := (*unix.Inet6Pktinfo)(unsafe.Pointer(&oob[unix.SizeofCmsghdr]))
-			return (*[unix.SizeofCmsghdr + unix.SizeofInet6Pktinfo]byte)(unsafe.Pointer(&inet6pktinfo{
-				cmsghdr: *cmsghdr,
-				pktinfo: *pktinfo,
-			}))[:], nil
+		case msg.Header.Level == unix.IPPROTO_IPV6 && msg.Header.Type == unix.IPV6_PKTINFO && len(msg.Data) >= unix.SizeofInet6Pktinfo:
+			pktinfo := (*unix.Inet6Pktinfo)(unsafe.Pointer(&msg.Data[0]))
+			return unix.PktInfo6(pktinfo), nil
 
 		default:
 			logger.Debug("Skipping unknown oob control message",
-				zap.Uint64("cmsghdrLen", cmsghdr.Len),
-				zap.Int32("cmsghdrLevel", cmsghdr.Level),
-				zap.Int32("cmsghdrType", cmsghdr.Type),
+				zap.Uint64("cmsghdrLen", msg.Header.Len),
+				zap.Int32("cmsghdrLevel", msg.Header.Level),
+				zap.Int32("cmsghdrType", msg.Header.Type),
 			)
-			if cmsghdr.Len > uint64(len(oob)) {
-				return nil, fmt.Errorf("cmsghdr.Len %d is greater than oob len %d", cmsghdr.Len, len(oob))
-			}
-			oob = oob[cmsghdr.Len:]
 		}
 	}
+
+	return nil, fmt.Errorf("PKTINFO not found in %d control messages", len(msgs))
 }
