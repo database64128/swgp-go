@@ -124,11 +124,20 @@ func (c *client) Start() (err error) {
 		oobBuf := make([]byte, conn.UDPOOBBufferSize)
 
 		for {
-			n, oobn, _, clientAddr, err := c.wgConn.ReadMsgUDPAddrPort(plaintextBuf, oobBuf)
+			n, oobn, flags, clientAddr, err := c.wgConn.ReadMsgUDPAddrPort(plaintextBuf, oobBuf)
 			if err != nil {
 				if errors.Is(err, net.ErrClosed) {
 					break
 				}
+				c.logger.Warn("Failed to read from wgConn",
+					zap.Stringer("service", c),
+					zap.String("wgListen", c.config.WgListen),
+					zap.Error(err),
+				)
+				continue
+			}
+			err = conn.ParseFlagsForError(flags)
+			if err != nil {
 				c.logger.Warn("Failed to read from wgConn",
 					zap.Stringer("service", c),
 					zap.String("wgListen", c.config.WgListen),
@@ -221,7 +230,7 @@ func (c *client) Start() (err error) {
 			}
 
 			oob := oobBuf[:oobn]
-			oobCache, err := conn.GetOobForCache(oob)
+			oobCache, err := conn.GetOobForCache(oob, c.logger)
 			if err != nil {
 				c.logger.Debug("Failed to process OOB from wgConn",
 					zap.Stringer("service", c),
@@ -273,11 +282,22 @@ func (c *client) relayProxyToWg(clientAddr netip.AddrPort, natEntry *clientNatEn
 	oobBuf := make([]byte, conn.UDPOOBBufferSize)
 
 	for {
-		n, oobn, _, raddr, err := natEntry.proxyConn.ReadMsgUDPAddrPort(packetBuf, oobBuf)
+		n, oobn, flags, raddr, err := natEntry.proxyConn.ReadMsgUDPAddrPort(packetBuf, oobBuf)
 		if err != nil {
 			if errors.Is(err, os.ErrDeadlineExceeded) {
 				return
 			}
+			c.logger.Warn("Failed to read from proxyConn",
+				zap.Stringer("service", c),
+				zap.String("wgListen", c.config.WgListen),
+				zap.Stringer("clientAddress", clientAddr),
+				zap.Stringer("proxyAddress", c.proxyAddr),
+				zap.Error(err),
+			)
+			continue
+		}
+		err = conn.ParseFlagsForError(flags)
+		if err != nil {
 			c.logger.Warn("Failed to read from proxyConn",
 				zap.Stringer("service", c),
 				zap.String("wgListen", c.config.WgListen),
@@ -313,7 +333,7 @@ func (c *client) relayProxyToWg(clientAddr netip.AddrPort, natEntry *clientNatEn
 		}
 
 		oob := oobBuf[:oobn]
-		oobCache, err := conn.GetOobForCache(oob)
+		oobCache, err := conn.GetOobForCache(oob, c.logger)
 		if err != nil {
 			c.logger.Debug("Failed to process OOB from proxyConn",
 				zap.Stringer("service", c),

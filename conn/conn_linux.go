@@ -2,20 +2,18 @@ package conn
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net"
 	"syscall"
 	"unsafe"
 
+	"go.uber.org/zap"
 	"golang.org/x/sys/unix"
 )
 
 // UDPOOBBufferSize specifies the size of buffer to allocate for receiving OOB data
 // when calling the ReadMsgUDP method on a *net.UDPConn returned by this package's ListenUDP function.
-const UDPOOBBufferSize = unix.SizeofCmsghdr + unix.SizeofInet6Pktinfo
-
-var ErrEmptyOob = errors.New("length of oob is 0")
+const UDPOOBBufferSize = 128
 
 // ListenUDP wraps Go's net.ListenConfig.ListenPacket and sets socket options on supported platforms.
 //
@@ -66,66 +64,57 @@ func ListenUDP(network string, laddr string, fwmark int) (conn *net.UDPConn, err
 	return
 }
 
+type inet4pktinfo struct {
+	cmsghdr unix.Cmsghdr
+	pktinfo unix.Inet4Pktinfo
+}
+
+type inet6pktinfo struct {
+	cmsghdr unix.Cmsghdr
+	pktinfo unix.Inet6Pktinfo
+}
+
 // GetOobForCache filters out irrelevant OOB messages
 // and returns only IP_PKTINFO or IPV6_PKTINFO socket control messages.
 //
 // Errors returned by this function can be safely ignored,
 // or printed as debug logs.
-func GetOobForCache(clientOob []byte) ([]byte, error) {
-	switch len(clientOob) {
-	case unix.SizeofCmsghdr + unix.SizeofInet4Pktinfo:
-		return getOobForCache4(clientOob), nil
-	case unix.SizeofCmsghdr + unix.SizeofInet6Pktinfo:
-		return getOobForCache6(clientOob), nil
-	case 0:
-		return nil, ErrEmptyOob
-	default:
-		return nil, fmt.Errorf("unknown oob length: %d", len(clientOob))
+func GetOobForCache(oob []byte, logger *zap.Logger) ([]byte, error) {
+	for {
+		if len(oob) < unix.SizeofCmsghdr {
+			return nil, nil
+		}
+
+		cmsghdr := (*unix.Cmsghdr)(unsafe.Pointer(&oob))
+
+		switch {
+		case cmsghdr.Len == unix.SizeofCmsghdr+unix.SizeofInet4Pktinfo && cmsghdr.Level == unix.IPPROTO_IP && cmsghdr.Type == unix.IP_PKTINFO:
+			pktinfo := (*unix.Inet4Pktinfo)(unsafe.Pointer(&oob[unix.SizeofCmsghdr]))
+			return (*[unix.SizeofCmsghdr + unix.SizeofInet4Pktinfo]byte)(unsafe.Pointer(&inet4pktinfo{
+				cmsghdr: *cmsghdr,
+				pktinfo: unix.Inet4Pktinfo{
+					Ifindex:  pktinfo.Ifindex,
+					Spec_dst: pktinfo.Spec_dst,
+				},
+			}))[:], nil
+
+		case cmsghdr.Len == unix.SizeofCmsghdr+unix.SizeofInet6Pktinfo && cmsghdr.Level == unix.IPPROTO_IPV6 && cmsghdr.Type == unix.IPV6_PKTINFO:
+			pktinfo := (*unix.Inet6Pktinfo)(unsafe.Pointer(&oob[unix.SizeofCmsghdr]))
+			return (*[unix.SizeofCmsghdr + unix.SizeofInet6Pktinfo]byte)(unsafe.Pointer(&inet6pktinfo{
+				cmsghdr: *cmsghdr,
+				pktinfo: *pktinfo,
+			}))[:], nil
+
+		default:
+			logger.Debug("Skipping unknown oob control message",
+				zap.Uint64("cmsghdrLen", cmsghdr.Len),
+				zap.Int32("cmsghdrLevel", cmsghdr.Level),
+				zap.Int32("cmsghdrType", cmsghdr.Type),
+			)
+			if cmsghdr.Len > uint64(len(oob)) {
+				return nil, fmt.Errorf("cmsghdr.Len %d is greater than oob len %d", cmsghdr.Len, len(oob))
+			}
+			oob = oob[cmsghdr.Len:]
+		}
 	}
-}
-
-type oob4 struct {
-	cmsghdr unix.Cmsghdr
-	pktinfo unix.Inet4Pktinfo
-}
-
-func getOobForCache4(clientOob4 []byte) []byte {
-	cmsg := (*oob4)(unsafe.Pointer(&clientOob4))
-	if cmsg.cmsghdr.Level == unix.IPPROTO_IP && cmsg.cmsghdr.Type == unix.IP_PKTINFO {
-		return (*[unix.SizeofCmsghdr + unix.SizeofInet4Pktinfo]byte)(unsafe.Pointer(&oob4{
-			cmsghdr: unix.Cmsghdr{
-				Level: unix.IPPROTO_IP,
-				Type:  unix.IP_PKTINFO,
-				Len:   unix.SizeofCmsghdr + unix.SizeofInet4Pktinfo,
-			},
-			pktinfo: unix.Inet4Pktinfo{
-				Ifindex:  cmsg.pktinfo.Ifindex,
-				Spec_dst: cmsg.pktinfo.Spec_dst,
-			},
-		}))[:]
-	}
-	return nil
-}
-
-type oob6 struct {
-	cmsghdr unix.Cmsghdr
-	pktinfo unix.Inet6Pktinfo
-}
-
-func getOobForCache6(clientOob6 []byte) []byte {
-	cmsg := (*oob6)(unsafe.Pointer(&clientOob6))
-	if cmsg.cmsghdr.Level == unix.IPPROTO_IPV6 && cmsg.cmsghdr.Type == unix.IPV6_PKTINFO {
-		return (*[unix.SizeofCmsghdr + unix.SizeofInet6Pktinfo]byte)(unsafe.Pointer(&oob6{
-			cmsghdr: unix.Cmsghdr{
-				Level: unix.IPPROTO_IPV6,
-				Type:  unix.IPV6_PKTINFO,
-				Len:   unix.SizeofCmsghdr + unix.SizeofInet6Pktinfo,
-			},
-			pktinfo: unix.Inet6Pktinfo{
-				Addr:    cmsg.pktinfo.Addr,
-				Ifindex: cmsg.pktinfo.Ifindex,
-			},
-		}))[:]
-	}
-	return nil
 }

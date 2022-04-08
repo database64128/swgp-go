@@ -24,14 +24,14 @@ func ListenUDP(network string, laddr string, fwmark int) (conn *net.UDPConn, err
 	lc := &net.ListenConfig{
 		Control: func(network, address string, c syscall.RawConn) error {
 			return c.Control(func(fd uintptr) {
-				// Set IP_MTU_DISCOVER for both v4 and v6.
-				if err := unix.SetsockoptInt(int(fd), unix.IPPROTO_IP, unix.IP_DONTFRAG, 1); err != nil {
-					serr = fmt.Errorf("failed to set socket option IP_MTU_DISCOVER: %w", err)
-				}
-
-				if network == "udp6" {
+				switch network {
+				case "udp4":
+					if err := unix.SetsockoptInt(int(fd), unix.IPPROTO_IP, unix.IP_DONTFRAG, 1); err != nil {
+						serr = fmt.Errorf("failed to set socket option IP_DONTFRAG: %w", err)
+					}
+				case "udp6":
 					if err := unix.SetsockoptInt(int(fd), unix.IPPROTO_IPV6, unix.IPV6_DONTFRAG, 1); err != nil {
-						serr = fmt.Errorf("failed to set socket option IPV6_MTU_DISCOVER: %w", err)
+						serr = fmt.Errorf("failed to set socket option IPV6_DONTFRAG: %w", err)
 					}
 				}
 			})
