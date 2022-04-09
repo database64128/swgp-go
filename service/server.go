@@ -242,7 +242,7 @@ func (s *server) Start() (err error) {
 			}
 
 			oob := oobBuf[:oobn]
-			oobCache, err := conn.GetOobForCache(oob, s.logger)
+			natEntry.clientOobCache, err = conn.UpdateOobCache(natEntry.clientOobCache, oob, s.logger)
 			if err != nil {
 				s.logger.Debug("Failed to process OOB from proxyConn",
 					zap.Stringer("service", s),
@@ -251,7 +251,6 @@ func (s *server) Start() (err error) {
 					zap.Error(err),
 				)
 			}
-			natEntry.clientOobCache = oobCache
 
 			_, _, err = natEntry.wgConn.WriteMsgUDPAddrPort(wgPacket, natEntry.wgConnOobCache, s.wgAddr)
 			if err != nil {
@@ -325,7 +324,7 @@ func (s *server) relayWgToProxy(clientAddr netip.AddrPort, natEntry *serverNatEn
 		}
 
 		oob := oobBuf[:oobn]
-		oobCache, err := conn.GetOobForCache(oob, s.logger)
+		natEntry.wgConnOobCache, err = conn.UpdateOobCache(natEntry.wgConnOobCache, oob, s.logger)
 		if err != nil {
 			s.logger.Debug("Failed to process OOB from wgConn",
 				zap.Stringer("service", s),
@@ -335,7 +334,6 @@ func (s *server) relayWgToProxy(clientAddr netip.AddrPort, natEntry *serverNatEn
 				zap.Error(err),
 			)
 		}
-		natEntry.wgConnOobCache = oobCache
 
 		swgpPacket, err := s.handler.EncryptZeroCopy(packetBuf, frontOverhead, n, natEntry.maxProxyPacketSize)
 		if err != nil {
