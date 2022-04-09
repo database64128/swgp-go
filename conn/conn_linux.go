@@ -11,17 +11,12 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// UDPOOBBufferSize specifies the size of buffer to allocate for receiving OOB data
-// when calling the ReadMsgUDP method on a *net.UDPConn returned by this package's ListenUDP function.
-const UDPOOBBufferSize = 128
-
 // ListenUDP wraps Go's net.ListenConfig.ListenPacket and sets socket options on supported platforms.
 //
-// On Linux, IP_PKTINFO and IPV6_RECVPKTINFO are set to 1;
+// On Linux and Windows, IP_PKTINFO and IPV6_RECVPKTINFO are set to 1;
 // IP_MTU_DISCOVER, IPV6_MTU_DISCOVER are set to IP_PMTUDISC_DO to disable IP fragmentation to encourage correct MTU settings.
-// SO_MARK is set to user-specified value.
 //
-// On Windows, IP_MTU_DISCOVER, IPV6_MTU_DISCOVER are set to IP_PMTUDISC_DO.
+// On Linux, SO_MARK is set to user-specified value.
 //
 // On macOS and FreeBSD, IP_DONTFRAG, IPV6_DONTFRAG are set to 1 (Don't Fragment).
 func ListenUDP(network string, laddr string, fwmark int) (conn *net.UDPConn, err error, serr error) {
@@ -66,6 +61,9 @@ func ListenUDP(network string, laddr string, fwmark int) (conn *net.UDPConn, err
 
 // GetOobForCache filters out irrelevant OOB messages
 // and returns only IP_PKTINFO or IPV6_PKTINFO socket control messages.
+//
+// IP_PKTINFO and IPV6_PKTINFO socket control messages are only supported
+// on Linux and Windows.
 //
 // Errors returned by this function can be safely ignored,
 // or printed as debug logs.
