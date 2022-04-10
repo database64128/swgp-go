@@ -221,8 +221,9 @@ func (c *client) Start() (err error) {
 					zap.Stringer("proxyAddress", c.proxyAddr),
 				)
 
-				// Update proxyConn read deadline when a handshake initiation message is received.
-				if plaintextBuf[0] == packet.WireGuardMessageTypeHandshakeInitiation {
+				// Update proxyConn read deadline when a handshake initiation/response message is received.
+				switch plaintextBuf[0] {
+				case packet.WireGuardMessageTypeHandshakeInitiation, packet.WireGuardMessageTypeHandshakeResponse:
 					err = natEntry.proxyConn.SetReadDeadline(time.Now().Add(RejectAfterTime))
 					if err != nil {
 						c.logger.Warn("Failed to SetReadDeadline on proxyConn",

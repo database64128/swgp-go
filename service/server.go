@@ -233,8 +233,9 @@ func (s *server) Start() (err error) {
 					zap.Stringer("wgAddress", s.wgAddr),
 				)
 
-				// Update wgConn read deadline when a handshake initiation message is received.
-				if wgPacket[0] == packet.WireGuardMessageTypeHandshakeInitiation {
+				// Update wgConn read deadline when a handshake initiation/response message is received.
+				switch wgPacket[0] {
+				case packet.WireGuardMessageTypeHandshakeInitiation, packet.WireGuardMessageTypeHandshakeResponse:
 					err = natEntry.wgConn.SetReadDeadline(time.Now().Add(RejectAfterTime))
 					if err != nil {
 						s.logger.Warn("Failed to SetReadDeadline on wgConn",
