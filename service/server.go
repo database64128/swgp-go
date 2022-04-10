@@ -200,7 +200,7 @@ func (s *server) Start() (err error) {
 					wgConn: wgConn,
 				}
 
-				if clientAddr.Addr().Is4() {
+				if addr := clientAddr.Addr(); addr.Is4() || addr.Is4In6() {
 					natEntry.maxProxyPacketSize = s.config.MTU - IPv4HeaderLength - UDPHeaderLength
 				} else {
 					natEntry.maxProxyPacketSize = s.config.MTU - IPv6HeaderLength - UDPHeaderLength

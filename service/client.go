@@ -98,7 +98,7 @@ func (c *client) Start() (err error) {
 	}
 
 	// maxProxyPacketSize = MTU - IP header length - UDP header length
-	if c.proxyAddr.Addr().Is4() {
+	if addr := c.proxyAddr.Addr(); addr.Is4() || addr.Is4In6() {
 		c.maxProxyPacketSize = c.config.MTU - IPv4HeaderLength - UDPHeaderLength
 	} else {
 		c.maxProxyPacketSize = c.config.MTU - IPv6HeaderLength - UDPHeaderLength
