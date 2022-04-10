@@ -94,6 +94,14 @@ func (s *server) Start() (err error) {
 		s.wgAddr = rudpaddr.AddrPort()
 	}
 
+	// Workaround for https://github.com/golang/go/issues/52264
+	if s.wgAddr.Addr().Is4() {
+		addr6 := s.wgAddr.Addr().As16()
+		ip := netip.AddrFrom16(addr6)
+		port := s.wgAddr.Port()
+		s.wgAddr = netip.AddrPortFrom(ip, port)
+	}
+
 	// Start listener.
 	var serr error
 	s.proxyConn, err, serr = conn.ListenUDP("udp", s.config.ProxyListen, s.config.ProxyFwmark)

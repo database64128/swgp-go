@@ -89,6 +89,14 @@ func (c *client) Start() (err error) {
 		c.proxyAddr = rudpaddr.AddrPort()
 	}
 
+	// Workaround for https://github.com/golang/go/issues/52264
+	if c.proxyAddr.Addr().Is4() {
+		addr6 := c.proxyAddr.Addr().As16()
+		ip := netip.AddrFrom16(addr6)
+		port := c.proxyAddr.Port()
+		c.proxyAddr = netip.AddrPortFrom(ip, port)
+	}
+
 	// maxProxyPacketSize = MTU - IP header length - UDP header length
 	if c.proxyAddr.Addr().Is4() {
 		c.maxProxyPacketSize = c.config.MTU - IPv4HeaderLength - UDPHeaderLength
