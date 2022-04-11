@@ -35,7 +35,7 @@ jobs:
       - name: Build
         run: |
           export GOAMD64=v3
-          go build -v -trimpath -ldflags '-s -w -buildid=' ./cmd/swgp-go
+          go build -v -trimpath -ldflags '-s -w' ./cmd/swgp-go
 
       - name: Test
         run: go test -v -benchmem -bench . ./...

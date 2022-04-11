@@ -29,14 +29,14 @@ jobs:
                 package-windows-x86-64-v3 \
                 package-windows-arm64
 
-          env GOAMD64=v2 go build -v -trimpath -ldflags '-s -w -buildid=' -o package-archlinux-x86-64-v2/ ./cmd/swgp-go
-          env GOAMD64=v3 go build -v -trimpath -ldflags '-s -w -buildid=' -o package-archlinux-x86-64-v3/ ./cmd/swgp-go
-          env CGO_ENABLED=0 GOAMD64=v2 go build -v -trimpath -ldflags '-s -w -buildid=' -o package-linux-x86-64-v2/ ./cmd/swgp-go
-          env CGO_ENABLED=0 GOAMD64=v3 go build -v -trimpath -ldflags '-s -w -buildid=' -o package-linux-x86-64-v3/ ./cmd/swgp-go
-          env CGO_ENABLED=0 GOARCH=arm64 go build -v -trimpath -ldflags '-s -w -buildid=' -o package-linux-arm64/ ./cmd/swgp-go
-          env CGO_ENABLED=0 GOAMD64=v2 GOOS=windows go build -v -trimpath -ldflags '-s -w -buildid=' -o package-windows-x86-64-v2/ ./cmd/swgp-go
-          env CGO_ENABLED=0 GOAMD64=v3 GOOS=windows go build -v -trimpath -ldflags '-s -w -buildid=' -o package-windows-x86-64-v3/ ./cmd/swgp-go
-          env CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -v -trimpath -ldflags '-s -w -buildid=' -o package-windows-arm64/ ./cmd/swgp-go
+          env GOAMD64=v2 go build -v -trimpath -ldflags '-s -w' -o package-archlinux-x86-64-v2/ ./cmd/swgp-go
+          env GOAMD64=v3 go build -v -trimpath -ldflags '-s -w' -o package-archlinux-x86-64-v3/ ./cmd/swgp-go
+          env CGO_ENABLED=0 GOAMD64=v2 go build -v -trimpath -ldflags '-s -w' -o package-linux-x86-64-v2/ ./cmd/swgp-go
+          env CGO_ENABLED=0 GOAMD64=v3 go build -v -trimpath -ldflags '-s -w' -o package-linux-x86-64-v3/ ./cmd/swgp-go
+          env CGO_ENABLED=0 GOARCH=arm64 go build -v -trimpath -ldflags '-s -w' -o package-linux-arm64/ ./cmd/swgp-go
+          env CGO_ENABLED=0 GOAMD64=v2 GOOS=windows go build -v -trimpath -ldflags '-s -w' -o package-windows-x86-64-v2/ ./cmd/swgp-go
+          env CGO_ENABLED=0 GOAMD64=v3 GOOS=windows go build -v -trimpath -ldflags '-s -w' -o package-windows-x86-64-v3/ ./cmd/swgp-go
+          env CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -v -trimpath -ldflags '-s -w' -o package-windows-arm64/ ./cmd/swgp-go
 
       - name: Get version
         id: get_version
