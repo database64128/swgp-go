@@ -27,10 +27,18 @@ type ClientConfig struct {
 	MTU           int    `json:"mtu"`
 }
 
+// clientQueuedPacket stores an unencrypted wg packet.
+type clientQueuedPacket struct {
+	bufp   *[]byte
+	start  int
+	length int
+}
+
 type clientNatEntry struct {
 	clientOobCache    []byte
 	proxyConn         *net.UDPConn
 	proxyConnOobCache []byte
+	proxyConnSendCh   chan clientQueuedPacket
 }
 
 type client struct {
@@ -42,6 +50,7 @@ type client struct {
 	proxyAddr netip.AddrPort
 
 	maxProxyPacketSize int
+	packetBufPool      *sync.Pool
 
 	mu    sync.RWMutex
 	table map[netip.AddrPort]*clientNatEntry
@@ -108,6 +117,14 @@ func (c *client) Start() (err error) {
 		return fmt.Errorf("max proxy packet size %d must be greater than total overhead %d", c.maxProxyPacketSize, overhead)
 	}
 
+	// Initialize packet buffer pool.
+	c.packetBufPool = &sync.Pool{
+		New: func() any {
+			b := make([]byte, c.maxProxyPacketSize)
+			return &b
+		},
+	}
+
 	// Start listener.
 	var serr error
 	c.wgConn, err, serr = conn.ListenUDP("udp", c.config.WgListen, c.config.WgFwmark)
@@ -127,14 +144,17 @@ func (c *client) Start() (err error) {
 	go func() {
 		defer c.wgConn.Close()
 
-		packetBuf := make([]byte, c.maxProxyPacketSize)
-		plaintextBuf := packetBuf[frontOverhead : c.maxProxyPacketSize-rearOverhead]
 		oobBuf := make([]byte, conn.UDPOOBBufferSize)
 
 		for {
+			packetBufp := c.packetBufPool.Get().(*[]byte)
+			packetBuf := *packetBufp
+			plaintextBuf := packetBuf[frontOverhead : c.maxProxyPacketSize-rearOverhead]
+
 			n, oobn, flags, clientAddr, err := c.wgConn.ReadMsgUDPAddrPort(plaintextBuf, oobBuf)
 			if err != nil {
 				if errors.Is(err, net.ErrClosed) {
+					c.packetBufPool.Put(packetBufp)
 					break
 				}
 				c.logger.Warn("Failed to read from wgConn",
@@ -142,6 +162,7 @@ func (c *client) Start() (err error) {
 					zap.String("wgListen", c.config.WgListen),
 					zap.Error(err),
 				)
+				c.packetBufPool.Put(packetBufp)
 				continue
 			}
 			err = conn.ParseFlagsForError(flags)
@@ -151,6 +172,7 @@ func (c *client) Start() (err error) {
 					zap.String("wgListen", c.config.WgListen),
 					zap.Error(err),
 				)
+				c.packetBufPool.Put(packetBufp)
 				continue
 			}
 
@@ -167,6 +189,7 @@ func (c *client) Start() (err error) {
 						zap.Stringer("clientAddress", clientAddr),
 						zap.Error(err),
 					)
+					c.packetBufPool.Put(packetBufp)
 					continue
 				}
 				if serr != nil {
@@ -188,11 +211,13 @@ func (c *client) Start() (err error) {
 						zap.Stringer("proxyAddress", c.proxyAddr),
 						zap.Error(err),
 					)
+					c.packetBufPool.Put(packetBufp)
 					continue
 				}
 
 				natEntry = &clientNatEntry{
-					proxyConn: proxyConn,
+					proxyConn:       proxyConn,
+					proxyConnSendCh: make(chan clientQueuedPacket, sendChannelCapacity),
 				}
 
 				c.mu.Lock()
@@ -202,10 +227,14 @@ func (c *client) Start() (err error) {
 				go func() {
 					c.relayProxyToWg(clientAddr, natEntry)
 
+					close(natEntry.proxyConnSendCh)
+
 					c.mu.Lock()
 					delete(c.table, clientAddr)
 					c.mu.Unlock()
 				}()
+
+				go c.relayWgToProxy(clientAddr, natEntry)
 
 				c.logger.Info("New UDP session",
 					zap.Stringer("service", c),
@@ -233,6 +262,7 @@ func (c *client) Start() (err error) {
 							zap.Stringer("proxyAddress", c.proxyAddr),
 							zap.Error(err),
 						)
+						c.packetBufPool.Put(packetBufp)
 						continue
 					}
 				}
@@ -249,26 +279,16 @@ func (c *client) Start() (err error) {
 				)
 			}
 
-			swgpPacket, err := c.handler.EncryptZeroCopy(packetBuf, frontOverhead, n, c.maxProxyPacketSize)
-			if err != nil {
-				c.logger.Warn("Failed to encrypt WireGuard packet",
-					zap.Stringer("service", c),
-					zap.String("wgListen", c.config.WgListen),
-					zap.Stringer("clientAddress", clientAddr),
-					zap.Error(err),
-				)
-				continue
-			}
-
-			_, _, err = natEntry.proxyConn.WriteMsgUDPAddrPort(swgpPacket, natEntry.proxyConnOobCache, c.proxyAddr)
-			if err != nil {
-				c.logger.Warn("Failed to write swgpPacket to proxyConn",
+			select {
+			case natEntry.proxyConnSendCh <- clientQueuedPacket{packetBufp, frontOverhead, n}:
+			default:
+				c.logger.Debug("swgpPacket dropped due to full send channel",
 					zap.Stringer("service", c),
 					zap.String("wgListen", c.config.WgListen),
 					zap.Stringer("clientAddress", clientAddr),
 					zap.Stringer("proxyAddress", c.proxyAddr),
-					zap.Error(err),
 				)
+				c.packetBufPool.Put(packetBufp)
 			}
 		}
 	}()
@@ -281,6 +301,42 @@ func (c *client) Start() (err error) {
 		zap.Int("wgTunnelMTU", (c.maxProxyPacketSize-overhead-WireGuardDataPacketOverhead)&WireGuardDataPacketLengthMask),
 	)
 	return
+}
+
+func (c *client) relayWgToProxy(clientAddr netip.AddrPort, natEntry *clientNatEntry) {
+	for {
+		queuedPacket, ok := <-natEntry.proxyConnSendCh
+		if !ok {
+			break
+		}
+
+		packetBuf := *queuedPacket.bufp
+
+		swgpPacket, err := c.handler.EncryptZeroCopy(packetBuf, queuedPacket.start, queuedPacket.length, c.maxProxyPacketSize)
+		if err != nil {
+			c.logger.Warn("Failed to encrypt WireGuard packet",
+				zap.Stringer("service", c),
+				zap.String("wgListen", c.config.WgListen),
+				zap.Stringer("clientAddress", clientAddr),
+				zap.Error(err),
+			)
+			c.packetBufPool.Put(queuedPacket.bufp)
+			continue
+		}
+
+		_, _, err = natEntry.proxyConn.WriteMsgUDPAddrPort(swgpPacket, natEntry.proxyConnOobCache, c.proxyAddr)
+		if err != nil {
+			c.logger.Warn("Failed to write swgpPacket to proxyConn",
+				zap.Stringer("service", c),
+				zap.String("wgListen", c.config.WgListen),
+				zap.Stringer("clientAddress", clientAddr),
+				zap.Stringer("proxyAddress", c.proxyAddr),
+				zap.Error(err),
+			)
+		}
+
+		c.packetBufPool.Put(queuedPacket.bufp)
+	}
 }
 
 func (c *client) relayProxyToWg(clientAddr netip.AddrPort, natEntry *clientNatEntry) {
