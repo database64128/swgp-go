@@ -141,23 +141,20 @@ func WriteMmsgUDPAddrPort(conn *net.UDPConn, msgvec []Mmsghdr) error {
 		return fmt.Errorf("failed to get syscall.RawConn: %w", err)
 	}
 
-	for processed := 0; processed < len(msgvec); {
-		rawConn.Write(func(fd uintptr) (done bool) {
-			r0, _, e1 := unix.Syscall6(unix.SYS_SENDMMSG, fd, uintptr(unsafe.Pointer(&msgvec[processed])), uintptr(len(msgvec)-processed), 0, 0, 0)
-			if e1 == unix.EAGAIN || e1 == unix.EWOULDBLOCK {
-				return false
-			}
-			processed += int(r0)
-			if e1 != 0 {
-				err = e1
-			}
-			return true
-		})
+	var processed int
 
-		if err != nil {
-			return fmt.Errorf("sendmmsg failed: %w", err)
+	rawConn.Write(func(fd uintptr) (done bool) {
+		r0, _, e1 := unix.Syscall6(unix.SYS_SENDMMSG, fd, uintptr(unsafe.Pointer(&msgvec[processed])), uintptr(len(msgvec)-processed), 0, 0, 0)
+		if e1 == unix.EAGAIN || e1 == unix.EWOULDBLOCK {
+			return false
 		}
-	}
+		if e1 != 0 {
+			err = fmt.Errorf("sendmmsg failed: %w", e1)
+			return true
+		}
+		processed += int(r0)
+		return processed >= len(msgvec)
+	})
 
-	return nil
+	return err
 }
