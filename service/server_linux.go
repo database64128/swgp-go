@@ -71,7 +71,7 @@ func (s *server) relayProxyToWgSendmmsg(clientAddr netip.AddrPort, natEntry *ser
 		}
 
 		// Batch write.
-		if err := conn.WriteMmsgUDPAddrPort(natEntry.wgConn, msgvec); err != nil {
+		if err := conn.Sendmmsg(natEntry.wgConn, msgvec); err != nil {
 			s.logger.Warn("Failed to write wgPacket to wgConn",
 				zap.Stringer("service", s),
 				zap.String("proxyListen", s.config.ProxyListen),

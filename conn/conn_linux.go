@@ -135,7 +135,7 @@ func AddrPortToSockaddr(addrPort netip.AddrPort) (name *byte, namelen uint32) {
 	return
 }
 
-func WriteMmsgUDPAddrPort(conn *net.UDPConn, msgvec []Mmsghdr) error {
+func Sendmmsg(conn *net.UDPConn, msgvec []Mmsghdr) error {
 	rawConn, err := conn.SyscallConn()
 	if err != nil {
 		return fmt.Errorf("failed to get syscall.RawConn: %w", err)
