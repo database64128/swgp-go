@@ -36,7 +36,8 @@ Make sure to use the right MTU for both server and client. To encourage correct 
             "proxyFwmark": 0,
             "wgEndpoint": "[::1]:20221",
             "wgFwmark": 0,
-            "mtu": 1500
+            "mtu": 1500,
+            "disableSendmmsg": false
         }
     ],
     "peers": [
@@ -48,7 +49,8 @@ Make sure to use the right MTU for both server and client. To encourage correct 
             "proxyMode": "zero-overhead",
             "proxyPSK": "sAe5RvzLJ3Q0Ll88QRM1N01dYk83Q4y0rXMP1i4rDmI=",
             "proxyFwmark": 0,
-            "mtu": 1500
+            "mtu": 1500,
+            "disableSendmmsg": false
         }
     ]
 }
