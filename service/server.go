@@ -17,14 +17,15 @@ import (
 // ServerConfig stores configurations for a swgp server service.
 // It may be marshaled as or unmarshaled from JSON.
 type ServerConfig struct {
-	Name        string `json:"name"`
-	ProxyListen string `json:"proxyListen"`
-	ProxyMode   string `json:"proxyMode"`
-	ProxyPSK    []byte `json:"proxyPSK"`
-	ProxyFwmark int    `json:"proxyFwmark"`
-	WgEndpoint  string `json:"wgEndpoint"`
-	WgFwmark    int    `json:"wgFwmark"`
-	MTU         int    `json:"mtu"`
+	Name            string `json:"name"`
+	ProxyListen     string `json:"proxyListen"`
+	ProxyMode       string `json:"proxyMode"`
+	ProxyPSK        []byte `json:"proxyPSK"`
+	ProxyFwmark     int    `json:"proxyFwmark"`
+	WgEndpoint      string `json:"wgEndpoint"`
+	WgFwmark        int    `json:"wgFwmark"`
+	MTU             int    `json:"mtu"`
+	DisableSendmmsg bool   `json:"disableSendmmsg"`
 }
 
 // serverQueuedPacket stores a decrypted wg packet.
@@ -53,16 +54,20 @@ type server struct {
 
 	mu    sync.RWMutex
 	table map[netip.AddrPort]*serverNatEntry
+
+	relayProxyToWg func(clientAddr netip.AddrPort, natEntry *serverNatEntry)
 }
 
 // NewServerService creates a swgp server service from the specified server config.
 // Call the Start method on the returned service to start it.
 func NewServerService(config ServerConfig, logger *zap.Logger) Service {
-	return &server{
+	s := &server{
 		config: config,
 		logger: logger,
 		table:  make(map[netip.AddrPort]*serverNatEntry),
 	}
+	s.relayProxyToWg = s.getRelayProxyToWgFunc(config.DisableSendmmsg)
+	return s
 }
 
 // String implements the Service String method.
@@ -316,7 +321,7 @@ func (s *server) Start() (err error) {
 	return
 }
 
-func (s *server) relayProxyToWg(clientAddr netip.AddrPort, natEntry *serverNatEntry) {
+func (s *server) relayProxyToWgGeneric(clientAddr netip.AddrPort, natEntry *serverNatEntry) {
 	for {
 		queuedPacket, ok := <-natEntry.wgConnSendCh
 		if !ok {

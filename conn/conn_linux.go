@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/netip"
 	"syscall"
 	"unsafe"
 
@@ -59,18 +60,14 @@ func ListenUDP(network string, laddr string, fwmark int) (conn *net.UDPConn, err
 	return
 }
 
-// UpdateOobCache filters out irrelevant OOB messages, saves
-// IP_PKTINFO or IPV6_PKTINFO socket control messages to the OOB cache,
+// On Linux and Windows, UpdateOobCache filters out irrelevant OOB messages,
+// saves IP_PKTINFO or IPV6_PKTINFO socket control messages to the OOB cache,
 // and returns the updated OOB cache slice.
-//
-// IP_PKTINFO and IPV6_PKTINFO socket control messages are only supported
-// on Linux and Windows.
 //
 // The returned OOB cache is unchanged if no relevant control messages
 // are found.
 //
-// Errors returned by this function can be safely ignored,
-// or printed as debug logs.
+// On other platforms, this is a no-op.
 func UpdateOobCache(oobCache, oob []byte, logger *zap.Logger) ([]byte, error) {
 	// Since we only set IP_PKTINFO and/or IPV6_PKTINFO,
 	// Inet4Pktinfo or Inet6Pktinfo should be the first
@@ -99,4 +96,68 @@ func UpdateOobCache(oobCache, oob []byte, logger *zap.Logger) ([]byte, error) {
 	}
 
 	return append(oobCache[:0], oob...), nil
+}
+
+// Source: include/uapi/linux/uio.h
+const UIO_MAXIOV = 1024
+
+type Mmsghdr struct {
+	Msghdr unix.Msghdr
+	Msglen uint32
+}
+
+func AddrPortToSockaddr(addrPort netip.AddrPort) (name *byte, namelen uint32) {
+	addr := addrPort.Addr()
+	port := addrPort.Port()
+
+	if addr.Is4() {
+		rsa4 := unix.RawSockaddrInet4{
+			Family: unix.AF_INET,
+			Addr:   addr.As4(),
+		}
+		p := (*[2]byte)(unsafe.Pointer(&rsa4.Port))
+		p[0] = byte(port >> 8)
+		p[1] = byte(port)
+		name = &(*(*[unix.SizeofSockaddrInet4]byte)(unsafe.Pointer(&rsa4)))[0]
+		namelen = unix.SizeofSockaddrInet4
+	} else {
+		rsa6 := unix.RawSockaddrInet6{
+			Family: unix.AF_INET6,
+			Addr:   addr.As16(),
+		}
+		p := (*[2]byte)(unsafe.Pointer(&rsa6.Port))
+		p[0] = byte(port >> 8)
+		p[1] = byte(port)
+		name = &(*(*[unix.SizeofSockaddrInet6]byte)(unsafe.Pointer(&rsa6)))[0]
+		namelen = unix.SizeofSockaddrInet6
+	}
+
+	return
+}
+
+func WriteMmsgUDPAddrPort(conn *net.UDPConn, msgvec []Mmsghdr) error {
+	rawConn, err := conn.SyscallConn()
+	if err != nil {
+		return fmt.Errorf("failed to get syscall.RawConn: %w", err)
+	}
+
+	for processed := 0; processed < len(msgvec); {
+		rawConn.Write(func(fd uintptr) (done bool) {
+			r0, _, e1 := unix.Syscall6(unix.SYS_SENDMMSG, fd, uintptr(unsafe.Pointer(&msgvec[processed])), uintptr(len(msgvec)-processed), 0, 0, 0)
+			if e1 == unix.EAGAIN || e1 == unix.EWOULDBLOCK {
+				return false
+			}
+			processed += int(r0)
+			if e1 != 0 {
+				err = e1
+			}
+			return true
+		})
+
+		if err != nil {
+			return fmt.Errorf("sendmmsg failed: %w", err)
+		}
+	}
+
+	return nil
 }

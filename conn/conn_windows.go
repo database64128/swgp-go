@@ -93,18 +93,14 @@ var (
 	inet6PktinfoForSize Inet6Pktinfo
 )
 
-// UpdateOobCache filters out irrelevant OOB messages, saves
-// IP_PKTINFO or IPV6_PKTINFO socket control messages to the OOB cache,
+// On Linux and Windows, UpdateOobCache filters out irrelevant OOB messages,
+// saves IP_PKTINFO or IPV6_PKTINFO socket control messages to the OOB cache,
 // and returns the updated OOB cache slice.
-//
-// IP_PKTINFO and IPV6_PKTINFO socket control messages are only supported
-// on Linux and Windows.
 //
 // The returned OOB cache is unchanged if no relevant control messages
 // are found.
 //
-// Errors returned by this function can be safely ignored,
-// or printed as debug logs.
+// On other platforms, this is a no-op.
 func UpdateOobCache(oobCache, oob []byte, logger *zap.Logger) ([]byte, error) {
 	// Since we only set IP_PKTINFO and/or IPV6_PKTINFO,
 	// Inet4Pktinfo or Inet6Pktinfo should be the first
