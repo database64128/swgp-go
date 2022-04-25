@@ -53,6 +53,7 @@ type server struct {
 	packetBufPool *sync.Pool
 
 	mu    sync.RWMutex
+	wg    sync.WaitGroup
 	table map[netip.AddrPort]*serverNatEntry
 
 	relayProxyToWg func(clientAddr netip.AddrPort, natEntry *serverNatEntry)
@@ -141,8 +142,6 @@ func (s *server) Start() (err error) {
 
 	// Main loop.
 	go func() {
-		defer s.proxyConn.Close()
-
 		oobBuf := make([]byte, conn.UDPOOBBufferSize)
 
 		for {
@@ -241,17 +240,25 @@ func (s *server) Start() (err error) {
 				s.table[clientAddr] = natEntry
 				s.mu.Unlock()
 
+				s.wg.Add(2)
+
 				go func() {
 					s.relayWgToProxy(clientAddr, natEntry)
 
 					close(natEntry.wgConnSendCh)
+					natEntry.wgConn.Close()
 
 					s.mu.Lock()
 					delete(s.table, clientAddr)
 					s.mu.Unlock()
+
+					s.wg.Done()
 				}()
 
-				go s.relayProxyToWg(clientAddr, natEntry)
+				go func() {
+					s.relayProxyToWg(clientAddr, natEntry)
+					s.wg.Done()
+				}()
 
 				s.logger.Info("New UDP session",
 					zap.Stringer("service", s),
@@ -330,6 +337,10 @@ func (s *server) relayProxyToWgGeneric(clientAddr netip.AddrPort, natEntry *serv
 
 		_, _, err := natEntry.wgConn.WriteMsgUDPAddrPort(queuedPacket.wgPacket, natEntry.wgConnOobCache, s.wgAddr)
 		if err != nil {
+			if errors.Is(err, net.ErrClosed) {
+				s.packetBufPool.Put(queuedPacket.bufp)
+				break
+			}
 			s.logger.Warn("Failed to write wgPacket to wgConn",
 				zap.Stringer("service", s),
 				zap.String("proxyListen", s.config.ProxyListen),
@@ -344,8 +355,6 @@ func (s *server) relayProxyToWgGeneric(clientAddr netip.AddrPort, natEntry *serv
 }
 
 func (s *server) relayWgToProxy(clientAddr netip.AddrPort, natEntry *serverNatEntry) {
-	defer natEntry.wgConn.Close()
-
 	packetBuf := make([]byte, natEntry.maxProxyPacketSize)
 	oobBuf := make([]byte, conn.UDPOOBBufferSize)
 
@@ -357,7 +366,7 @@ func (s *server) relayWgToProxy(clientAddr netip.AddrPort, natEntry *serverNatEn
 		n, oobn, flags, raddr, err := natEntry.wgConn.ReadMsgUDPAddrPort(plaintextBuf, oobBuf)
 		if err != nil {
 			if errors.Is(err, os.ErrDeadlineExceeded) {
-				return
+				break
 			}
 			s.logger.Warn("Failed to read from wgConn",
 				zap.Stringer("service", s),
@@ -417,6 +426,9 @@ func (s *server) relayWgToProxy(clientAddr netip.AddrPort, natEntry *serverNatEn
 
 		_, _, err = s.proxyConn.WriteMsgUDPAddrPort(swgpPacket, natEntry.clientOobCache, clientAddr)
 		if err != nil {
+			if errors.Is(err, net.ErrClosed) {
+				break
+			}
 			s.logger.Warn("Failed to write swgpPacket to proxyConn",
 				zap.Stringer("service", s),
 				zap.String("proxyListen", s.config.ProxyListen),
@@ -430,15 +442,14 @@ func (s *server) relayWgToProxy(clientAddr netip.AddrPort, natEntry *serverNatEn
 
 // Stop implements the Service Stop method.
 func (s *server) Stop() error {
-	if s.proxyConn != nil {
-		s.proxyConn.Close()
+	if s.proxyConn == nil {
+		return nil
 	}
 
+	s.proxyConn.Close()
+
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	now := time.Now()
-
 	for clientAddr, entry := range s.table {
 		if err := entry.wgConn.SetReadDeadline(now); err != nil {
 			s.logger.Warn("Failed to SetReadDeadline on wgConn",
@@ -450,6 +461,9 @@ func (s *server) Stop() error {
 			)
 		}
 	}
+	s.mu.Unlock()
+
+	s.wg.Wait()
 
 	return nil
 }

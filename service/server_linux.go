@@ -1,6 +1,8 @@
 package service
 
 import (
+	"errors"
+	"net"
 	"net/netip"
 
 	"github.com/database64128/swgp-go/conn"
@@ -72,6 +74,10 @@ func (s *server) relayProxyToWgSendmmsg(clientAddr netip.AddrPort, natEntry *ser
 
 		// Batch write.
 		if err := conn.Sendmmsg(natEntry.wgConn, msgvec); err != nil {
+			if errors.Is(err, net.ErrClosed) {
+				ok = false
+				goto cleanup
+			}
 			s.logger.Warn("Failed to write wgPacket to wgConn",
 				zap.Stringer("service", s),
 				zap.String("proxyListen", s.config.ProxyListen),
