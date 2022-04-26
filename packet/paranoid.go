@@ -86,6 +86,10 @@ func (h *paranoidHandler) EncryptZeroCopy(buf []byte, start, length, maxPacketLe
 
 // DecryptZeroCopy implements the Handler DecryptZeroCopy method.
 func (h *paranoidHandler) DecryptZeroCopy(swgpPacket []byte) (wgPacket []byte, err error) {
+	if len(swgpPacket) < chacha20poly1305.NonceSizeX {
+		return nil, fmt.Errorf("bad swgpPacket length: %d", len(swgpPacket))
+	}
+
 	nonce := swgpPacket[:chacha20poly1305.NonceSizeX]
 	ciphertext := swgpPacket[chacha20poly1305.NonceSizeX:]
 

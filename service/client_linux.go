@@ -206,7 +206,8 @@ func (c *client) relayProxyToWgSendmmsg(clientAddr netip.AddrPort, natEntry *cli
 				continue
 			}
 
-			swgpPacket := unsafe.Slice(msg.Msghdr.Iov.Base, msg.Msglen)
+			packetBuf := unsafe.Slice(msg.Msghdr.Iov.Base, c.maxProxyPacketSize)
+			swgpPacket := packetBuf[:msg.Msglen]
 			wgPacket, err := c.handler.DecryptZeroCopy(swgpPacket)
 			if err != nil {
 				c.logger.Warn("Failed to decrypt swgpPacket",

@@ -66,6 +66,10 @@ func (h *zeroOverheadHandler) EncryptZeroCopy(buf []byte, start, length, maxPack
 
 	swgpPacket = buf[start : start+length+paddingLen]
 
+	if length < 16 {
+		return
+	}
+
 	// Encrypt first 16 bytes.
 	h.cb.Encrypt(swgpPacket[:16], swgpPacket[:16])
 
@@ -80,19 +84,21 @@ func (h *zeroOverheadHandler) EncryptZeroCopy(buf []byte, start, length, maxPack
 
 // DecryptZeroCopy implements the Handler DecryptZeroCopy method.
 func (h *zeroOverheadHandler) DecryptZeroCopy(swgpPacket []byte) (wgPacket []byte, err error) {
+	wgPacket = swgpPacket
+
 	// Decrypt first 16 bytes.
-	h.cb.Decrypt(swgpPacket[:16], swgpPacket[:16])
+	if len(swgpPacket) >= 16 {
+		h.cb.Decrypt(swgpPacket[:16], swgpPacket[:16])
+	}
 
 	// Hide padding.
-	switch swgpPacket[0] {
-	case WireGuardMessageTypeHandshakeInitiation:
+	switch {
+	case swgpPacket[0] == WireGuardMessageTypeHandshakeInitiation && len(swgpPacket) >= WireGuardMessageLengthHandshakeInitiation:
 		wgPacket = swgpPacket[:WireGuardMessageLengthHandshakeInitiation]
-	case WireGuardMessageTypeHandshakeResponse:
+	case swgpPacket[0] == WireGuardMessageTypeHandshakeResponse && len(swgpPacket) >= WireGuardMessageLengthHandshakeResponse:
 		wgPacket = swgpPacket[:WireGuardMessageLengthHandshakeResponse]
-	case WireGuardMessageTypeHandshakeCookieReply:
+	case swgpPacket[0] == WireGuardMessageTypeHandshakeCookieReply && len(swgpPacket) >= WireGuardMessageLengthHandshakeCookieReply:
 		wgPacket = swgpPacket[:WireGuardMessageLengthHandshakeCookieReply]
-	default:
-		wgPacket = swgpPacket
 	}
 
 	return
