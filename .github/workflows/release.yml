@@ -16,7 +16,14 @@ jobs:
       - name: Install Git & Go
         run: pacman -Syu --needed --noconfirm git go
 
-      - uses: actions/checkout@v3
+      - name: Disable Git's stupid security theater
+        run: git config --global safe.directory '*'
+
+      - name: Git Checkout Tag
+        run: |
+          cd ../
+          rm -rf ${{ github.event.repository.name }}
+          git clone --branch ${{ github.ref_name }} https://github.com/${{ github.repository }}.git
 
       - name: Build
         run: |
@@ -38,31 +45,27 @@ jobs:
           env CGO_ENABLED=0 GOAMD64=v3 GOOS=windows go build -v -trimpath -ldflags '-s -w' -o package-windows-x86-64-v3/ ./cmd/swgp-go
           env CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -v -trimpath -ldflags '-s -w' -o package-windows-arm64/ ./cmd/swgp-go
 
-      - name: Get version
-        id: get_version
-        run: echo "::set-output name=VERSION::$(echo $GITHUB_REF | cut -d / -f 3)"
-
       - name: Package
         env:
           ZSTD_CLEVEL: 19
           ZSTD_NBTHREADS: 2
         run: |
           cd package-archlinux-x86-64-v2/
-          tar -acf ../swgp-go-${{ steps.get_version.outputs.VERSION }}-archlinux-x86-64-v2.tar.zst .
+          tar -acf ../swgp-go-${{ github.ref_name }}-archlinux-x86-64-v2.tar.zst .
           cd ../package-archlinux-x86-64-v3/
-          tar -acf ../swgp-go-${{ steps.get_version.outputs.VERSION }}-archlinux-x86-64-v3.tar.zst .
+          tar -acf ../swgp-go-${{ github.ref_name }}-archlinux-x86-64-v3.tar.zst .
           cd ../package-linux-x86-64-v2/
-          tar -acf ../swgp-go-${{ steps.get_version.outputs.VERSION }}-linux-x86-64-v2.tar.zst .
+          tar -acf ../swgp-go-${{ github.ref_name }}-linux-x86-64-v2.tar.zst .
           cd ../package-linux-x86-64-v3/
-          tar -acf ../swgp-go-${{ steps.get_version.outputs.VERSION }}-linux-x86-64-v3.tar.zst .
+          tar -acf ../swgp-go-${{ github.ref_name }}-linux-x86-64-v3.tar.zst .
           cd ../package-linux-arm64/
-          tar -acf ../swgp-go-${{ steps.get_version.outputs.VERSION }}-linux-arm64.tar.zst .
+          tar -acf ../swgp-go-${{ github.ref_name }}-linux-arm64.tar.zst .
           cd ../package-windows-x86-64-v2/
-          tar -acf ../swgp-go-${{ steps.get_version.outputs.VERSION }}-windows-x86-64-v2.tar.zst .
+          tar -acf ../swgp-go-${{ github.ref_name }}-windows-x86-64-v2.tar.zst .
           cd ../package-windows-x86-64-v3/
-          tar -acf ../swgp-go-${{ steps.get_version.outputs.VERSION }}-windows-x86-64-v3.tar.zst .
+          tar -acf ../swgp-go-${{ github.ref_name }}-windows-x86-64-v3.tar.zst .
           cd ../package-windows-arm64/
-          tar -acf ../swgp-go-${{ steps.get_version.outputs.VERSION }}-windows-arm64.tar.zst .
+          tar -acf ../swgp-go-${{ github.ref_name }}-windows-arm64.tar.zst .
 
       - name: Upload release assets
         uses: svenstaro/upload-release-action@v2
