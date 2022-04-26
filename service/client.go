@@ -58,6 +58,7 @@ type client struct {
 	table map[netip.AddrPort]*clientNatEntry
 
 	relayWgToProxy func(clientAddr netip.AddrPort, natEntry *clientNatEntry)
+	relayProxyToWg func(clientAddr netip.AddrPort, natEntry *clientNatEntry)
 }
 
 // NewClientService creates a swgp client service from the specified client config.
@@ -69,6 +70,7 @@ func NewClientService(config ClientConfig, logger *zap.Logger) Service {
 		table:  make(map[netip.AddrPort]*clientNatEntry),
 	}
 	c.relayWgToProxy = c.getRelayWgToProxyFunc(config.DisableSendmmsg)
+	c.relayProxyToWg = c.getRelayProxyToWgFunc(config.DisableSendmmsg)
 	return c
 }
 
@@ -283,7 +285,7 @@ func (c *client) Start() (err error) {
 			oob := oobBuf[:oobn]
 			natEntry.clientOobCache, err = conn.UpdateOobCache(natEntry.clientOobCache, oob, c.logger)
 			if err != nil {
-				c.logger.Debug("Failed to process OOB from wgConn",
+				c.logger.Warn("Failed to process OOB from wgConn",
 					zap.Stringer("service", c),
 					zap.String("wgListen", c.config.WgListen),
 					zap.Stringer("clientAddress", clientAddr),
@@ -355,7 +357,7 @@ func (c *client) relayWgToProxyGeneric(clientAddr netip.AddrPort, natEntry *clie
 	}
 }
 
-func (c *client) relayProxyToWg(clientAddr netip.AddrPort, natEntry *clientNatEntry) {
+func (c *client) relayProxyToWgGeneric(clientAddr netip.AddrPort, natEntry *clientNatEntry) {
 	packetBuf := make([]byte, c.maxProxyPacketSize)
 	oobBuf := make([]byte, conn.UDPOOBBufferSize)
 
@@ -413,7 +415,7 @@ func (c *client) relayProxyToWg(clientAddr netip.AddrPort, natEntry *clientNatEn
 		oob := oobBuf[:oobn]
 		natEntry.proxyConnOobCache, err = conn.UpdateOobCache(natEntry.proxyConnOobCache, oob, c.logger)
 		if err != nil {
-			c.logger.Debug("Failed to process OOB from proxyConn",
+			c.logger.Warn("Failed to process OOB from proxyConn",
 				zap.Stringer("service", c),
 				zap.String("wgListen", c.config.WgListen),
 				zap.Stringer("clientAddress", clientAddr),

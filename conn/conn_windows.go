@@ -107,17 +107,21 @@ func UpdateOobCache(oobCache, oob []byte, logger *zap.Logger) ([]byte, error) {
 	// and only socket control message returned.
 	// Therefore we simplify the process by not looping
 	// through the OOB data.
-	if len(oob) < int(unsafe.Sizeof(cmsghdrForSize)) {
-		return oobCache, fmt.Errorf("oob length %d shorter than cmsghdr length", len(oob))
+	oobLen := len(oob)
+	switch {
+	case oobLen == 0:
+		return oobCache, nil
+	case oobLen < int(unsafe.Sizeof(cmsghdrForSize)):
+		return oobCache, fmt.Errorf("oob length %d shorter than cmsghdr length", oobLen)
 	}
 
 	cmsghdr := (*Cmsghdr)(unsafe.Pointer(&oob[0]))
 
 	switch {
-	case cmsghdr.Level == windows.IPPROTO_IP && cmsghdr.Type == windows.IP_PKTINFO && len(oob) >= int(unsafe.Sizeof(cmsghdrForSize)+unsafe.Sizeof(inet4PktinfoForSize)):
+	case cmsghdr.Level == windows.IPPROTO_IP && cmsghdr.Type == windows.IP_PKTINFO && oobLen >= int(unsafe.Sizeof(cmsghdrForSize)+unsafe.Sizeof(inet4PktinfoForSize)):
 		// pktinfo := (*Inet4Pktinfo)(unsafe.Pointer(&oob[unsafe.Sizeof(cmsghdrForSize)]))
 		// logger.Debug("Matched Inet4Pktinfo", zap.Uint32("ifindex", pktinfo.Ifindex))
-	case cmsghdr.Level == windows.IPPROTO_IPV6 && cmsghdr.Type == windows.IPV6_PKTINFO && len(oob) >= int(unsafe.Sizeof(cmsghdrForSize)+unsafe.Sizeof(inet6PktinfoForSize)):
+	case cmsghdr.Level == windows.IPPROTO_IPV6 && cmsghdr.Type == windows.IPV6_PKTINFO && oobLen >= int(unsafe.Sizeof(cmsghdrForSize)+unsafe.Sizeof(inet6PktinfoForSize)):
 		// pktinfo := (*Inet6Pktinfo)(unsafe.Pointer(&oob[unsafe.Sizeof(cmsghdrForSize)]))
 		// logger.Debug("Matched Inet6Pktinfo", zap.Uint32("ifindex", pktinfo.Ifindex))
 	default:

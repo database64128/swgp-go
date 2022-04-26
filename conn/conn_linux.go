@@ -74,20 +74,24 @@ func UpdateOobCache(oobCache, oob []byte, logger *zap.Logger) ([]byte, error) {
 	// and only socket control message returned.
 	// Therefore we simplify the process by not looping
 	// through the OOB data.
-	if len(oob) < unix.SizeofCmsghdr {
-		return oobCache, fmt.Errorf("oob length %d shorter than cmsghdr length", len(oob))
+	oobLen := len(oob)
+	switch {
+	case oobLen == 0:
+		return oobCache, nil
+	case oobLen < unix.SizeofCmsghdr:
+		return oobCache, fmt.Errorf("oob length %d shorter than cmsghdr length", oobLen)
 	}
 
 	cmsghdr := (*unix.Cmsghdr)(unsafe.Pointer(&oob[0]))
 
 	switch {
-	case cmsghdr.Level == unix.IPPROTO_IP && cmsghdr.Type == unix.IP_PKTINFO && len(oob) >= unix.SizeofCmsghdr+unix.SizeofInet4Pktinfo:
+	case cmsghdr.Level == unix.IPPROTO_IP && cmsghdr.Type == unix.IP_PKTINFO && oobLen >= unix.SizeofCmsghdr+unix.SizeofInet4Pktinfo:
 		pktinfo := (*unix.Inet4Pktinfo)(unsafe.Pointer(&oob[unix.SizeofCmsghdr]))
 		// Clear destination address.
 		pktinfo.Addr = [4]byte{}
 		// logger.Debug("Matched Inet4Pktinfo", zap.Int32("ifindex", pktinfo.Ifindex))
 
-	case cmsghdr.Level == unix.IPPROTO_IPV6 && cmsghdr.Type == unix.IPV6_PKTINFO && len(oob) >= unix.SizeofCmsghdr+unix.SizeofInet6Pktinfo:
+	case cmsghdr.Level == unix.IPPROTO_IPV6 && cmsghdr.Type == unix.IPV6_PKTINFO && oobLen >= unix.SizeofCmsghdr+unix.SizeofInet6Pktinfo:
 		// pktinfo := (*unix.Inet6Pktinfo)(unsafe.Pointer(&oob[unix.SizeofCmsghdr]))
 		// logger.Debug("Matched Inet6Pktinfo", zap.Uint32("ifindex", pktinfo.Ifindex))
 
@@ -107,29 +111,66 @@ type Mmsghdr struct {
 }
 
 func AddrPortToSockaddr(addrPort netip.AddrPort) (name *byte, namelen uint32) {
-	addr := addrPort.Addr()
-	port := addrPort.Port()
-
-	if addr.Is4() {
-		rsa4 := unix.RawSockaddrInet4{
-			Family: unix.AF_INET,
-			Addr:   addr.As4(),
-		}
-		p := (*[2]byte)(unsafe.Pointer(&rsa4.Port))
-		p[0] = byte(port >> 8)
-		p[1] = byte(port)
-		name = &(*(*[unix.SizeofSockaddrInet4]byte)(unsafe.Pointer(&rsa4)))[0]
+	if addrPort.Addr().Is4() {
+		rsa4 := AddrPortToSockaddrInet4(addrPort)
+		name = (*byte)(unsafe.Pointer(&rsa4))
 		namelen = unix.SizeofSockaddrInet4
 	} else {
-		rsa6 := unix.RawSockaddrInet6{
-			Family: unix.AF_INET6,
-			Addr:   addr.As16(),
-		}
-		p := (*[2]byte)(unsafe.Pointer(&rsa6.Port))
-		p[0] = byte(port >> 8)
-		p[1] = byte(port)
-		name = &(*(*[unix.SizeofSockaddrInet6]byte)(unsafe.Pointer(&rsa6)))[0]
+		rsa6 := AddrPortToSockaddrInet6(addrPort)
+		name = (*byte)(unsafe.Pointer(&rsa6))
 		namelen = unix.SizeofSockaddrInet6
+	}
+
+	return
+}
+
+func AddrPortToSockaddrInet4(addrPort netip.AddrPort) unix.RawSockaddrInet4 {
+	addr := addrPort.Addr()
+	port := addrPort.Port()
+	rsa4 := unix.RawSockaddrInet4{
+		Family: unix.AF_INET,
+		Addr:   addr.As4(),
+	}
+	p := (*[2]byte)(unsafe.Pointer(&rsa4.Port))
+	p[0] = byte(port >> 8)
+	p[1] = byte(port)
+	return rsa4
+}
+
+func AddrPortToSockaddrInet6(addrPort netip.AddrPort) unix.RawSockaddrInet6 {
+	addr := addrPort.Addr()
+	port := addrPort.Port()
+	rsa6 := unix.RawSockaddrInet6{
+		Family: unix.AF_INET6,
+		Addr:   addr.As16(),
+	}
+	p := (*[2]byte)(unsafe.Pointer(&rsa6.Port))
+	p[0] = byte(port >> 8)
+	p[1] = byte(port)
+	return rsa6
+}
+
+func Recvmmsg(conn *net.UDPConn, msgvec []Mmsghdr) (n int, err error) {
+	rawConn, err := conn.SyscallConn()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get syscall.RawConn: %w", err)
+	}
+
+	perr := rawConn.Read(func(fd uintptr) (done bool) {
+		r0, _, e1 := unix.Syscall6(unix.SYS_RECVMMSG, fd, uintptr(unsafe.Pointer(&msgvec[0])), uintptr(len(msgvec)), 0, 0, 0)
+		if e1 == unix.EAGAIN || e1 == unix.EWOULDBLOCK {
+			return false
+		}
+		if e1 != 0 {
+			err = fmt.Errorf("recvmmsg failed: %w", e1)
+			return true
+		}
+		n = int(r0)
+		return true
+	})
+
+	if err == nil {
+		err = perr
 	}
 
 	return
@@ -143,7 +184,7 @@ func Sendmmsg(conn *net.UDPConn, msgvec []Mmsghdr) error {
 
 	var processed int
 
-	rawConn.Write(func(fd uintptr) (done bool) {
+	perr := rawConn.Write(func(fd uintptr) (done bool) {
 		r0, _, e1 := unix.Syscall6(unix.SYS_SENDMMSG, fd, uintptr(unsafe.Pointer(&msgvec[processed])), uintptr(len(msgvec)-processed), 0, 0, 0)
 		if e1 == unix.EAGAIN || e1 == unix.EWOULDBLOCK {
 			return false
@@ -155,6 +196,10 @@ func Sendmmsg(conn *net.UDPConn, msgvec []Mmsghdr) error {
 		processed += int(r0)
 		return processed >= len(msgvec)
 	})
+
+	if err == nil {
+		err = perr
+	}
 
 	return err
 }
