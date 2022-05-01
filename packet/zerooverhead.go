@@ -5,8 +5,6 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	mrand "math/rand"
-
-	"lukechampine.com/blake3"
 )
 
 // zeroOverheadHandler encrypts and decrypts the first 16 bytes of packets
@@ -15,8 +13,7 @@ import (
 //
 // zeroOverheadHandler implements the Handler interface.
 type zeroOverheadHandler struct {
-	cb        cipher.Block
-	blake3xof *blake3.OutputReader
+	cb cipher.Block
 }
 
 // NewZeroOverheadHandler creates a zero-overhead handler that
@@ -27,16 +24,8 @@ func NewZeroOverheadHandler(psk []byte) (Handler, error) {
 		return nil, err
 	}
 
-	hKey := make([]byte, 32)
-	_, err = rand.Read(hKey)
-	if err != nil {
-		return nil, err
-	}
-	h := blake3.New(1024, hKey)
-
 	return &zeroOverheadHandler{
-		cb:        cb,
-		blake3xof: h.XOF(),
+		cb: cb,
 	}, nil
 }
 
@@ -76,7 +65,7 @@ func (h *zeroOverheadHandler) EncryptZeroCopy(buf []byte, start, length, maxPack
 	// Add padding.
 	if paddingLen > 0 {
 		padding := swgpPacket[length:]
-		_, err = h.blake3xof.Read(padding)
+		_, err = rand.Read(padding)
 	}
 
 	return

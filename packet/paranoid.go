@@ -9,7 +9,6 @@ import (
 	mrand "math/rand"
 
 	"golang.org/x/crypto/chacha20poly1305"
-	"lukechampine.com/blake3"
 )
 
 // paranoidHandler encrypts and decrypts whole packets using an AEAD cipher.
@@ -18,8 +17,7 @@ import (
 //
 // swgpPacket := 24B nonce + AEAD_Seal(2B payload length + payload + padding)
 type paranoidHandler struct {
-	aead      cipher.AEAD
-	blake3xof *blake3.OutputReader
+	aead cipher.AEAD
 }
 
 // NewParanoidHandler creates a "paranoid" handler that
@@ -30,16 +28,8 @@ func NewParanoidHandler(psk []byte) (Handler, error) {
 		return nil, err
 	}
 
-	hKey := make([]byte, 32)
-	_, err = rand.Read(hKey)
-	if err != nil {
-		return nil, err
-	}
-	h := blake3.New(24, hKey)
-
 	return &paranoidHandler{
-		aead:      aead,
-		blake3xof: h.XOF(),
+		aead: aead,
 	}, nil
 }
 
@@ -70,7 +60,7 @@ func (h *paranoidHandler) EncryptZeroCopy(buf []byte, start, length, maxPacketLe
 	plaintext := buf[start-2 : start+length+paddingLen]
 
 	// Write random nonce.
-	_, err = h.blake3xof.Read(nonce)
+	_, err = rand.Read(nonce)
 	if err != nil {
 		return nil, err
 	}
