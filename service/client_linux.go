@@ -81,10 +81,6 @@ func (c *client) relayWgToProxySendmmsg(clientAddr netip.AddrPort, natEntry *cli
 			msgvec[i].Msghdr.Namelen = namelen
 			msgvec[i].Msghdr.Iov = &iovec[i]
 			msgvec[i].Msghdr.SetIovlen(1)
-			if len(natEntry.proxyConnOobCache) > 0 {
-				msgvec[i].Msghdr.Control = &natEntry.proxyConnOobCache[0]
-				msgvec[i].Msghdr.SetControllen(len(natEntry.proxyConnOobCache))
-			}
 		}
 
 		// Batch write.
@@ -134,7 +130,6 @@ func (c *client) relayProxyToWgSendmmsg(clientAddr netip.AddrPort, natEntry *cli
 	for i := 0; i < conn.UIO_MAXIOV; i++ {
 		var sockaddr unix.RawSockaddrInet6
 		packetBuf := make([]byte, c.maxProxyPacketSize)
-		oobBuf := make([]byte, conn.UDPOOBBufferSize)
 
 		riovec[i].Base = &packetBuf[0]
 		riovec[i].SetLen(c.maxProxyPacketSize)
@@ -143,8 +138,6 @@ func (c *client) relayProxyToWgSendmmsg(clientAddr netip.AddrPort, natEntry *cli
 		rmsgvec[i].Msghdr.Namelen = unix.SizeofSockaddrInet6
 		rmsgvec[i].Msghdr.Iov = &riovec[i]
 		rmsgvec[i].Msghdr.SetIovlen(1)
-		rmsgvec[i].Msghdr.Control = &oobBuf[0]
-		rmsgvec[i].Msghdr.SetControllen(conn.UDPOOBBufferSize)
 
 		smsgvec[i].Msghdr.Name = name
 		smsgvec[i].Msghdr.Namelen = namelen
@@ -172,10 +165,7 @@ func (c *client) relayProxyToWgSendmmsg(clientAddr netip.AddrPort, natEntry *cli
 		nrmsgvec := rmsgvec[:nr]
 		smsgControl := natEntry.clientOobCache
 		smsgControlLen := len(smsgControl)
-		var (
-			oob []byte
-			ns  int
-		)
+		var ns int
 
 		for _, msg := range nrmsgvec {
 			err = conn.ParseFlagsForError(int(msg.Msghdr.Flags))
@@ -220,11 +210,6 @@ func (c *client) relayProxyToWgSendmmsg(clientAddr netip.AddrPort, natEntry *cli
 				continue
 			}
 
-			// Only create slice here. Processing happens after the loop.
-			// This essentially means only the last socket control message
-			// is being processed.
-			oob = unsafe.Slice(msg.Msghdr.Control, msg.Msghdr.Controllen)
-
 			smsgvec[ns].Msghdr.Iov.Base = &wgPacket[0]
 			smsgvec[ns].Msghdr.Iov.SetLen(len(wgPacket))
 			if smsgControlLen > 0 {
@@ -236,17 +221,6 @@ func (c *client) relayProxyToWgSendmmsg(clientAddr netip.AddrPort, natEntry *cli
 
 		if ns == 0 {
 			continue
-		}
-
-		natEntry.proxyConnOobCache, err = conn.UpdateOobCache(natEntry.proxyConnOobCache, oob, c.logger)
-		if err != nil {
-			c.logger.Warn("Failed to process OOB from proxyConn",
-				zap.Stringer("service", c),
-				zap.String("wgListen", c.config.WgListen),
-				zap.Stringer("clientAddress", clientAddr),
-				zap.Stringer("proxyAddress", c.proxyAddr),
-				zap.Error(err),
-			)
 		}
 
 		err = conn.Sendmmsg(c.wgConn, smsgvec[:ns])

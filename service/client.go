@@ -36,10 +36,9 @@ type clientQueuedPacket struct {
 }
 
 type clientNatEntry struct {
-	clientOobCache    []byte
-	proxyConn         *net.UDPConn
-	proxyConnOobCache []byte
-	proxyConnSendCh   chan clientQueuedPacket
+	clientOobCache  []byte
+	proxyConn       *net.UDPConn
+	proxyConnSendCh chan clientQueuedPacket
 }
 
 type client struct {
@@ -135,7 +134,7 @@ func (c *client) Start() (err error) {
 
 	// Start listener.
 	var serr error
-	c.wgConn, err, serr = conn.ListenUDP("udp", c.config.WgListen, c.config.WgFwmark)
+	c.wgConn, err, serr = conn.ListenUDP("udp", c.config.WgListen, true, c.config.WgFwmark)
 	if err != nil {
 		return
 	}
@@ -187,7 +186,7 @@ func (c *client) Start() (err error) {
 			c.mu.RUnlock()
 
 			if natEntry == nil {
-				proxyConn, err, serr := conn.ListenUDP("udp", "", c.config.ProxyFwmark)
+				proxyConn, err, serr := conn.ListenUDP("udp", "", false, c.config.ProxyFwmark)
 				if err != nil {
 					c.logger.Warn("Failed to start UDP listener for new UDP session",
 						zap.Stringer("service", c),
@@ -338,7 +337,7 @@ func (c *client) relayWgToProxyGeneric(clientAddr netip.AddrPort, natEntry *clie
 			continue
 		}
 
-		_, _, err = natEntry.proxyConn.WriteMsgUDPAddrPort(swgpPacket, natEntry.proxyConnOobCache, c.proxyAddr)
+		_, _, err = natEntry.proxyConn.WriteMsgUDPAddrPort(swgpPacket, nil, c.proxyAddr)
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) {
 				c.packetBufPool.Put(queuedPacket.bufp)
@@ -359,10 +358,9 @@ func (c *client) relayWgToProxyGeneric(clientAddr netip.AddrPort, natEntry *clie
 
 func (c *client) relayProxyToWgGeneric(clientAddr netip.AddrPort, natEntry *clientNatEntry) {
 	packetBuf := make([]byte, c.maxProxyPacketSize)
-	oobBuf := make([]byte, conn.UDPOOBBufferSize)
 
 	for {
-		n, oobn, flags, raddr, err := natEntry.proxyConn.ReadMsgUDPAddrPort(packetBuf, oobBuf)
+		n, _, flags, raddr, err := natEntry.proxyConn.ReadMsgUDPAddrPort(packetBuf, nil)
 		if err != nil {
 			if errors.Is(err, os.ErrDeadlineExceeded) {
 				break
@@ -410,18 +408,6 @@ func (c *client) relayProxyToWgGeneric(clientAddr netip.AddrPort, natEntry *clie
 				zap.Error(err),
 			)
 			continue
-		}
-
-		oob := oobBuf[:oobn]
-		natEntry.proxyConnOobCache, err = conn.UpdateOobCache(natEntry.proxyConnOobCache, oob, c.logger)
-		if err != nil {
-			c.logger.Warn("Failed to process OOB from proxyConn",
-				zap.Stringer("service", c),
-				zap.String("wgListen", c.config.WgListen),
-				zap.Stringer("clientAddress", clientAddr),
-				zap.Stringer("proxyAddress", c.proxyAddr),
-				zap.Error(err),
-			)
 		}
 
 		_, _, err = c.wgConn.WriteMsgUDPAddrPort(wgPacket, natEntry.clientOobCache, clientAddr)
