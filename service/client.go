@@ -52,7 +52,7 @@ type client struct {
 	maxProxyPacketSize int
 	packetBufPool      *sync.Pool
 
-	mu    sync.RWMutex
+	mu    sync.Mutex
 	wg    sync.WaitGroup
 	table map[netip.AddrPort]*clientNatEntry
 
@@ -181,10 +181,9 @@ func (c *client) Start() (err error) {
 				continue
 			}
 
-			c.mu.RLock()
-			natEntry := c.table[clientAddr]
-			c.mu.RUnlock()
+			c.mu.Lock()
 
+			natEntry := c.table[clientAddr]
 			if natEntry == nil {
 				proxyConn, err, serr := conn.ListenUDP("udp", "", false, c.config.ProxyFwmark)
 				if err != nil {
@@ -195,6 +194,7 @@ func (c *client) Start() (err error) {
 						zap.Error(err),
 					)
 					c.packetBufPool.Put(packetBufp)
+					c.mu.Unlock()
 					continue
 				}
 				if serr != nil {
@@ -217,6 +217,7 @@ func (c *client) Start() (err error) {
 						zap.Error(err),
 					)
 					c.packetBufPool.Put(packetBufp)
+					c.mu.Unlock()
 					continue
 				}
 
@@ -225,19 +226,15 @@ func (c *client) Start() (err error) {
 					proxyConnSendCh: make(chan clientQueuedPacket, sendChannelCapacity),
 				}
 
-				c.mu.Lock()
 				c.table[clientAddr] = natEntry
-				c.mu.Unlock()
 
 				c.wg.Add(2)
 
 				go func() {
 					c.relayProxyToWg(clientAddr, natEntry)
 
-					close(natEntry.proxyConnSendCh)
-					natEntry.proxyConn.Close()
-
 					c.mu.Lock()
+					close(natEntry.proxyConnSendCh)
 					delete(c.table, clientAddr)
 					c.mu.Unlock()
 
@@ -246,6 +243,7 @@ func (c *client) Start() (err error) {
 
 				go func() {
 					c.relayWgToProxy(clientAddr, natEntry)
+					natEntry.proxyConn.Close()
 					c.wg.Done()
 				}()
 
@@ -276,6 +274,7 @@ func (c *client) Start() (err error) {
 							zap.Error(err),
 						)
 						c.packetBufPool.Put(packetBufp)
+						c.mu.Unlock()
 						continue
 					}
 				}
@@ -303,6 +302,8 @@ func (c *client) Start() (err error) {
 				)
 				c.packetBufPool.Put(packetBufp)
 			}
+
+			c.mu.Unlock()
 		}
 	}()
 
@@ -339,10 +340,6 @@ func (c *client) relayWgToProxyGeneric(clientAddr netip.AddrPort, natEntry *clie
 
 		_, _, err = natEntry.proxyConn.WriteMsgUDPAddrPort(swgpPacket, nil, c.proxyAddr)
 		if err != nil {
-			if errors.Is(err, net.ErrClosed) {
-				c.packetBufPool.Put(queuedPacket.bufp)
-				break
-			}
 			c.logger.Warn("Failed to write swgpPacket to proxyConn",
 				zap.Stringer("service", c),
 				zap.String("wgListen", c.config.WgListen),
