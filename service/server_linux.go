@@ -21,7 +21,7 @@ func (s *server) getRelayProxyToWgFunc(disableSendmmsg bool) func(clientAddr net
 
 func (s *server) relayProxyToWgSendmmsg(clientAddr netip.AddrPort, natEntry *serverNatEntry) {
 	name, namelen := conn.AddrPortToSockaddr(s.wgAddr)
-	dequeuedPackets := make([]serverQueuedPacket, 0, conn.UIO_MAXIOV)
+	dequeuedPackets := make([]queuedPacket, 0, conn.UIO_MAXIOV)
 	iovec := make([]unix.Iovec, 0, conn.UIO_MAXIOV)
 	msgvec := make([]conn.Mmsghdr, 0, conn.UIO_MAXIOV)
 
@@ -29,7 +29,7 @@ func (s *server) relayProxyToWgSendmmsg(clientAddr netip.AddrPort, natEntry *ser
 		// Dequeue packets and append to dequeuedPackets.
 
 		var (
-			dequeuedPacket serverQueuedPacket
+			dequeuedPacket queuedPacket
 			ok             bool
 		)
 
@@ -61,8 +61,10 @@ func (s *server) relayProxyToWgSendmmsg(clientAddr netip.AddrPort, natEntry *ser
 
 		// Add packets to iovec and msgvec.
 		for i, packet := range dequeuedPackets {
-			iovec[i].Base = &packet.wgPacket[0]
-			iovec[i].SetLen(len(packet.wgPacket))
+			packetBuf := *packet.bufp
+
+			iovec[i].Base = &packetBuf[packet.start]
+			iovec[i].SetLen(packet.length)
 
 			msgvec[i].Msghdr.Name = name
 			msgvec[i].Msghdr.Namelen = namelen
@@ -184,7 +186,7 @@ func (s *server) relayWgToProxySendmmsg(clientAddr netip.AddrPort, natEntry *ser
 			}
 
 			packetBuf := unsafe.Slice((*byte)(unsafe.Add(unsafe.Pointer(msg.Msghdr.Iov.Base), -frontOverhead)), natEntry.maxProxyPacketSize)
-			swgpPacket, err := s.handler.EncryptZeroCopy(packetBuf, frontOverhead, int(msg.Msglen), natEntry.maxProxyPacketSize)
+			swgpPacketStart, swgpPacketLength, err := s.handler.EncryptZeroCopy(packetBuf, frontOverhead, int(msg.Msglen))
 			if err != nil {
 				s.logger.Warn("Failed to encrypt WireGuard packet",
 					zap.Stringer("service", s),
@@ -196,8 +198,8 @@ func (s *server) relayWgToProxySendmmsg(clientAddr netip.AddrPort, natEntry *ser
 				continue
 			}
 
-			smsgvec[ns].Msghdr.Iov.Base = &swgpPacket[0]
-			smsgvec[ns].Msghdr.Iov.SetLen(len(swgpPacket))
+			smsgvec[ns].Msghdr.Iov.Base = &packetBuf[swgpPacketStart]
+			smsgvec[ns].Msghdr.Iov.SetLen(swgpPacketLength)
 			if smsgControlLen > 0 {
 				smsgvec[ns].Msghdr.Control = &smsgControl[0]
 				smsgvec[ns].Msghdr.SetControllen(smsgControlLen)

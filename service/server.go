@@ -28,16 +28,10 @@ type ServerConfig struct {
 	DisableSendmmsg bool   `json:"disableSendmmsg"`
 }
 
-// serverQueuedPacket stores a decrypted wg packet.
-type serverQueuedPacket struct {
-	bufp     *[]byte
-	wgPacket []byte
-}
-
 type serverNatEntry struct {
 	clientOobCache     []byte
 	wgConn             *net.UDPConn
-	wgConnSendCh       chan serverQueuedPacket
+	wgConnSendCh       chan queuedPacket
 	maxProxyPacketSize int
 }
 
@@ -174,8 +168,7 @@ func (s *server) Start() (err error) {
 				continue
 			}
 
-			swgpPacket := packetBuf[:n]
-			wgPacket, err := s.handler.DecryptZeroCopy(swgpPacket)
+			wgPacketStart, wgPacketLength, err := s.handler.DecryptZeroCopy(packetBuf, 0, n)
 			if err != nil {
 				s.logger.Warn("Failed to decrypt swgpPacket",
 					zap.Stringer("service", s),
@@ -229,7 +222,7 @@ func (s *server) Start() (err error) {
 
 				natEntry = &serverNatEntry{
 					wgConn:       wgConn,
-					wgConnSendCh: make(chan serverQueuedPacket, sendChannelCapacity),
+					wgConnSendCh: make(chan queuedPacket, sendChannelCapacity),
 				}
 
 				if addr := clientAddr.Addr(); addr.Is4() || addr.Is4In6() {
@@ -275,7 +268,7 @@ func (s *server) Start() (err error) {
 				)
 
 				// Update wgConn read deadline when a handshake initiation/response message is received.
-				switch wgPacket[0] {
+				switch packetBuf[wgPacketStart] {
 				case packet.WireGuardMessageTypeHandshakeInitiation, packet.WireGuardMessageTypeHandshakeResponse:
 					err = natEntry.wgConn.SetReadDeadline(time.Now().Add(RejectAfterTime))
 					if err != nil {
@@ -305,7 +298,7 @@ func (s *server) Start() (err error) {
 			}
 
 			select {
-			case natEntry.wgConnSendCh <- serverQueuedPacket{packetBufp, wgPacket}:
+			case natEntry.wgConnSendCh <- queuedPacket{packetBufp, wgPacketStart, wgPacketLength}:
 			default:
 				s.logger.Debug("wgPacket dropped due to full send channel",
 					zap.Stringer("service", s),
@@ -337,7 +330,10 @@ func (s *server) relayProxyToWgGeneric(clientAddr netip.AddrPort, natEntry *serv
 			break
 		}
 
-		_, _, err := natEntry.wgConn.WriteMsgUDPAddrPort(queuedPacket.wgPacket, nil, s.wgAddr)
+		packetBuf := *queuedPacket.bufp
+		wgPacket := packetBuf[queuedPacket.start : queuedPacket.start+queuedPacket.length]
+
+		_, _, err := natEntry.wgConn.WriteMsgUDPAddrPort(wgPacket, nil, s.wgAddr)
 		if err != nil {
 			s.logger.Warn("Failed to write wgPacket to wgConn",
 				zap.Stringer("service", s),
@@ -397,7 +393,7 @@ func (s *server) relayWgToProxyGeneric(clientAddr netip.AddrPort, natEntry *serv
 			continue
 		}
 
-		swgpPacket, err := s.handler.EncryptZeroCopy(packetBuf, frontOverhead, n, natEntry.maxProxyPacketSize)
+		swgpPacketStart, swgpPacketLength, err := s.handler.EncryptZeroCopy(packetBuf, frontOverhead, n)
 		if err != nil {
 			s.logger.Warn("Failed to encrypt WireGuard packet",
 				zap.Stringer("service", s),
@@ -408,6 +404,7 @@ func (s *server) relayWgToProxyGeneric(clientAddr netip.AddrPort, natEntry *serv
 			)
 			continue
 		}
+		swgpPacket := packetBuf[swgpPacketStart : swgpPacketStart+swgpPacketLength]
 
 		_, _, err = s.proxyConn.WriteMsgUDPAddrPort(swgpPacket, natEntry.clientOobCache, clientAddr)
 		if err != nil {

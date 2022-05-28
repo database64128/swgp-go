@@ -12,7 +12,7 @@
 
 ### 1. Zero overhead
 
-Simply AES encrypt the first 16 bytes of all packets. Handshake packets (message type 1, 2, 3) are also randomly padded to look like normal traffic.
+The first 16 bytes of all packets are encrypted using an AES block cipher. The remainder of handshake packets (message type 1, 2, 3) are also randomly padded and encrypted using an XChaCha20-Poly1305 AEAD cipher to blend into normal traffic.
 
 ### 2. Paranoid
 

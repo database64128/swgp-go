@@ -28,17 +28,10 @@ type ClientConfig struct {
 	DisableSendmmsg bool   `json:"disableSendmmsg"`
 }
 
-// clientQueuedPacket stores an unencrypted wg packet.
-type clientQueuedPacket struct {
-	bufp   *[]byte
-	start  int
-	length int
-}
-
 type clientNatEntry struct {
 	clientOobCache  []byte
 	proxyConn       *net.UDPConn
-	proxyConnSendCh chan clientQueuedPacket
+	proxyConnSendCh chan queuedPacket
 }
 
 type client struct {
@@ -223,7 +216,7 @@ func (c *client) Start() (err error) {
 
 				natEntry = &clientNatEntry{
 					proxyConn:       proxyConn,
-					proxyConnSendCh: make(chan clientQueuedPacket, sendChannelCapacity),
+					proxyConnSendCh: make(chan queuedPacket, sendChannelCapacity),
 				}
 
 				c.table[clientAddr] = natEntry
@@ -292,7 +285,7 @@ func (c *client) Start() (err error) {
 			}
 
 			select {
-			case natEntry.proxyConnSendCh <- clientQueuedPacket{packetBufp, frontOverhead, n}:
+			case natEntry.proxyConnSendCh <- queuedPacket{packetBufp, frontOverhead, n}:
 			default:
 				c.logger.Debug("swgpPacket dropped due to full send channel",
 					zap.Stringer("service", c),
@@ -326,7 +319,7 @@ func (c *client) relayWgToProxyGeneric(clientAddr netip.AddrPort, natEntry *clie
 
 		packetBuf := *queuedPacket.bufp
 
-		swgpPacket, err := c.handler.EncryptZeroCopy(packetBuf, queuedPacket.start, queuedPacket.length, c.maxProxyPacketSize)
+		swgpPacketStart, swgpPacketLength, err := c.handler.EncryptZeroCopy(packetBuf, queuedPacket.start, queuedPacket.length)
 		if err != nil {
 			c.logger.Warn("Failed to encrypt WireGuard packet",
 				zap.Stringer("service", c),
@@ -337,6 +330,7 @@ func (c *client) relayWgToProxyGeneric(clientAddr netip.AddrPort, natEntry *clie
 			c.packetBufPool.Put(queuedPacket.bufp)
 			continue
 		}
+		swgpPacket := packetBuf[swgpPacketStart : swgpPacketStart+swgpPacketLength]
 
 		_, _, err = natEntry.proxyConn.WriteMsgUDPAddrPort(swgpPacket, nil, c.proxyAddr)
 		if err != nil {
@@ -394,8 +388,7 @@ func (c *client) relayProxyToWgGeneric(clientAddr netip.AddrPort, natEntry *clie
 			continue
 		}
 
-		swgpPacket := packetBuf[:n]
-		wgPacket, err := c.handler.DecryptZeroCopy(swgpPacket)
+		wgPacketStart, wgPacketLength, err := c.handler.DecryptZeroCopy(packetBuf, 0, n)
 		if err != nil {
 			c.logger.Warn("Failed to decrypt swgpPacket",
 				zap.Stringer("service", c),
@@ -406,6 +399,7 @@ func (c *client) relayProxyToWgGeneric(clientAddr netip.AddrPort, natEntry *clie
 			)
 			continue
 		}
+		wgPacket := packetBuf[wgPacketStart : wgPacketStart+wgPacketLength]
 
 		_, _, err = c.wgConn.WriteMsgUDPAddrPort(wgPacket, natEntry.clientOobCache, clientAddr)
 		if err != nil {

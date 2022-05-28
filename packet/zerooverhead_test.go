@@ -20,7 +20,31 @@ func testNewZeroOverheadHandler(t *testing.T) Handler {
 	return h
 }
 
-func testZeroOverheadVerifyPacket(t *testing.T, wgPacket, swgpPacket, decryptedWgPacket []byte) {
+func testZeroOverheadVerifyUnchangedPacket(t *testing.T, wgPacket, swgpPacket, decryptedWgPacket []byte) {
+	if !bytes.Equal(wgPacket, swgpPacket) {
+		t.Error("The packet should be untouched.")
+	}
+
+	if !bytes.Equal(wgPacket, decryptedWgPacket) {
+		t.Error("Decrypted packet is different from original packet.")
+	}
+}
+
+func testZeroOverheadVerifyHandshakePacket(t *testing.T, wgPacket, swgpPacket, decryptedWgPacket []byte) {
+	if bytes.Equal(wgPacket, swgpPacket[:len(wgPacket)]) {
+		t.Error("The packet is not encrypted.")
+	}
+
+	if len(swgpPacket) < len(wgPacket)+zeroOverheadHandshakePacketMinimumOverhead {
+		t.Error("Bad swgpPacket length.")
+	}
+
+	if !bytes.Equal(wgPacket, decryptedWgPacket) {
+		t.Error("Decrypted packet is different from original packet.")
+	}
+}
+
+func testZeroOverheadVerifyDataPacket(t *testing.T, wgPacket, swgpPacket, decryptedWgPacket []byte) {
 	if bytes.Equal(wgPacket[:16], swgpPacket[:16]) {
 		t.Error("The first 16 bytes are not encrypted.")
 	}
@@ -34,22 +58,41 @@ func testZeroOverheadVerifyPacket(t *testing.T, wgPacket, swgpPacket, decryptedW
 	}
 }
 
-func TestZeroOverheadHandleWireGuardHandshakeInitiationPacket(t *testing.T) {
+func TestZeroOverheadHandleLessThan16Bytes(t *testing.T) {
 	h := testNewZeroOverheadHandler(t)
-	testHandler(t, WireGuardMessageTypeHandshakeInitiation, WireGuardMessageLengthHandshakeInitiation, h, testZeroOverheadVerifyPacket)
+
+	for i := 0; i < 16; i++ {
+		testHandler(t, WireGuardMessageTypeHandshakeInitiation, i, 1, 1, h, nil, nil, testZeroOverheadVerifyUnchangedPacket)
+		testHandler(t, WireGuardMessageTypeHandshakeResponse, i, 1, 1, h, nil, nil, testZeroOverheadVerifyUnchangedPacket)
+		testHandler(t, WireGuardMessageTypeHandshakeCookieReply, i, 1, 1, h, nil, nil, testZeroOverheadVerifyUnchangedPacket)
+		testHandler(t, WireGuardMessageTypeData, i, 1, 1, h, nil, nil, testZeroOverheadVerifyUnchangedPacket)
+	}
 }
 
-func TestZeroOverheadHandleWireGuardHandshakeResponsePacket(t *testing.T) {
+func TestZeroOverheadHandleEncryptErrPacketSize(t *testing.T) {
 	h := testNewZeroOverheadHandler(t)
-	testHandler(t, WireGuardMessageTypeHandshakeResponse, WireGuardMessageLengthHandshakeResponse, h, testZeroOverheadVerifyPacket)
+
+	for i := 0; i < zeroOverheadHandshakePacketMinimumOverhead; i++ {
+		testHandler(t, WireGuardMessageTypeHandshakeInitiation, WireGuardMessageLengthHandshakeInitiation, 1, i, h, ErrPacketSize, nil, testZeroOverheadVerifyUnchangedPacket)
+		testHandler(t, WireGuardMessageTypeHandshakeResponse, WireGuardMessageLengthHandshakeResponse, 1, i, h, ErrPacketSize, nil, testZeroOverheadVerifyUnchangedPacket)
+		testHandler(t, WireGuardMessageTypeHandshakeCookieReply, WireGuardMessageLengthHandshakeCookieReply, 1, i, h, ErrPacketSize, nil, testZeroOverheadVerifyUnchangedPacket)
+	}
 }
 
-func TestZeroOverheadHandleWireGuardHandshakeCookieReplyPacket(t *testing.T) {
+func TestZeroOverheadHandleHandshakePacket(t *testing.T) {
 	h := testNewZeroOverheadHandler(t)
-	testHandler(t, WireGuardMessageTypeHandshakeCookieReply, WireGuardMessageLengthHandshakeCookieReply, h, testZeroOverheadVerifyPacket)
+
+	for i := 16; i < 128; i++ {
+		testHandler(t, WireGuardMessageTypeHandshakeInitiation, i, 1, zeroOverheadHandshakePacketMinimumOverhead, h, nil, nil, testZeroOverheadVerifyHandshakePacket)
+		testHandler(t, WireGuardMessageTypeHandshakeResponse, i, 1, zeroOverheadHandshakePacketMinimumOverhead, h, nil, nil, testZeroOverheadVerifyHandshakePacket)
+		testHandler(t, WireGuardMessageTypeHandshakeCookieReply, i, 1, zeroOverheadHandshakePacketMinimumOverhead, h, nil, nil, testZeroOverheadVerifyHandshakePacket)
+	}
 }
 
-func TestZeroOverheadHandleWireGuardDataPacket(t *testing.T) {
+func TestZeroOverheadHandleDataPacket(t *testing.T) {
 	h := testNewZeroOverheadHandler(t)
-	testHandler(t, WireGuardMessageTypeData, 1452, h, testZeroOverheadVerifyPacket)
+
+	for i := 16; i < 128; i++ {
+		testHandler(t, WireGuardMessageTypeData, i, 1, 1, h, nil, nil, testZeroOverheadVerifyDataPacket)
+	}
 }

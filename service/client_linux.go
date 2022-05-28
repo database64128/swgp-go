@@ -21,7 +21,7 @@ func (c *client) getRelayWgToProxyFunc(disableSendmmsg bool) func(clientAddr net
 
 func (c *client) relayWgToProxySendmmsg(clientAddr netip.AddrPort, natEntry *clientNatEntry) {
 	name, namelen := conn.AddrPortToSockaddr(c.proxyAddr)
-	dequeuedPackets := make([]clientQueuedPacket, 0, conn.UIO_MAXIOV)
+	dequeuedPackets := make([]queuedPacket, 0, conn.UIO_MAXIOV)
 	iovec := make([]unix.Iovec, 0, conn.UIO_MAXIOV)
 	msgvec := make([]conn.Mmsghdr, 0, conn.UIO_MAXIOV)
 
@@ -29,7 +29,7 @@ func (c *client) relayWgToProxySendmmsg(clientAddr netip.AddrPort, natEntry *cli
 		// Dequeue packets and append to dequeuedPackets.
 
 		var (
-			dequeuedPacket clientQueuedPacket
+			dequeuedPacket queuedPacket
 			ok             bool
 		)
 
@@ -63,7 +63,7 @@ func (c *client) relayWgToProxySendmmsg(clientAddr netip.AddrPort, natEntry *cli
 		for i, packet := range dequeuedPackets {
 			packetBuf := *packet.bufp
 
-			swgpPacket, err := c.handler.EncryptZeroCopy(packetBuf, packet.start, packet.length, c.maxProxyPacketSize)
+			swgpPacketStart, swgpPacketLength, err := c.handler.EncryptZeroCopy(packetBuf, packet.start, packet.length)
 			if err != nil {
 				c.logger.Warn("Failed to encrypt WireGuard packet",
 					zap.Stringer("service", c),
@@ -74,8 +74,8 @@ func (c *client) relayWgToProxySendmmsg(clientAddr netip.AddrPort, natEntry *cli
 				goto cleanup
 			}
 
-			iovec[i].Base = &swgpPacket[0]
-			iovec[i].SetLen(len(swgpPacket))
+			iovec[i].Base = &packetBuf[swgpPacketStart]
+			iovec[i].SetLen(swgpPacketLength)
 
 			msgvec[i].Msghdr.Name = name
 			msgvec[i].Msghdr.Namelen = namelen
@@ -193,8 +193,7 @@ func (c *client) relayProxyToWgSendmmsg(clientAddr netip.AddrPort, natEntry *cli
 			}
 
 			packetBuf := unsafe.Slice(msg.Msghdr.Iov.Base, c.maxProxyPacketSize)
-			swgpPacket := packetBuf[:msg.Msglen]
-			wgPacket, err := c.handler.DecryptZeroCopy(swgpPacket)
+			wgPacketStart, wgPacketLength, err := c.handler.DecryptZeroCopy(packetBuf, 0, int(msg.Msglen))
 			if err != nil {
 				c.logger.Warn("Failed to decrypt swgpPacket",
 					zap.Stringer("service", c),
@@ -206,8 +205,8 @@ func (c *client) relayProxyToWgSendmmsg(clientAddr netip.AddrPort, natEntry *cli
 				continue
 			}
 
-			smsgvec[ns].Msghdr.Iov.Base = &wgPacket[0]
-			smsgvec[ns].Msghdr.Iov.SetLen(len(wgPacket))
+			smsgvec[ns].Msghdr.Iov.Base = &packetBuf[wgPacketStart]
+			smsgvec[ns].Msghdr.Iov.SetLen(wgPacketLength)
 			if smsgControlLen > 0 {
 				smsgvec[ns].Msghdr.Control = &smsgControl[0]
 				smsgvec[ns].Msghdr.SetControllen(smsgControlLen)

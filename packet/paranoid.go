@@ -15,7 +15,9 @@ import (
 // All packets, irrespective of message type, are padded up to the maximum packet length
 // to hide any possible characteristics.
 //
-// swgpPacket := 24B nonce + AEAD_Seal(2B payload length + payload + padding)
+// 	swgpPacket := 24B nonce + AEAD_Seal(u16be payload length + payload + padding)
+//
+// paranoidHandler implements the Handler interface.
 type paranoidHandler struct {
 	aead cipher.AEAD
 }
@@ -44,58 +46,68 @@ func (h *paranoidHandler) RearOverhead() int {
 }
 
 // EncryptZeroCopy implements the Handler EncryptZeroCopy method.
-func (h *paranoidHandler) EncryptZeroCopy(buf []byte, start, length, maxPacketLen int) (swgpPacket []byte, err error) {
-	if length > math.MaxUint16 {
-		return nil, fmt.Errorf("payload too long: %d is greater than 65535", length)
+func (h *paranoidHandler) EncryptZeroCopy(buf []byte, wgPacketStart, wgPacketLength int) (swgpPacketStart, swgpPacketLength int, err error) {
+	if wgPacketLength > math.MaxUint16 {
+		err = &HandlerErr{ErrPacketSize, fmt.Sprintf("wg packet (length %d) is too large (greater than %d)", wgPacketLength, math.MaxUint16)}
+		return
 	}
 
+	// Determine padding length.
+	rearHeadroom := len(buf) - wgPacketStart - wgPacketLength
+	paddingHeadroom := rearHeadroom - chacha20poly1305.Overhead
 	var paddingLen int
-
-	if maxPaddingLen := maxPacketLen - h.FrontOverhead() - length - h.RearOverhead(); maxPaddingLen > 0 {
-		paddingLen = mrand.Intn(maxPaddingLen + 1)
+	if paddingHeadroom > 0 {
+		paddingLen = mrand.Intn(paddingHeadroom) + 1
 	}
 
-	nonce := buf[start-chacha20poly1305.NonceSizeX-2 : start-2]
-	payloadLength := buf[start-2 : start]
-	plaintext := buf[start-2 : start+length+paddingLen]
+	// Calculate offsets.
+	swgpPacketStart = wgPacketStart - 2 - chacha20poly1305.NonceSizeX
+	swgpPacketLength = chacha20poly1305.NonceSizeX + 2 + wgPacketLength + paddingLen + chacha20poly1305.Overhead
+
+	nonce := buf[swgpPacketStart : wgPacketStart-2]
+	payloadLength := buf[wgPacketStart-2 : wgPacketStart]
+	plaintext := buf[wgPacketStart-2 : wgPacketStart+wgPacketLength+paddingLen]
 
 	// Write random nonce.
 	_, err = rand.Read(nonce)
 	if err != nil {
-		return nil, err
+		return
 	}
 
 	// Write payload length.
-	binary.BigEndian.PutUint16(payloadLength, uint16(length))
+	binary.BigEndian.PutUint16(payloadLength, uint16(wgPacketLength))
 
 	// AEAD seal.
-	swgpPacket = h.aead.Seal(nonce, nonce, plaintext, nil)
+	h.aead.Seal(nonce, nonce, plaintext, nil)
 
 	return
 }
 
 // DecryptZeroCopy implements the Handler DecryptZeroCopy method.
-func (h *paranoidHandler) DecryptZeroCopy(swgpPacket []byte) (wgPacket []byte, err error) {
-	if len(swgpPacket) < chacha20poly1305.NonceSizeX {
-		return nil, fmt.Errorf("bad swgpPacket length: %d", len(swgpPacket))
+func (h *paranoidHandler) DecryptZeroCopy(buf []byte, swgpPacketStart, swgpPacketLength int) (wgPacketStart, wgPacketLength int, err error) {
+	if swgpPacketLength < chacha20poly1305.NonceSizeX+2+1+chacha20poly1305.Overhead {
+		err = &HandlerErr{ErrPacketSize, fmt.Sprintf("swgp packet (length %d) is too short", swgpPacketLength)}
+		return
 	}
 
-	nonce := swgpPacket[:chacha20poly1305.NonceSizeX]
-	ciphertext := swgpPacket[chacha20poly1305.NonceSizeX:]
+	nonce := buf[swgpPacketStart : swgpPacketStart+chacha20poly1305.NonceSizeX]
+	ciphertext := buf[swgpPacketStart+chacha20poly1305.NonceSizeX : swgpPacketStart+swgpPacketLength]
 
 	// AEAD open.
 	plaintext, err := h.aead.Open(ciphertext[:0], nonce, ciphertext, nil)
 	if err != nil {
-		return nil, err
+		return
 	}
 
 	// Read and validate payload length.
-	payloadLength := plaintext[:2]
-	length := int(binary.BigEndian.Uint16(payloadLength))
-	if 2+length > len(plaintext) {
-		return nil, fmt.Errorf("payload length %d is greater than plaintext length %d", length, len(plaintext))
+	payloadLengthBuf := plaintext[:2]
+	payloadLength := int(binary.BigEndian.Uint16(payloadLengthBuf))
+	if payloadLength > len(plaintext)-2 {
+		err = &HandlerErr{ErrPayloadLength, fmt.Sprintf("payload length field value %d is out of range", payloadLength)}
+		return
 	}
 
-	wgPacket = plaintext[2 : 2+length]
+	wgPacketStart = swgpPacketStart + chacha20poly1305.NonceSizeX + 2
+	wgPacketLength = payloadLength
 	return
 }

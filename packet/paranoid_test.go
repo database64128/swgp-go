@@ -24,7 +24,7 @@ func testNewParanoidHandler(t *testing.T) Handler {
 
 func testParanoidVerifyPacket(t *testing.T, wgPacket, swgpPacket, decryptedWgPacket []byte) {
 	if len(swgpPacket) < chacha20poly1305.NonceSizeX+2+len(wgPacket)+chacha20poly1305.Overhead {
-		t.Error("bad swgpPacket length")
+		t.Error("Bad swgpPacket length.")
 	}
 
 	if !bytes.Equal(wgPacket, decryptedWgPacket) {
@@ -32,22 +32,13 @@ func testParanoidVerifyPacket(t *testing.T, wgPacket, swgpPacket, decryptedWgPac
 	}
 }
 
-func TestParanoidHandleWireGuardHandshakeInitiationPacket(t *testing.T) {
+func TestParanoidHandlePacket(t *testing.T) {
 	h := testNewParanoidHandler(t)
-	testHandler(t, WireGuardMessageTypeHandshakeInitiation, WireGuardMessageLengthHandshakeInitiation, h, testParanoidVerifyPacket)
-}
 
-func TestParanoidHandleWireGuardHandshakeResponsePacket(t *testing.T) {
-	h := testNewParanoidHandler(t)
-	testHandler(t, WireGuardMessageTypeHandshakeResponse, WireGuardMessageLengthHandshakeResponse, h, testParanoidVerifyPacket)
-}
-
-func TestParanoidHandleWireGuardHandshakeCookieReplyPacket(t *testing.T) {
-	h := testNewParanoidHandler(t)
-	testHandler(t, WireGuardMessageTypeHandshakeCookieReply, WireGuardMessageLengthHandshakeCookieReply, h, testParanoidVerifyPacket)
-}
-
-func TestParanoidHandleWireGuardDataPacket(t *testing.T) {
-	h := testNewParanoidHandler(t)
-	testHandler(t, WireGuardMessageTypeData, 1452, h, testParanoidVerifyPacket)
+	for i := 1; i < 128; i++ {
+		testHandler(t, WireGuardMessageTypeHandshakeInitiation, i, 0, 0, h, nil, nil, testParanoidVerifyPacket)
+		testHandler(t, WireGuardMessageTypeHandshakeResponse, i, 0, 0, h, nil, nil, testParanoidVerifyPacket)
+		testHandler(t, WireGuardMessageTypeHandshakeCookieReply, i, 0, 0, h, nil, nil, testParanoidVerifyPacket)
+		testHandler(t, WireGuardMessageTypeData, i, 0, 0, h, nil, nil, testParanoidVerifyPacket)
+	}
 }
