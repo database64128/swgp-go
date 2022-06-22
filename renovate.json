@@ -1,0 +1,9 @@
+{
+  "commitMessagePrefix": "🔼",
+  "extends": [
+    "config:base"
+  ],
+  "postUpdateOptions": [
+    "gomodTidy"
+  ]
+}
