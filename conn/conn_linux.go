@@ -181,7 +181,34 @@ func Recvmmsg(conn *net.UDPConn, msgvec []Mmsghdr) (n int, err error) {
 	return
 }
 
-func Sendmmsg(conn *net.UDPConn, msgvec []Mmsghdr) error {
+func Sendmmsg(conn *net.UDPConn, msgvec []Mmsghdr) (n int, err error) {
+	rawConn, err := conn.SyscallConn()
+	if err != nil {
+		return 0, fmt.Errorf("failed to get syscall.RawConn: %w", err)
+	}
+
+	perr := rawConn.Write(func(fd uintptr) (done bool) {
+		r0, _, e1 := unix.Syscall6(unix.SYS_SENDMMSG, fd, uintptr(unsafe.Pointer(&msgvec[0])), uintptr(len(msgvec)), 0, 0, 0)
+		if e1 == unix.EAGAIN || e1 == unix.EWOULDBLOCK {
+			return false
+		}
+		if e1 != 0 {
+			err = fmt.Errorf("sendmmsg failed: %w", e1)
+			return true
+		}
+		n = int(r0)
+		return true
+	})
+
+	if err == nil {
+		err = perr
+	}
+
+	return
+}
+
+// WriteMsgvec repeatedly calls sendmmsg(2) until all messages in msgvec are written to the socket.
+func WriteMsgvec(conn *net.UDPConn, msgvec []Mmsghdr) error {
 	rawConn, err := conn.SyscallConn()
 	if err != nil {
 		return fmt.Errorf("failed to get syscall.RawConn: %w", err)

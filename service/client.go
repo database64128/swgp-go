@@ -17,15 +17,15 @@ import (
 // ClientConfig stores configurations for a swgp client service.
 // It may be marshaled as or unmarshaled from JSON.
 type ClientConfig struct {
-	Name            string `json:"name"`
-	WgListen        string `json:"wgListen"`
-	WgFwmark        int    `json:"wgFwmark"`
-	ProxyEndpoint   string `json:"proxyEndpoint"`
-	ProxyMode       string `json:"proxyMode"`
-	ProxyPSK        []byte `json:"proxyPSK"`
-	ProxyFwmark     int    `json:"proxyFwmark"`
-	MTU             int    `json:"mtu"`
-	DisableSendmmsg bool   `json:"disableSendmmsg"`
+	Name          string `json:"name"`
+	WgListen      string `json:"wgListen"`
+	WgFwmark      int    `json:"wgFwmark"`
+	ProxyEndpoint string `json:"proxyEndpoint"`
+	ProxyMode     string `json:"proxyMode"`
+	ProxyPSK      []byte `json:"proxyPSK"`
+	ProxyFwmark   int    `json:"proxyFwmark"`
+	MTU           int    `json:"mtu"`
+	BatchMode     string `json:"batchMode"`
 }
 
 type clientNatEntry struct {
@@ -61,8 +61,8 @@ func NewClientService(config ClientConfig, logger *zap.Logger) Service {
 		logger: logger,
 		table:  make(map[netip.AddrPort]*clientNatEntry),
 	}
-	c.relayWgToProxy = c.getRelayWgToProxyFunc(config.DisableSendmmsg)
-	c.relayProxyToWg = c.getRelayProxyToWgFunc(config.DisableSendmmsg)
+	c.relayWgToProxy = c.getRelayWgToProxyFunc(config.BatchMode)
+	c.relayProxyToWg = c.getRelayProxyToWgFunc(config.BatchMode)
 	return c
 }
 
