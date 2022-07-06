@@ -68,20 +68,26 @@ func (sc *ServiceConfig) Start(logger *zap.Logger) error {
 	sc.services = make([]Service, serviceCount)
 
 	for i := range sc.Interfaces {
-		s := NewServerService(sc.Interfaces[i], logger)
+		s, err := NewServerService(sc.Interfaces[i], logger)
+		if err != nil {
+			return fmt.Errorf("failed to create server service %s: %w", sc.Interfaces[i].Name, err)
+		}
 		sc.services[i] = s
 
-		err := s.Start()
+		err = s.Start()
 		if err != nil {
 			return fmt.Errorf("failed to start %s: %w", s.String(), err)
 		}
 	}
 
 	for i := range sc.Peers {
-		c := NewClientService(sc.Peers[i], logger)
+		c, err := NewClientService(sc.Peers[i], logger)
+		if err != nil {
+			return fmt.Errorf("failed to create client service %s: %w", sc.Peers[i].Name, err)
+		}
 		sc.services[serverCount+i] = c
 
-		err := c.Start()
+		err = c.Start()
 		if err != nil {
 			return fmt.Errorf("failed to start %s: %w", c.String(), err)
 		}

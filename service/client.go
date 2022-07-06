@@ -42,6 +42,7 @@ type client struct {
 	wgConn    *net.UDPConn
 	proxyAddr netip.AddrPort
 
+	wgTunnelMTU        int
 	maxProxyPacketSize int
 	packetBufPool      *sync.Pool
 
@@ -55,15 +56,66 @@ type client struct {
 
 // NewClientService creates a swgp client service from the specified client config.
 // Call the Start method on the returned service to start it.
-func NewClientService(config ClientConfig, logger *zap.Logger) Service {
+func NewClientService(config ClientConfig, logger *zap.Logger) (Service, error) {
+	// Require MTU to be at least 1280.
+	if config.MTU < 1280 {
+		return nil, ErrMTUTooSmall
+	}
+
 	c := &client{
 		config: config,
 		logger: logger,
 		table:  make(map[netip.AddrPort]*clientNatEntry),
 	}
+	var err error
+
+	// Create packet handler for user-specified proxy mode.
+	c.handler, err = getPacketHandlerForProxyMode(config.ProxyMode, config.ProxyPSK)
+	if err != nil {
+		return nil, err
+	}
+
+	frontOverhead := c.handler.FrontOverhead()
+	rearOverhead := c.handler.RearOverhead()
+	overhead := frontOverhead + rearOverhead
+
+	// Resolve endpoint address.
+	c.proxyAddr, err = netip.ParseAddrPort(config.ProxyEndpoint)
+	if err != nil {
+		rudpaddr, err := net.ResolveUDPAddr("udp", config.ProxyEndpoint)
+		if err != nil {
+			return nil, err
+		}
+		c.proxyAddr = rudpaddr.AddrPort()
+	}
+
+	// Workaround for https://github.com/golang/go/issues/52264
+	c.proxyAddr = conn.Tov4Mappedv6(c.proxyAddr)
+
+	// maxProxyPacketSize = MTU - IP header length - UDP header length
+	if addr := c.proxyAddr.Addr(); addr.Is4() || addr.Is4In6() {
+		c.maxProxyPacketSize = config.MTU - IPv4HeaderLength - UDPHeaderLength
+	} else {
+		c.maxProxyPacketSize = config.MTU - IPv6HeaderLength - UDPHeaderLength
+	}
+
+	if c.maxProxyPacketSize <= overhead {
+		return nil, fmt.Errorf("max proxy packet size %d must be greater than total overhead %d", c.maxProxyPacketSize, overhead)
+	}
+
+	c.wgTunnelMTU = (c.maxProxyPacketSize - overhead - WireGuardDataPacketOverhead) & WireGuardDataPacketLengthMask
+
+	// Initialize packet buffer pool.
+	c.packetBufPool = &sync.Pool{
+		New: func() any {
+			b := make([]byte, c.maxProxyPacketSize)
+			return &b
+		},
+	}
+
 	c.relayWgToProxy = c.getRelayWgToProxyFunc(config.BatchMode)
 	c.relayProxyToWg = c.getRelayProxyToWgFunc(config.BatchMode)
-	return c
+	return c, nil
 }
 
 // String implements the Service String method.
@@ -73,57 +125,8 @@ func (c *client) String() string {
 
 // Start implements the Service Start method.
 func (c *client) Start() (err error) {
-	// Require MTU to be at least 1280.
-	if c.config.MTU < 1280 {
-		return ErrMTUTooSmall
-	}
-
-	// Create packet handler for user-specified proxy mode.
-	c.handler, err = getPacketHandlerForProxyMode(c.config.ProxyMode, c.config.ProxyPSK)
-	if err != nil {
-		return
-	}
-
 	frontOverhead := c.handler.FrontOverhead()
 	rearOverhead := c.handler.RearOverhead()
-	overhead := frontOverhead + rearOverhead
-
-	// Resolve endpoint address.
-	c.proxyAddr, err = netip.ParseAddrPort(c.config.ProxyEndpoint)
-	if err != nil {
-		rudpaddr, err := net.ResolveUDPAddr("udp", c.config.ProxyEndpoint)
-		if err != nil {
-			return err
-		}
-		c.proxyAddr = rudpaddr.AddrPort()
-	}
-
-	// Workaround for https://github.com/golang/go/issues/52264
-	if c.proxyAddr.Addr().Is4() {
-		addr6 := c.proxyAddr.Addr().As16()
-		ip := netip.AddrFrom16(addr6)
-		port := c.proxyAddr.Port()
-		c.proxyAddr = netip.AddrPortFrom(ip, port)
-	}
-
-	// maxProxyPacketSize = MTU - IP header length - UDP header length
-	if addr := c.proxyAddr.Addr(); addr.Is4() || addr.Is4In6() {
-		c.maxProxyPacketSize = c.config.MTU - IPv4HeaderLength - UDPHeaderLength
-	} else {
-		c.maxProxyPacketSize = c.config.MTU - IPv6HeaderLength - UDPHeaderLength
-	}
-
-	if c.maxProxyPacketSize <= overhead {
-		return fmt.Errorf("max proxy packet size %d must be greater than total overhead %d", c.maxProxyPacketSize, overhead)
-	}
-
-	// Initialize packet buffer pool.
-	c.packetBufPool = &sync.Pool{
-		New: func() any {
-			b := make([]byte, c.maxProxyPacketSize)
-			return &b
-		},
-	}
 
 	// Start listener.
 	var serr error
@@ -305,7 +308,7 @@ func (c *client) Start() (err error) {
 		zap.String("wgListen", c.config.WgListen),
 		zap.String("proxyEndpoint", c.config.ProxyEndpoint),
 		zap.String("proxyMode", c.config.ProxyMode),
-		zap.Int("wgTunnelMTU", (c.maxProxyPacketSize-overhead-WireGuardDataPacketOverhead)&WireGuardDataPacketLengthMask),
+		zap.Int("wgTunnelMTU", c.wgTunnelMTU),
 	)
 	return
 }

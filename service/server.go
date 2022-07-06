@@ -40,8 +40,10 @@ type server struct {
 	logger  *zap.Logger
 	handler packet.Handler
 
-	proxyConn *net.UDPConn
-	wgAddr    netip.AddrPort
+	proxyConn     *net.UDPConn
+	wgAddr        netip.AddrPort
+	wgTunnelMTUv4 int
+	wgTunnelMTUv6 int
 
 	packetBufPool *sync.Pool
 
@@ -55,43 +57,36 @@ type server struct {
 
 // NewServerService creates a swgp server service from the specified server config.
 // Call the Start method on the returned service to start it.
-func NewServerService(config ServerConfig, logger *zap.Logger) Service {
+func NewServerService(config ServerConfig, logger *zap.Logger) (Service, error) {
+	// Require MTU to be at least 1280.
+	if config.MTU < 1280 {
+		return nil, ErrMTUTooSmall
+	}
+
 	s := &server{
 		config: config,
 		logger: logger,
 		table:  make(map[netip.AddrPort]*serverNatEntry),
 	}
-	s.relayProxyToWg = s.getRelayProxyToWgFunc(config.BatchMode)
-	s.relayWgToProxy = s.getRelayWgToProxyFunc(config.BatchMode)
-	return s
-}
-
-// String implements the Service String method.
-func (s *server) String() string {
-	return s.config.Name + " swgp server service"
-}
-
-// Start implements the Service Start method.
-func (s *server) Start() (err error) {
-	// Require MTU to be at least 1280.
-	if s.config.MTU < 1280 {
-		return ErrMTUTooSmall
-	}
+	var err error
 
 	// Create packet handler for user-specified proxy mode.
-	s.handler, err = getPacketHandlerForProxyMode(s.config.ProxyMode, s.config.ProxyPSK)
+	s.handler, err = getPacketHandlerForProxyMode(config.ProxyMode, config.ProxyPSK)
 	if err != nil {
-		return
+		return nil, err
 	}
 
 	frontOverhead := s.handler.FrontOverhead()
 	rearOverhead := s.handler.RearOverhead()
 	overhead := frontOverhead + rearOverhead
 
+	s.wgTunnelMTUv4 = (config.MTU - IPv4HeaderLength - UDPHeaderLength - overhead - WireGuardDataPacketOverhead) & WireGuardDataPacketLengthMask
+	s.wgTunnelMTUv6 = (config.MTU - IPv6HeaderLength - UDPHeaderLength - overhead - WireGuardDataPacketOverhead) & WireGuardDataPacketLengthMask
+
 	// packetBufSize = MTU - IPv4 header length - UDP header length
-	packetBufSize := s.config.MTU - IPv4HeaderLength - UDPHeaderLength
+	packetBufSize := config.MTU - IPv4HeaderLength - UDPHeaderLength
 	if packetBufSize <= overhead {
-		return fmt.Errorf("packet buf size %d must be greater than total overhead %d", packetBufSize, overhead)
+		return nil, fmt.Errorf("packet buf size %d must be greater than total overhead %d", packetBufSize, overhead)
 	}
 
 	// Initialize packet buffer pool.
@@ -103,23 +98,30 @@ func (s *server) Start() (err error) {
 	}
 
 	// Resolve endpoint address.
-	s.wgAddr, err = netip.ParseAddrPort(s.config.WgEndpoint)
+	s.wgAddr, err = netip.ParseAddrPort(config.WgEndpoint)
 	if err != nil {
-		rudpaddr, err := net.ResolveUDPAddr("udp", s.config.WgEndpoint)
+		rudpaddr, err := net.ResolveUDPAddr("udp", config.WgEndpoint)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		s.wgAddr = rudpaddr.AddrPort()
 	}
 
 	// Workaround for https://github.com/golang/go/issues/52264
-	if s.wgAddr.Addr().Is4() {
-		addr6 := s.wgAddr.Addr().As16()
-		ip := netip.AddrFrom16(addr6)
-		port := s.wgAddr.Port()
-		s.wgAddr = netip.AddrPortFrom(ip, port)
-	}
+	s.wgAddr = conn.Tov4Mappedv6(s.wgAddr)
 
+	s.relayProxyToWg = s.getRelayProxyToWgFunc(config.BatchMode)
+	s.relayWgToProxy = s.getRelayWgToProxyFunc(config.BatchMode)
+	return s, nil
+}
+
+// String implements the Service String method.
+func (s *server) String() string {
+	return s.config.Name + " swgp server service"
+}
+
+// Start implements the Service Start method.
+func (s *server) Start() (err error) {
 	// Start listener.
 	var serr error
 	s.proxyConn, err, serr = conn.ListenUDP("udp", s.config.ProxyListen, true, s.config.ProxyFwmark)
@@ -220,6 +222,8 @@ func (s *server) Start() (err error) {
 					continue
 				}
 
+				var wgTunnelMTU int
+
 				natEntry = &serverNatEntry{
 					wgConn:       wgConn,
 					wgConnSendCh: make(chan queuedPacket, sendChannelCapacity),
@@ -227,8 +231,10 @@ func (s *server) Start() (err error) {
 
 				if addr := clientAddr.Addr(); addr.Is4() || addr.Is4In6() {
 					natEntry.maxProxyPacketSize = s.config.MTU - IPv4HeaderLength - UDPHeaderLength
+					wgTunnelMTU = s.wgTunnelMTUv4
 				} else {
 					natEntry.maxProxyPacketSize = s.config.MTU - IPv6HeaderLength - UDPHeaderLength
+					wgTunnelMTU = s.wgTunnelMTUv6
 				}
 
 				s.table[clientAddr] = natEntry
@@ -257,7 +263,7 @@ func (s *server) Start() (err error) {
 					zap.String("proxyListen", s.config.ProxyListen),
 					zap.Stringer("clientAddress", clientAddr),
 					zap.Stringer("wgAddress", s.wgAddr),
-					zap.Int("wgTunnelMTU", (natEntry.maxProxyPacketSize-overhead-WireGuardDataPacketOverhead)&WireGuardDataPacketLengthMask),
+					zap.Int("wgTunnelMTU", wgTunnelMTU),
 				)
 			} else {
 				s.logger.Debug("Found existing UDP session in NAT table",
@@ -318,7 +324,8 @@ func (s *server) Start() (err error) {
 		zap.String("proxyListen", s.config.ProxyListen),
 		zap.String("proxyMode", s.config.ProxyMode),
 		zap.String("wgEndpoint", s.config.WgEndpoint),
-		zap.Int("wgTunnelMTU", (s.config.MTU-IPv6HeaderLength-UDPHeaderLength-overhead-WireGuardDataPacketOverhead)&WireGuardDataPacketLengthMask),
+		zap.Int("wgTunnelMTUv4", s.wgTunnelMTUv4),
+		zap.Int("wgTunnelMTUv6", s.wgTunnelMTUv6),
 	)
 	return
 }
