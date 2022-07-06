@@ -155,6 +155,27 @@ func AddrPortToSockaddrInet6(addrPort netip.AddrPort) unix.RawSockaddrInet6 {
 	return rsa6
 }
 
+func SockaddrToAddrPort(name *byte, namelen uint32) (netip.AddrPort, error) {
+	switch namelen {
+	case unix.SizeofSockaddrInet4:
+		rsa4 := (*unix.RawSockaddrInet4)(unsafe.Pointer(name))
+		portp := (*[2]byte)(unsafe.Pointer(&rsa4.Port))
+		port := uint16(portp[0])<<8 + uint16(portp[1])
+		ip := netip.AddrFrom4(rsa4.Addr)
+		return netip.AddrPortFrom(ip, port), nil
+
+	case unix.SizeofSockaddrInet6:
+		rsa6 := (*unix.RawSockaddrInet6)(unsafe.Pointer(name))
+		portp := (*[2]byte)(unsafe.Pointer(&rsa6.Port))
+		port := uint16(portp[0])<<8 + uint16(portp[1])
+		ip := netip.AddrFrom16(rsa6.Addr)
+		return netip.AddrPortFrom(ip, port), nil
+
+	default:
+		return netip.AddrPort{}, fmt.Errorf("bad sockaddr length: %d", namelen)
+	}
+}
+
 func Recvmmsg(conn *net.UDPConn, msgvec []Mmsghdr) (n int, err error) {
 	rawConn, err := conn.SyscallConn()
 	if err != nil {
@@ -208,6 +229,9 @@ func Sendmmsg(conn *net.UDPConn, msgvec []Mmsghdr) (n int, err error) {
 }
 
 // WriteMsgvec repeatedly calls sendmmsg(2) until all messages in msgvec are written to the socket.
+//
+// If the syscall returns an error, this function drops the message that caused the error,
+// and continues sending. Only the last encountered error is returned.
 func WriteMsgvec(conn *net.UDPConn, msgvec []Mmsghdr) error {
 	rawConn, err := conn.SyscallConn()
 	if err != nil {
@@ -223,7 +247,7 @@ func WriteMsgvec(conn *net.UDPConn, msgvec []Mmsghdr) error {
 		}
 		if e1 != 0 {
 			err = fmt.Errorf("sendmmsg failed: %w", e1)
-			return true
+			r0 = 1
 		}
 		processed += int(r0)
 		return processed >= len(msgvec)

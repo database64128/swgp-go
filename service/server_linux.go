@@ -14,9 +14,9 @@ import (
 
 func (s *server) getRelayProxyToWgFunc(batchMode string) func(clientAddr netip.AddrPort, natEntry *serverNatEntry) {
 	switch batchMode {
-	case "ring", "":
+	case "ring":
 		return s.relayProxyToWgSendmmsgRing
-	case "sequential":
+	case "sequential", "":
 		return s.relayProxyToWgSendmmsgSequential
 	default:
 		return s.relayProxyToWgGeneric
@@ -171,8 +171,8 @@ relay:
 				zap.Stringer("wgAddress", s.wgAddr),
 				zap.Error(err),
 			)
-			// Trick the cleanup code into dropping all buffered packets.
-			n = count
+			// Error is caused by the first packet in msgvec.
+			n = 1
 		}
 
 		// Clean up and move head forward.
@@ -208,9 +208,9 @@ relay:
 
 func (s *server) getRelayWgToProxyFunc(batchMode string) func(clientAddr netip.AddrPort, natEntry *serverNatEntry) {
 	switch batchMode {
-	case "ring", "":
+	case "ring":
 		return s.relayWgToProxySendmmsgRing
-	case "sequential":
+	case "sequential", "":
 		return s.relayWgToProxySendmmsgSequential
 	default:
 		return s.relayWgToProxyGeneric
@@ -221,8 +221,6 @@ func (s *server) relayWgToProxySendmmsgSequential(clientAddr netip.AddrPort, nat
 	const vecSize = conn.UIO_MAXIOV
 
 	name, namelen := conn.AddrPortToSockaddr(clientAddr)
-	wgAddr16 := s.wgAddr.Addr().As16()
-	wgPort := s.wgAddr.Port()
 	frontOverhead := s.handler.FrontOverhead()
 	rearOverhead := s.handler.RearOverhead()
 	plaintextLen := natEntry.maxProxyPacketSize - frontOverhead - rearOverhead
@@ -286,11 +284,18 @@ func (s *server) relayWgToProxySendmmsgSequential(clientAddr netip.AddrPort, nat
 				continue
 			}
 
-			msgSockaddr := *(*unix.RawSockaddrInet6)(unsafe.Pointer(msg.Msghdr.Name))
-			msgSockaddrPortp := (*[2]byte)(unsafe.Pointer(&msgSockaddr.Port))
-			msgSockaddrPort := uint16(msgSockaddrPortp[0])<<8 + uint16(msgSockaddrPortp[1])
-			if msgSockaddrPort != wgPort || msgSockaddr.Addr != wgAddr16 {
-				raddr := netip.AddrPortFrom(netip.AddrFrom16(msgSockaddr.Addr), msgSockaddrPort)
+			raddr, err := conn.SockaddrToAddrPort(msg.Msghdr.Name, msg.Msghdr.Namelen)
+			if err != nil {
+				s.logger.Warn("Failed to parse sockaddr of packet from wgConn",
+					zap.Stringer("service", s),
+					zap.String("proxyListen", s.config.ProxyListen),
+					zap.Stringer("clientAddress", clientAddr),
+					zap.Stringer("wgAddress", s.wgAddr),
+					zap.Error(err),
+				)
+				continue
+			}
+			if raddr != s.wgAddr {
 				s.logger.Debug("Ignoring packet from non-wg address",
 					zap.Stringer("service", s),
 					zap.String("proxyListen", s.config.ProxyListen),
@@ -351,8 +356,6 @@ func (s *server) relayWgToProxySendmmsgRing(clientAddr netip.AddrPort, natEntry 
 	)
 
 	name, namelen := conn.AddrPortToSockaddr(clientAddr)
-	wgAddr16 := s.wgAddr.Addr().As16()
-	wgPort := s.wgAddr.Port()
 	frontOverhead := s.handler.FrontOverhead()
 	rearOverhead := s.handler.RearOverhead()
 	plaintextLen := natEntry.maxProxyPacketSize - frontOverhead - rearOverhead
@@ -438,11 +441,18 @@ func (s *server) relayWgToProxySendmmsgRing(clientAddr netip.AddrPort, natEntry 
 				continue
 			}
 
-			msgSockaddr := (*unix.RawSockaddrInet6)(unsafe.Pointer(msg.Msghdr.Name))
-			msgSockaddrPortp := (*[2]byte)(unsafe.Pointer(&msgSockaddr.Port))
-			msgSockaddrPort := uint16(msgSockaddrPortp[0])<<8 + uint16(msgSockaddrPortp[1])
-			if msgSockaddrPort != wgPort || msgSockaddr.Addr != wgAddr16 {
-				raddr := netip.AddrPortFrom(netip.AddrFrom16(msgSockaddr.Addr), msgSockaddrPort)
+			raddr, err := conn.SockaddrToAddrPort(msg.Msghdr.Name, msg.Msghdr.Namelen)
+			if err != nil {
+				s.logger.Warn("Failed to parse sockaddr of packet from wgConn",
+					zap.Stringer("service", s),
+					zap.String("proxyListen", s.config.ProxyListen),
+					zap.Stringer("clientAddress", clientAddr),
+					zap.Stringer("wgAddress", s.wgAddr),
+					zap.Error(err),
+				)
+				continue
+			}
+			if raddr != s.wgAddr {
 				s.logger.Debug("Ignoring packet from non-wg address",
 					zap.Stringer("service", s),
 					zap.String("proxyListen", s.config.ProxyListen),
@@ -496,7 +506,7 @@ func (s *server) relayWgToProxySendmmsgRing(clientAddr netip.AddrPort, natEntry 
 				zap.Stringer("wgAddress", s.wgAddr),
 				zap.Error(err),
 			)
-			n = ns
+			n = 1
 		}
 		ns -= n
 

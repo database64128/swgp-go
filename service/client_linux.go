@@ -14,9 +14,9 @@ import (
 
 func (c *client) getRelayWgToProxyFunc(batchMode string) func(clientAddr netip.AddrPort, natEntry *clientNatEntry) {
 	switch batchMode {
-	case "ring", "":
+	case "ring":
 		return c.relayWgToProxySendmmsgRing
-	case "sequential":
+	case "sequential", "":
 		return c.relayWgToProxySendmmsgSequential
 	default:
 		return c.relayWgToProxyGeneric
@@ -221,8 +221,8 @@ relay:
 				zap.Stringer("proxyAddress", c.proxyAddr),
 				zap.Error(err),
 			)
-			// Trick the cleanup code into dropping all buffered packets.
-			n = count
+			// Error is caused by the first packet in msgvec.
+			n = 1
 		}
 
 		// Clean up and move head forward.
@@ -258,9 +258,9 @@ relay:
 
 func (c *client) getRelayProxyToWgFunc(batchMode string) func(clientAddr netip.AddrPort, natEntry *clientNatEntry) {
 	switch batchMode {
-	case "ring", "":
+	case "ring":
 		return c.relayProxyToWgSendmmsgRing
-	case "sequential":
+	case "sequential", "":
 		return c.relayProxyToWgSendmmsgSequential
 	default:
 		return c.relayProxyToWgGeneric
@@ -271,9 +271,6 @@ func (c *client) relayProxyToWgSendmmsgSequential(clientAddr netip.AddrPort, nat
 	const vecSize = conn.UIO_MAXIOV
 
 	name, namelen := conn.AddrPortToSockaddr(clientAddr)
-	proxyAddr16 := c.proxyAddr.Addr().As16()
-	proxyPort := c.proxyAddr.Port()
-
 	savec := make([]unix.RawSockaddrInet6, vecSize)
 	bufvec := make([][]byte, vecSize)
 	riovec := make([]unix.Iovec, vecSize)
@@ -333,11 +330,18 @@ func (c *client) relayProxyToWgSendmmsgSequential(clientAddr netip.AddrPort, nat
 				continue
 			}
 
-			msgSockaddr := *(*unix.RawSockaddrInet6)(unsafe.Pointer(msg.Msghdr.Name))
-			msgSockaddrPortp := (*[2]byte)(unsafe.Pointer(&msgSockaddr.Port))
-			msgSockaddrPort := uint16(msgSockaddrPortp[0])<<8 + uint16(msgSockaddrPortp[1])
-			if msgSockaddrPort != proxyPort || msgSockaddr.Addr != proxyAddr16 {
-				raddr := netip.AddrPortFrom(netip.AddrFrom16(msgSockaddr.Addr), msgSockaddrPort)
+			raddr, err := conn.SockaddrToAddrPort(msg.Msghdr.Name, msg.Msghdr.Namelen)
+			if err != nil {
+				c.logger.Warn("Failed to parse sockaddr of packet from proxyConn",
+					zap.Stringer("service", c),
+					zap.String("wgListen", c.config.WgListen),
+					zap.Stringer("clientAddress", clientAddr),
+					zap.Stringer("proxyAddress", c.proxyAddr),
+					zap.Error(err),
+				)
+				continue
+			}
+			if raddr != c.proxyAddr {
 				c.logger.Debug("Ignoring packet from non-proxy address",
 					zap.Stringer("service", c),
 					zap.String("wgListen", c.config.WgListen),
@@ -398,9 +402,6 @@ func (c *client) relayProxyToWgSendmmsgRing(clientAddr netip.AddrPort, natEntry 
 	)
 
 	name, namelen := conn.AddrPortToSockaddr(clientAddr)
-	proxyAddr16 := c.proxyAddr.Addr().As16()
-	proxyPort := c.proxyAddr.Port()
-
 	savec := make([]unix.RawSockaddrInet6, vecSize)
 	bufvec := make([][]byte, vecSize)
 	riovec := make([]unix.Iovec, vecSize)
@@ -482,11 +483,18 @@ func (c *client) relayProxyToWgSendmmsgRing(clientAddr netip.AddrPort, natEntry 
 				continue
 			}
 
-			msgSockaddr := (*unix.RawSockaddrInet6)(unsafe.Pointer(msg.Msghdr.Name))
-			msgSockaddrPortp := (*[2]byte)(unsafe.Pointer(&msgSockaddr.Port))
-			msgSockaddrPort := uint16(msgSockaddrPortp[0])<<8 + uint16(msgSockaddrPortp[1])
-			if msgSockaddrPort != proxyPort || msgSockaddr.Addr != proxyAddr16 {
-				raddr := netip.AddrPortFrom(netip.AddrFrom16(msgSockaddr.Addr), msgSockaddrPort)
+			raddr, err := conn.SockaddrToAddrPort(msg.Msghdr.Name, msg.Msghdr.Namelen)
+			if err != nil {
+				c.logger.Warn("Failed to parse sockaddr of packet from proxyConn",
+					zap.Stringer("service", c),
+					zap.String("wgListen", c.config.WgListen),
+					zap.Stringer("clientAddress", clientAddr),
+					zap.Stringer("proxyAddress", c.proxyAddr),
+					zap.Error(err),
+				)
+				continue
+			}
+			if raddr != c.proxyAddr {
 				c.logger.Debug("Ignoring packet from non-proxy address",
 					zap.Stringer("service", c),
 					zap.String("wgListen", c.config.WgListen),
@@ -540,7 +548,7 @@ func (c *client) relayProxyToWgSendmmsgRing(clientAddr netip.AddrPort, natEntry 
 				zap.Stringer("proxyAddress", c.proxyAddr),
 				zap.Error(err),
 			)
-			n = ns
+			n = 1
 		}
 		ns -= n
 

@@ -37,7 +37,7 @@ Make sure to use the right MTU for both server and client. To encourage correct 
             "wgEndpoint": "[::1]:20221",
             "wgFwmark": 0,
             "mtu": 1500,
-            "batchMode": "ring"
+            "batchMode": ""
         }
     ],
     "peers": [
@@ -50,7 +50,7 @@ Make sure to use the right MTU for both server and client. To encourage correct 
             "proxyPSK": "sAe5RvzLJ3Q0Ll88QRM1N01dYk83Q4y0rXMP1i4rDmI=",
             "proxyFwmark": 0,
             "mtu": 1500,
-            "batchMode": "ring"
+            "batchMode": ""
         }
     ]
 }
