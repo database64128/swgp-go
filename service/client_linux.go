@@ -50,49 +50,35 @@ func (c *client) relayWgToProxySendmmsgSequential(clientAddr netip.AddrPort, nat
 		}
 		packetBuf := *dequeuedPacket.bufp
 
-		swgpPacketStart, swgpPacketLength, err := c.handler.EncryptZeroCopy(packetBuf, dequeuedPacket.start, dequeuedPacket.length)
-		if err != nil {
-			c.logger.Warn("Failed to encrypt WireGuard packet",
-				zap.Stringer("service", c),
-				zap.String("wgListen", c.config.WgListen),
-				zap.Stringer("clientAddress", clientAddr),
-				zap.Error(err),
-			)
-			c.packetBufPool.Put(dequeuedPacket.bufp)
-			continue
-		}
-
-		dequeuedPackets[count] = dequeuedPacket
-		iovec[count].Base = &packetBuf[swgpPacketStart]
-		iovec[count].SetLen(swgpPacketLength)
-		count++
-
 	dequeue:
-		for count < vecSize {
+		for {
+			swgpPacketStart, swgpPacketLength, err := c.handler.EncryptZeroCopy(packetBuf, dequeuedPacket.start, dequeuedPacket.length)
+			if err != nil {
+				c.logger.Warn("Failed to encrypt WireGuard packet",
+					zap.Stringer("service", c),
+					zap.String("wgListen", c.config.WgListen),
+					zap.Stringer("clientAddress", clientAddr),
+					zap.Error(err),
+				)
+				c.packetBufPool.Put(dequeuedPacket.bufp)
+				continue
+			}
+
+			dequeuedPackets[count] = dequeuedPacket
+			iovec[count].Base = &packetBuf[swgpPacketStart]
+			iovec[count].SetLen(swgpPacketLength)
+			count++
+
+			if count == vecSize {
+				break
+			}
+
 			select {
 			case dequeuedPacket, ok = <-natEntry.proxyConnSendCh:
 				if !ok {
 					goto cleanup
 				}
 				packetBuf = *dequeuedPacket.bufp
-
-				swgpPacketStart, swgpPacketLength, err = c.handler.EncryptZeroCopy(packetBuf, dequeuedPacket.start, dequeuedPacket.length)
-				if err != nil {
-					c.logger.Warn("Failed to encrypt WireGuard packet",
-						zap.Stringer("service", c),
-						zap.String("wgListen", c.config.WgListen),
-						zap.Stringer("clientAddress", clientAddr),
-						zap.Error(err),
-					)
-					c.packetBufPool.Put(dequeuedPacket.bufp)
-					continue
-				}
-
-				dequeuedPackets[count] = dequeuedPacket
-				iovec[count].Base = &packetBuf[swgpPacketStart]
-				iovec[count].SetLen(swgpPacketLength)
-				count++
-
 			default:
 				break dequeue
 			}
@@ -159,53 +145,37 @@ relay:
 		}
 		packetBuf := *dequeuedPacket.bufp
 
-		dequeuedPacket.start, dequeuedPacket.length, err = c.handler.EncryptZeroCopy(packetBuf, dequeuedPacket.start, dequeuedPacket.length)
-		if err != nil {
-			c.logger.Warn("Failed to encrypt WireGuard packet",
-				zap.Stringer("service", c),
-				zap.String("wgListen", c.config.WgListen),
-				zap.Stringer("clientAddress", clientAddr),
-				zap.Error(err),
-			)
-			c.packetBufPool.Put(dequeuedPacket.bufp)
-			continue
-		}
-
-		dequeuedPackets[tail] = dequeuedPacket
-		tail = (tail + 1) & sizeMask
-
-		iovec[count].Base = &packetBuf[dequeuedPacket.start]
-		iovec[count].SetLen(dequeuedPacket.length)
-		count++
-
 	dequeue:
-		for tail != head {
+		for {
+			dequeuedPacket.start, dequeuedPacket.length, err = c.handler.EncryptZeroCopy(packetBuf, dequeuedPacket.start, dequeuedPacket.length)
+			if err != nil {
+				c.logger.Warn("Failed to encrypt WireGuard packet",
+					zap.Stringer("service", c),
+					zap.String("wgListen", c.config.WgListen),
+					zap.Stringer("clientAddress", clientAddr),
+					zap.Error(err),
+				)
+				c.packetBufPool.Put(dequeuedPacket.bufp)
+				continue
+			}
+
+			dequeuedPackets[tail] = dequeuedPacket
+			tail = (tail + 1) & sizeMask
+
+			iovec[count].Base = &packetBuf[dequeuedPacket.start]
+			iovec[count].SetLen(dequeuedPacket.length)
+			count++
+
+			if tail == head {
+				break
+			}
+
 			select {
 			case dequeuedPacket, ok = <-natEntry.proxyConnSendCh:
 				if !ok {
 					break relay
 				}
 				packetBuf = *dequeuedPacket.bufp
-
-				dequeuedPacket.start, dequeuedPacket.length, err = c.handler.EncryptZeroCopy(packetBuf, dequeuedPacket.start, dequeuedPacket.length)
-				if err != nil {
-					c.logger.Warn("Failed to encrypt WireGuard packet",
-						zap.Stringer("service", c),
-						zap.String("wgListen", c.config.WgListen),
-						zap.Stringer("clientAddress", clientAddr),
-						zap.Error(err),
-					)
-					c.packetBufPool.Put(dequeuedPacket.bufp)
-					continue
-				}
-
-				dequeuedPackets[tail] = dequeuedPacket
-				tail = (tail + 1) & sizeMask
-
-				iovec[count].Base = &packetBuf[dequeuedPacket.start]
-				iovec[count].SetLen(dequeuedPacket.length)
-				count++
-
 			default:
 				break dequeue
 			}

@@ -336,11 +336,10 @@ func (s *server) relayProxyToWgGeneric(clientAddr netip.AddrPort, natEntry *serv
 		if !ok {
 			break
 		}
-
 		packetBuf := *queuedPacket.bufp
 		wgPacket := packetBuf[queuedPacket.start : queuedPacket.start+queuedPacket.length]
 
-		_, _, err := natEntry.wgConn.WriteMsgUDPAddrPort(wgPacket, nil, s.wgAddr)
+		_, err := natEntry.wgConn.WriteToUDPAddrPort(wgPacket, s.wgAddr)
 		if err != nil {
 			s.logger.Warn("Failed to write wgPacket to wgConn",
 				zap.Stringer("service", s),

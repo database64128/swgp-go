@@ -50,25 +50,23 @@ func (s *server) relayProxyToWgSendmmsgSequential(clientAddr netip.AddrPort, nat
 		}
 		packetBuf := *dequeuedPacket.bufp
 
-		dequeuedPackets[count] = dequeuedPacket
-		iovec[count].Base = &packetBuf[dequeuedPacket.start]
-		iovec[count].SetLen(dequeuedPacket.length)
-		count++
-
 	dequeue:
-		for count < vecSize {
+		for {
+			dequeuedPackets[count] = dequeuedPacket
+			iovec[count].Base = &packetBuf[dequeuedPacket.start]
+			iovec[count].SetLen(dequeuedPacket.length)
+			count++
+
+			if count == vecSize {
+				break
+			}
+
 			select {
 			case dequeuedPacket, ok = <-natEntry.wgConnSendCh:
 				if !ok {
 					goto cleanup
 				}
 				packetBuf = *dequeuedPacket.bufp
-
-				dequeuedPackets[count] = dequeuedPacket
-				iovec[count].Base = &packetBuf[dequeuedPacket.start]
-				iovec[count].SetLen(dequeuedPacket.length)
-				count++
-
 			default:
 				break dequeue
 			}
@@ -133,29 +131,25 @@ relay:
 		}
 		packetBuf := *dequeuedPacket.bufp
 
-		dequeuedPackets[tail] = dequeuedPacket
-		tail = (tail + 1) & sizeMask
-
-		iovec[count].Base = &packetBuf[dequeuedPacket.start]
-		iovec[count].SetLen(dequeuedPacket.length)
-		count++
-
 	dequeue:
-		for tail != head {
+		for {
+			dequeuedPackets[tail] = dequeuedPacket
+			tail = (tail + 1) & sizeMask
+
+			iovec[count].Base = &packetBuf[dequeuedPacket.start]
+			iovec[count].SetLen(dequeuedPacket.length)
+			count++
+
+			if tail == head {
+				break
+			}
+
 			select {
 			case dequeuedPacket, ok = <-natEntry.wgConnSendCh:
 				if !ok {
 					break relay
 				}
 				packetBuf = *dequeuedPacket.bufp
-
-				dequeuedPackets[tail] = dequeuedPacket
-				tail = (tail + 1) & sizeMask
-
-				iovec[count].Base = &packetBuf[dequeuedPacket.start]
-				iovec[count].SetLen(dequeuedPacket.length)
-				count++
-
 			default:
 				break dequeue
 			}

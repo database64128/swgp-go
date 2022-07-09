@@ -319,7 +319,6 @@ func (c *client) relayWgToProxyGeneric(clientAddr netip.AddrPort, natEntry *clie
 		if !ok {
 			break
 		}
-
 		packetBuf := *queuedPacket.bufp
 
 		swgpPacketStart, swgpPacketLength, err := c.handler.EncryptZeroCopy(packetBuf, queuedPacket.start, queuedPacket.length)
@@ -335,7 +334,7 @@ func (c *client) relayWgToProxyGeneric(clientAddr netip.AddrPort, natEntry *clie
 		}
 		swgpPacket := packetBuf[swgpPacketStart : swgpPacketStart+swgpPacketLength]
 
-		_, _, err = natEntry.proxyConn.WriteMsgUDPAddrPort(swgpPacket, nil, c.proxyAddr)
+		_, err = natEntry.proxyConn.WriteToUDPAddrPort(swgpPacket, c.proxyAddr)
 		if err != nil {
 			c.logger.Warn("Failed to write swgpPacket to proxyConn",
 				zap.Stringer("service", c),
