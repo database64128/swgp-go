@@ -110,8 +110,8 @@ func NewServerService(config ServerConfig, logger *zap.Logger) (Service, error) 
 	// Workaround for https://github.com/golang/go/issues/52264
 	s.wgAddr = conn.Tov4Mappedv6(s.wgAddr)
 
-	s.relayProxyToWg = s.getRelayProxyToWgFunc(config.BatchMode)
-	s.relayWgToProxy = s.getRelayWgToProxyFunc(config.BatchMode)
+	s.setRelayProxyToWgFunc()
+	s.setRelayWgToProxyFunc()
 	return s, nil
 }
 

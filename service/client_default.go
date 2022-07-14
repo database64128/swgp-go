@@ -2,12 +2,10 @@
 
 package service
 
-import "net/netip"
-
-func (c *client) getRelayWgToProxyFunc(batchMode string) func(clientAddr netip.AddrPort, natEntry *clientNatEntry) {
-	return c.relayWgToProxyGeneric
+func (c *client) setRelayWgToProxyFunc() {
+	c.relayWgToProxy = c.relayWgToProxyGeneric
 }
 
-func (c *client) getRelayProxyToWgFunc(batchMode string) func(clientAddr netip.AddrPort, natEntry *clientNatEntry) {
-	return c.relayProxyToWgGeneric
+func (c *client) setRelayProxyToWgFunc() {
+	c.relayProxyToWg = c.relayProxyToWgGeneric
 }

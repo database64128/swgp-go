@@ -113,8 +113,8 @@ func NewClientService(config ClientConfig, logger *zap.Logger) (Service, error) 
 		},
 	}
 
-	c.relayWgToProxy = c.getRelayWgToProxyFunc(config.BatchMode)
-	c.relayProxyToWg = c.getRelayProxyToWgFunc(config.BatchMode)
+	c.setRelayWgToProxyFunc()
+	c.setRelayProxyToWgFunc()
 	return c, nil
 }
 

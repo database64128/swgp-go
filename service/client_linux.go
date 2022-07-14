@@ -12,18 +12,18 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func (c *client) getRelayWgToProxyFunc(batchMode string) func(clientAddr netip.AddrPort, natEntry *clientNatEntry) {
-	switch batchMode {
+func (c *client) setRelayWgToProxyFunc() {
+	switch c.config.BatchMode {
 	case "ring":
-		return c.relayWgToProxySendmmsgRing
-	case "sequential", "":
-		return c.relayWgToProxySendmmsgSequential
+		c.relayWgToProxy = c.relayWgToProxySendmmsgRing
+	case "sendmmsg", "":
+		c.relayWgToProxy = c.relayWgToProxySendmmsg
 	default:
-		return c.relayWgToProxyGeneric
+		c.relayWgToProxy = c.relayWgToProxyGeneric
 	}
 }
 
-func (c *client) relayWgToProxySendmmsgSequential(clientAddr netip.AddrPort, natEntry *clientNatEntry) {
+func (c *client) relayWgToProxySendmmsg(clientAddr netip.AddrPort, natEntry *clientNatEntry) {
 	const vecSize = conn.UIO_MAXIOV
 
 	name, namelen := conn.AddrPortToSockaddr(c.proxyAddr)
@@ -226,18 +226,18 @@ relay:
 	}
 }
 
-func (c *client) getRelayProxyToWgFunc(batchMode string) func(clientAddr netip.AddrPort, natEntry *clientNatEntry) {
-	switch batchMode {
+func (c *client) setRelayProxyToWgFunc() {
+	switch c.config.BatchMode {
 	case "ring":
-		return c.relayProxyToWgSendmmsgRing
-	case "sequential", "":
-		return c.relayProxyToWgSendmmsgSequential
+		c.relayProxyToWg = c.relayProxyToWgSendmmsgRing
+	case "sendmmsg", "":
+		c.relayProxyToWg = c.relayProxyToWgSendmmsg
 	default:
-		return c.relayProxyToWgGeneric
+		c.relayProxyToWg = c.relayProxyToWgGeneric
 	}
 }
 
-func (c *client) relayProxyToWgSendmmsgSequential(clientAddr netip.AddrPort, natEntry *clientNatEntry) {
+func (c *client) relayProxyToWgSendmmsg(clientAddr netip.AddrPort, natEntry *clientNatEntry) {
 	const vecSize = conn.UIO_MAXIOV
 
 	name, namelen := conn.AddrPortToSockaddr(clientAddr)
