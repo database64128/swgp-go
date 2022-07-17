@@ -24,7 +24,11 @@ func (c *client) setRelayWgToProxyFunc() {
 }
 
 func (c *client) relayWgToProxySendmmsg(clientAddr netip.AddrPort, natEntry *clientNatEntry) {
-	const vecSize = conn.UIO_MAXIOV
+	var (
+		sendmmsgCount uint64
+		packetsSent   uint64
+		wgBytesSent   uint64
+	)
 
 	name, namelen := conn.AddrPortToSockaddr(c.proxyAddr)
 	dequeuedPackets := make([]queuedPacket, vecSize)
@@ -68,6 +72,7 @@ func (c *client) relayWgToProxySendmmsg(clientAddr netip.AddrPort, natEntry *cli
 			iovec[count].Base = &packetBuf[swgpPacketStart]
 			iovec[count].SetLen(swgpPacketLength)
 			count++
+			wgBytesSent += uint64(dequeuedPacket.length)
 
 			if count == vecSize {
 				break
@@ -95,6 +100,9 @@ func (c *client) relayWgToProxySendmmsg(clientAddr netip.AddrPort, natEntry *cli
 			)
 		}
 
+		sendmmsgCount++
+		packetsSent += uint64(count)
+
 	cleanup:
 		for _, packet := range dequeuedPackets[:count] {
 			c.packetBufPool.Put(packet.bufp)
@@ -104,14 +112,19 @@ func (c *client) relayWgToProxySendmmsg(clientAddr netip.AddrPort, natEntry *cli
 			break
 		}
 	}
+
+	c.logger.Info("Finished relay wgConn -> proxyConn",
+		zap.Stringer("service", c),
+		zap.String("wgListen", c.config.WgListen),
+		zap.Stringer("clientAddress", clientAddr),
+		zap.Stringer("proxyAddress", c.proxyAddr),
+		zap.Uint64("sendmmsgCount", sendmmsgCount),
+		zap.Uint64("packetsSent", packetsSent),
+		zap.Uint64("wgBytesSent", wgBytesSent),
+	)
 }
 
 func (c *client) relayWgToProxySendmmsgRing(clientAddr netip.AddrPort, natEntry *clientNatEntry) {
-	const (
-		vecSize  = conn.UIO_MAXIOV
-		sizeMask = 1023
-	)
-
 	name, namelen := conn.AddrPortToSockaddr(c.proxyAddr)
 	dequeuedPackets := make([]queuedPacket, vecSize)
 	iovec := make([]unix.Iovec, vecSize)
@@ -125,6 +138,10 @@ func (c *client) relayWgToProxySendmmsgRing(clientAddr netip.AddrPort, natEntry 
 		count int
 
 		err error
+
+		sendmmsgCount uint64
+		packetsSent   uint64
+		wgBytesSent   uint64
 	)
 
 	// Initialize msgvec.
@@ -165,6 +182,7 @@ relay:
 			iovec[count].Base = &packetBuf[dequeuedPacket.start]
 			iovec[count].SetLen(dequeuedPacket.length)
 			count++
+			wgBytesSent += uint64(dequeuedPacket.length)
 
 			if tail == head {
 				break
@@ -195,6 +213,9 @@ relay:
 			n = 1
 		}
 
+		sendmmsgCount++
+		packetsSent += uint64(n)
+
 		// Clean up and move head forward.
 		for i := 0; i < n; i++ {
 			c.packetBufPool.Put(dequeuedPackets[head].bufp)
@@ -224,6 +245,16 @@ relay:
 		c.packetBufPool.Put(dequeuedPackets[head].bufp)
 		head = (head + 1) & sizeMask
 	}
+
+	c.logger.Info("Finished relay wgConn -> proxyConn",
+		zap.Stringer("service", c),
+		zap.String("wgListen", c.config.WgListen),
+		zap.Stringer("clientAddress", clientAddr),
+		zap.Stringer("proxyAddress", c.proxyAddr),
+		zap.Uint64("sendmmsgCount", sendmmsgCount),
+		zap.Uint64("packetsSent", packetsSent),
+		zap.Uint64("wgBytesSent", wgBytesSent),
+	)
 }
 
 func (c *client) setRelayProxyToWgFunc() {
@@ -238,7 +269,11 @@ func (c *client) setRelayProxyToWgFunc() {
 }
 
 func (c *client) relayProxyToWgSendmmsg(clientAddr netip.AddrPort, natEntry *clientNatEntry) {
-	const vecSize = conn.UIO_MAXIOV
+	var (
+		sendmmsgCount uint64
+		packetsSent   uint64
+		wgBytesSent   uint64
+	)
 
 	name, namelen := conn.AddrPortToSockaddr(clientAddr)
 	savec := make([]unix.RawSockaddrInet6, vecSize)
@@ -343,6 +378,7 @@ func (c *client) relayProxyToWgSendmmsg(clientAddr netip.AddrPort, natEntry *cli
 				smsgvec[ns].Msghdr.SetControllen(smsgControlLen)
 			}
 			ns++
+			wgBytesSent += uint64(wgPacketLength)
 		}
 
 		if ns == 0 {
@@ -362,13 +398,32 @@ func (c *client) relayProxyToWgSendmmsg(clientAddr netip.AddrPort, natEntry *cli
 				zap.Error(err),
 			)
 		}
+
+		sendmmsgCount++
+		packetsSent += uint64(ns)
 	}
+
+	c.logger.Info("Finished relay proxyConn -> wgConn",
+		zap.Stringer("service", c),
+		zap.String("wgListen", c.config.WgListen),
+		zap.Stringer("clientAddress", clientAddr),
+		zap.Stringer("proxyAddress", c.proxyAddr),
+		zap.Uint64("sendmmsgCount", sendmmsgCount),
+		zap.Uint64("packetsSent", packetsSent),
+		zap.Uint64("wgBytesSent", wgBytesSent),
+	)
 }
 
 func (c *client) relayProxyToWgSendmmsgRing(clientAddr netip.AddrPort, natEntry *clientNatEntry) {
 	const (
 		vecSize  = 64
 		sizeMask = 63
+	)
+
+	var (
+		sendmmsgCount uint64
+		packetsSent   uint64
+		wgBytesSent   uint64
 	)
 
 	name, namelen := conn.AddrPortToSockaddr(clientAddr)
@@ -496,6 +551,7 @@ func (c *client) relayProxyToWgSendmmsgRing(clientAddr netip.AddrPort, natEntry 
 				smsgvec[ns].Msghdr.SetControllen(smsgControlLen)
 			}
 			ns++
+			wgBytesSent += uint64(wgPacketLength)
 
 			// Mark buffer as used.
 			usage |= 1 << pos
@@ -521,6 +577,9 @@ func (c *client) relayProxyToWgSendmmsgRing(clientAddr netip.AddrPort, natEntry 
 			n = 1
 		}
 		ns -= n
+
+		sendmmsgCount++
+		packetsSent += uint64(n)
 
 		// Move unsent packets to the beginning of smsgvec.
 		for i := 0; i < ns; i++ {
@@ -548,4 +607,14 @@ func (c *client) relayProxyToWgSendmmsgRing(clientAddr netip.AddrPort, natEntry 
 			nr++
 		}
 	}
+
+	c.logger.Info("Finished relay proxyConn -> wgConn",
+		zap.Stringer("service", c),
+		zap.String("wgListen", c.config.WgListen),
+		zap.Stringer("clientAddress", clientAddr),
+		zap.Stringer("proxyAddress", c.proxyAddr),
+		zap.Uint64("sendmmsgCount", sendmmsgCount),
+		zap.Uint64("packetsSent", packetsSent),
+		zap.Uint64("wgBytesSent", wgBytesSent),
+	)
 }

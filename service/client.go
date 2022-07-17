@@ -314,6 +314,11 @@ func (c *client) Start() (err error) {
 }
 
 func (c *client) relayWgToProxyGeneric(clientAddr netip.AddrPort, natEntry *clientNatEntry) {
+	var (
+		packetsSent uint64
+		wgBytesSent uint64
+	)
+
 	for {
 		queuedPacket, ok := <-natEntry.proxyConnSendCh
 		if !ok {
@@ -346,10 +351,26 @@ func (c *client) relayWgToProxyGeneric(clientAddr netip.AddrPort, natEntry *clie
 		}
 
 		c.packetBufPool.Put(queuedPacket.bufp)
+		packetsSent++
+		wgBytesSent += uint64(queuedPacket.length)
 	}
+
+	c.logger.Info("Finished relay wgConn -> proxyConn",
+		zap.Stringer("service", c),
+		zap.String("wgListen", c.config.WgListen),
+		zap.Stringer("clientAddress", clientAddr),
+		zap.Stringer("proxyAddress", c.proxyAddr),
+		zap.Uint64("packetsSent", packetsSent),
+		zap.Uint64("wgBytesSent", wgBytesSent),
+	)
 }
 
 func (c *client) relayProxyToWgGeneric(clientAddr netip.AddrPort, natEntry *clientNatEntry) {
+	var (
+		packetsSent uint64
+		wgBytesSent uint64
+	)
+
 	packetBuf := make([]byte, c.maxProxyPacketSize)
 
 	for {
@@ -416,7 +437,19 @@ func (c *client) relayProxyToWgGeneric(clientAddr netip.AddrPort, natEntry *clie
 				zap.Error(err),
 			)
 		}
+
+		packetsSent++
+		wgBytesSent += uint64(wgPacketLength)
 	}
+
+	c.logger.Info("Finished relay proxyConn -> wgConn",
+		zap.Stringer("service", c),
+		zap.String("wgListen", c.config.WgListen),
+		zap.Stringer("clientAddress", clientAddr),
+		zap.Stringer("proxyAddress", c.proxyAddr),
+		zap.Uint64("packetsSent", packetsSent),
+		zap.Uint64("wgBytesSent", wgBytesSent),
+	)
 }
 
 // Stop implements the Service Stop method.
