@@ -250,13 +250,6 @@ func (c *client) Start() (err error) {
 					zap.Stringer("proxyAddress", c.proxyAddr),
 				)
 			} else {
-				c.logger.Debug("Found existing UDP session in NAT table",
-					zap.Stringer("service", c),
-					zap.String("wgListen", c.config.WgListen),
-					zap.Stringer("clientAddress", clientAddr),
-					zap.Stringer("proxyAddress", c.proxyAddr),
-				)
-
 				// Update proxyConn read deadline when a handshake initiation/response message is received.
 				switch plaintextBuf[0] {
 				case packet.WireGuardMessageTypeHandshakeInitiation, packet.WireGuardMessageTypeHandshakeResponse:

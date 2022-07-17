@@ -266,13 +266,6 @@ func (s *server) Start() (err error) {
 					zap.Int("wgTunnelMTU", wgTunnelMTU),
 				)
 			} else {
-				s.logger.Debug("Found existing UDP session in NAT table",
-					zap.Stringer("service", s),
-					zap.String("proxyListen", s.config.ProxyListen),
-					zap.Stringer("clientAddress", clientAddr),
-					zap.Stringer("wgAddress", s.wgAddr),
-				)
-
 				// Update wgConn read deadline when a handshake initiation/response message is received.
 				switch packetBuf[wgPacketStart] {
 				case packet.WireGuardMessageTypeHandshakeInitiation, packet.WireGuardMessageTypeHandshakeResponse:
