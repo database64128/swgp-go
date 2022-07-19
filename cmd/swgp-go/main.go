@@ -26,7 +26,7 @@ func main() {
 	if *confPath == "" {
 		fmt.Println("Missing -confPath <path>.")
 		flag.Usage()
-		return
+		os.Exit(1)
 	}
 
 	if *suppressTimestamps {
