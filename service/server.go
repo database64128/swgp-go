@@ -98,16 +98,12 @@ func NewServerService(config ServerConfig, logger *zap.Logger) (Service, error) 
 	}
 
 	// Resolve endpoint address.
-	s.wgAddr, err = netip.ParseAddrPort(config.WgEndpoint)
+	s.wgAddr, err = conn.ResolveAddrPort(config.WgEndpoint)
 	if err != nil {
-		rudpaddr, err := net.ResolveUDPAddr("udp", config.WgEndpoint)
-		if err != nil {
-			return nil, err
-		}
-		s.wgAddr = rudpaddr.AddrPort()
+		return nil, err
 	}
 
-	// Workaround for https://github.com/golang/go/issues/52264
+	// Map to v6 since wgConn is v6 socket.
 	s.wgAddr = conn.Tov4Mappedv6(s.wgAddr)
 
 	s.setRelayProxyToWgFunc()

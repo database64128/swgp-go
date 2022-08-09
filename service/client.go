@@ -80,16 +80,12 @@ func NewClientService(config ClientConfig, logger *zap.Logger) (Service, error) 
 	overhead := frontOverhead + rearOverhead
 
 	// Resolve endpoint address.
-	c.proxyAddr, err = netip.ParseAddrPort(config.ProxyEndpoint)
+	c.proxyAddr, err = conn.ResolveAddrPort(config.ProxyEndpoint)
 	if err != nil {
-		rudpaddr, err := net.ResolveUDPAddr("udp", config.ProxyEndpoint)
-		if err != nil {
-			return nil, err
-		}
-		c.proxyAddr = rudpaddr.AddrPort()
+		return nil, err
 	}
 
-	// Workaround for https://github.com/golang/go/issues/52264
+	// Map to v6 since proxyConn is v6 socket.
 	c.proxyAddr = conn.Tov4Mappedv6(c.proxyAddr)
 
 	// maxProxyPacketSize = MTU - IP header length - UDP header length
