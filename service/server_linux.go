@@ -2,7 +2,6 @@ package service
 
 import (
 	"errors"
-	"net"
 	"net/netip"
 	"os"
 	"unsafe"
@@ -365,9 +364,6 @@ func (s *server) relayWgToProxySendmmsg(clientAddr netip.AddrPort, natEntry *ser
 
 		err = conn.WriteMsgvec(s.proxyConn, smsgvec[:ns])
 		if err != nil {
-			if errors.Is(err, net.ErrClosed) {
-				break
-			}
 			s.logger.Warn("Failed to write swgpPacket to proxyConn",
 				zap.Stringer("service", s),
 				zap.String("proxyListen", s.config.ProxyListen),
@@ -546,9 +542,6 @@ func (s *server) relayWgToProxySendmmsgRing(clientAddr netip.AddrPort, natEntry 
 		// Batch write.
 		n, err = conn.Sendmmsg(s.proxyConn, smsgvec[:ns])
 		if err != nil {
-			if errors.Is(err, net.ErrClosed) {
-				break
-			}
 			s.logger.Warn("Failed to write swgpPacket to proxyConn",
 				zap.Stringer("service", s),
 				zap.String("proxyListen", s.config.ProxyListen),
