@@ -29,7 +29,7 @@ type ServerConfig struct {
 }
 
 type serverNatEntry struct {
-	clientOobCache     []byte
+	clientPktinfoCache []byte
 	wgConn             *net.UDPConn
 	wgConnSendCh       chan queuedPacket
 	maxProxyPacketSize int
@@ -139,13 +139,13 @@ func (s *server) Start() (err error) {
 	go func() {
 		defer s.wg.Done()
 
-		oobBuf := make([]byte, conn.UDPOOBBufferSize)
+		cmsgBuf := make([]byte, conn.SocketControlMessageBufferSize)
 
 		for {
 			packetBufp := s.packetBufPool.Get().(*[]byte)
 			packetBuf := *packetBufp
 
-			n, oobn, flags, clientAddr, err := s.proxyConn.ReadMsgUDPAddrPort(packetBuf, oobBuf)
+			n, cmsgn, flags, clientAddr, err := s.proxyConn.ReadMsgUDPAddrPort(packetBuf, cmsgBuf)
 			if err != nil {
 				if errors.Is(err, os.ErrDeadlineExceeded) {
 					s.packetBufPool.Put(packetBufp)
@@ -285,10 +285,9 @@ func (s *server) Start() (err error) {
 				}
 			}
 
-			oob := oobBuf[:oobn]
-			natEntry.clientOobCache, err = conn.UpdateOobCache(natEntry.clientOobCache, oob, s.logger)
+			natEntry.clientPktinfoCache, err = conn.UpdatePktinfoCache(natEntry.clientPktinfoCache, cmsgBuf[:cmsgn], s.logger)
 			if err != nil {
-				s.logger.Warn("Failed to process OOB from proxyConn",
+				s.logger.Warn("Failed to process socket control messages from proxyConn",
 					zap.Stringer("service", s),
 					zap.String("proxyListen", s.config.ProxyListen),
 					zap.Stringer("clientAddress", clientAddr),
@@ -422,7 +421,7 @@ func (s *server) relayWgToProxyGeneric(clientAddr netip.AddrPort, natEntry *serv
 		}
 		swgpPacket := packetBuf[swgpPacketStart : swgpPacketStart+swgpPacketLength]
 
-		_, _, err = s.proxyConn.WriteMsgUDPAddrPort(swgpPacket, natEntry.clientOobCache, clientAddr)
+		_, _, err = s.proxyConn.WriteMsgUDPAddrPort(swgpPacket, natEntry.clientPktinfoCache, clientAddr)
 		if err != nil {
 			s.logger.Warn("Failed to write swgpPacket to proxyConn",
 				zap.Stringer("service", s),

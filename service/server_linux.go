@@ -286,7 +286,7 @@ func (s *server) relayWgToProxySendmmsg(clientAddr netip.AddrPort, natEntry *ser
 			continue
 		}
 
-		smsgControl := natEntry.clientOobCache
+		smsgControl := natEntry.clientPktinfoCache
 		smsgControlLen := len(smsgControl)
 		var ns int
 
@@ -451,7 +451,7 @@ func (s *server) relayWgToProxySendmmsgRing(clientAddr netip.AddrPort, natEntry 
 			continue
 		}
 
-		smsgControl := natEntry.clientOobCache
+		smsgControl := natEntry.clientPktinfoCache
 		smsgControlLen := len(smsgControl)
 
 		for _, msg := range rmsgvec[:nr] {

@@ -98,40 +98,39 @@ var (
 	inet6PktinfoForSize Inet6Pktinfo
 )
 
-// On Linux and Windows, UpdateOobCache filters out irrelevant OOB messages,
-// saves IP_PKTINFO or IPV6_PKTINFO socket control messages to the OOB cache,
-// and returns the updated OOB cache slice.
+// On Linux and Windows, UpdatePktinfoCache filters out irrelevant socket control messages,
+// saves IP_PKTINFO or IPV6_PKTINFO socket control messages to the pktinfo cache,
+// and returns the updated pktinfo cache slice.
 //
-// The returned OOB cache is unchanged if no relevant control messages
-// are found.
+// The returned pktinfo cache is unchanged if no relevant control messages are found.
 //
 // On other platforms, this is a no-op.
-func UpdateOobCache(oobCache, oob []byte, logger *zap.Logger) ([]byte, error) {
+func UpdatePktinfoCache(pktinfoCache, cmsgs []byte, logger *zap.Logger) ([]byte, error) {
 	// Since we only set IP_PKTINFO and/or IPV6_PKTINFO,
 	// Inet4Pktinfo or Inet6Pktinfo should be the first
 	// and only socket control message returned.
 	// Therefore we simplify the process by not looping
-	// through the OOB data.
-	oobLen := len(oob)
+	// through the control messages.
+	cmsgLen := len(cmsgs)
 	switch {
-	case oobLen == 0:
-		return oobCache, nil
-	case oobLen < int(unsafe.Sizeof(cmsghdrForSize)):
-		return oobCache, fmt.Errorf("oob length %d shorter than cmsghdr length", oobLen)
+	case cmsgLen == 0:
+		return pktinfoCache, nil
+	case cmsgLen < int(unsafe.Sizeof(cmsghdrForSize)):
+		return pktinfoCache, fmt.Errorf("control message length %d shorter than cmsghdr length", cmsgLen)
 	}
 
-	cmsghdr := (*Cmsghdr)(unsafe.Pointer(&oob[0]))
+	cmsghdr := (*Cmsghdr)(unsafe.Pointer(&cmsgs[0]))
 
 	switch {
-	case cmsghdr.Level == windows.IPPROTO_IP && cmsghdr.Type == windows.IP_PKTINFO && oobLen >= int(unsafe.Sizeof(cmsghdrForSize)+unsafe.Sizeof(inet4PktinfoForSize)):
-		// pktinfo := (*Inet4Pktinfo)(unsafe.Pointer(&oob[unsafe.Sizeof(cmsghdrForSize)]))
+	case cmsghdr.Level == windows.IPPROTO_IP && cmsghdr.Type == windows.IP_PKTINFO && cmsgLen >= int(unsafe.Sizeof(cmsghdrForSize)+unsafe.Sizeof(inet4PktinfoForSize)):
+		// pktinfo := (*Inet4Pktinfo)(unsafe.Pointer(&cmsgs[unsafe.Sizeof(cmsghdrForSize)]))
 		// logger.Debug("Matched Inet4Pktinfo", zap.Uint32("ifindex", pktinfo.Ifindex))
-	case cmsghdr.Level == windows.IPPROTO_IPV6 && cmsghdr.Type == windows.IPV6_PKTINFO && oobLen >= int(unsafe.Sizeof(cmsghdrForSize)+unsafe.Sizeof(inet6PktinfoForSize)):
-		// pktinfo := (*Inet6Pktinfo)(unsafe.Pointer(&oob[unsafe.Sizeof(cmsghdrForSize)]))
+	case cmsghdr.Level == windows.IPPROTO_IPV6 && cmsghdr.Type == windows.IPV6_PKTINFO && cmsgLen >= int(unsafe.Sizeof(cmsghdrForSize)+unsafe.Sizeof(inet6PktinfoForSize)):
+		// pktinfo := (*Inet6Pktinfo)(unsafe.Pointer(&cmsgs[unsafe.Sizeof(cmsghdrForSize)]))
 		// logger.Debug("Matched Inet6Pktinfo", zap.Uint32("ifindex", pktinfo.Ifindex))
 	default:
-		return oobCache, fmt.Errorf("unknown control message level %d type %d", cmsghdr.Level, cmsghdr.Type)
+		return pktinfoCache, fmt.Errorf("unknown control message level %d type %d", cmsghdr.Level, cmsghdr.Type)
 	}
 
-	return append(oobCache[:0], oob...), nil
+	return append(pktinfoCache[:0], cmsgs...), nil
 }
