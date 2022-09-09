@@ -329,11 +329,7 @@ func (s *server) relayProxyToWgGeneric(clientAddr netip.AddrPort, natEntry *serv
 		wgBytesSent uint64
 	)
 
-	for {
-		queuedPacket, ok := <-natEntry.wgConnSendCh
-		if !ok {
-			break
-		}
+	for queuedPacket := range natEntry.wgConnSendCh {
 		packetBuf := *queuedPacket.bufp
 		wgPacket := packetBuf[queuedPacket.start : queuedPacket.start+queuedPacket.length]
 

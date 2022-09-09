@@ -34,7 +34,6 @@ func (s *server) relayProxyToWgSendmmsg(clientAddr netip.AddrPort, natEntry *ser
 	iovec := make([]unix.Iovec, vecSize)
 	msgvec := make([]conn.Mmsghdr, vecSize)
 
-	// Initialize msgvec.
 	for i := range msgvec {
 		msgvec[i].Msghdr.Name = name
 		msgvec[i].Msghdr.Namelen = namelen
@@ -42,7 +41,6 @@ func (s *server) relayProxyToWgSendmmsg(clientAddr netip.AddrPort, natEntry *ser
 		msgvec[i].Msghdr.SetIovlen(1)
 	}
 
-	// Main relay loop.
 	for {
 		var count int
 
@@ -68,7 +66,7 @@ func (s *server) relayProxyToWgSendmmsg(clientAddr netip.AddrPort, natEntry *ser
 			select {
 			case dequeuedPacket, ok = <-natEntry.wgConnSendCh:
 				if !ok {
-					goto cleanup
+					break dequeue
 				}
 				packetBuf = *dequeuedPacket.bufp
 			default:
@@ -76,7 +74,6 @@ func (s *server) relayProxyToWgSendmmsg(clientAddr netip.AddrPort, natEntry *ser
 			}
 		}
 
-		// Batch write.
 		if err := conn.WriteMsgvec(natEntry.wgConn, msgvec[:count]); err != nil {
 			s.logger.Warn("Failed to write wgPacket to wgConn",
 				zap.Stringer("service", s),
@@ -90,7 +87,6 @@ func (s *server) relayProxyToWgSendmmsg(clientAddr netip.AddrPort, natEntry *ser
 		sendmmsgCount++
 		packetsSent += uint64(count)
 
-	cleanup:
 		for _, packet := range dequeuedPackets[:count] {
 			s.packetBufPool.Put(packet.bufp)
 		}
@@ -129,7 +125,6 @@ func (s *server) relayProxyToWgSendmmsgRing(clientAddr netip.AddrPort, natEntry 
 		wgBytesSent   uint64
 	)
 
-	// Initialize msgvec.
 	for i := range msgvec {
 		msgvec[i].Msghdr.Name = name
 		msgvec[i].Msghdr.Namelen = namelen
@@ -137,13 +132,11 @@ func (s *server) relayProxyToWgSendmmsgRing(clientAddr netip.AddrPort, natEntry 
 		msgvec[i].Msghdr.SetIovlen(1)
 	}
 
-	// Main relay loop.
-relay:
 	for {
 		// Block on first dequeue op.
 		dequeuedPacket, ok := <-natEntry.wgConnSendCh
 		if !ok {
-			break relay
+			break
 		}
 		packetBuf := *dequeuedPacket.bufp
 
@@ -164,7 +157,7 @@ relay:
 			select {
 			case dequeuedPacket, ok = <-natEntry.wgConnSendCh:
 				if !ok {
-					break relay
+					break dequeue
 				}
 				packetBuf = *dequeuedPacket.bufp
 			default:
@@ -260,7 +253,6 @@ func (s *server) relayWgToProxySendmmsg(clientAddr netip.AddrPort, natEntry *ser
 	rmsgvec := make([]conn.Mmsghdr, vecSize)
 	smsgvec := make([]conn.Mmsghdr, vecSize)
 
-	// Initialize riovec, rmsgvec and smsgvec.
 	for i := 0; i < vecSize; i++ {
 		bufvec[i] = make([]byte, natEntry.maxProxyPacketSize)
 
@@ -278,7 +270,6 @@ func (s *server) relayWgToProxySendmmsg(clientAddr netip.AddrPort, natEntry *ser
 		smsgvec[i].Msghdr.SetIovlen(1)
 	}
 
-	// Main relay loop.
 	for {
 		nr, err := conn.Recvmmsg(natEntry.wgConn, rmsgvec)
 		if err != nil {
@@ -420,7 +411,6 @@ func (s *server) relayWgToProxySendmmsgRing(clientAddr netip.AddrPort, natEntry 
 		pos int = -1
 	)
 
-	// Initialize riovec, rmsgvec and smsgvec.
 	for i := 0; i < vecSize; i++ {
 		bufvec[i] = make([]byte, natEntry.maxProxyPacketSize)
 
@@ -445,7 +435,6 @@ func (s *server) relayWgToProxySendmmsgRing(clientAddr netip.AddrPort, natEntry 
 		err error
 	)
 
-	// Main relay loop.
 	for {
 		nr, err = conn.Recvmmsg(natEntry.wgConn, rmsgvec[:nr])
 		if err != nil {

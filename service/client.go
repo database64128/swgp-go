@@ -312,11 +312,7 @@ func (c *client) relayWgToProxyGeneric(clientAddr netip.AddrPort, natEntry *clie
 		wgBytesSent uint64
 	)
 
-	for {
-		queuedPacket, ok := <-natEntry.proxyConnSendCh
-		if !ok {
-			break
-		}
+	for queuedPacket := range natEntry.proxyConnSendCh {
 		packetBuf := *queuedPacket.bufp
 
 		swgpPacketStart, swgpPacketLength, err := c.handler.EncryptZeroCopy(packetBuf, queuedPacket.start, queuedPacket.length)
