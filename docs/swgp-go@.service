@@ -1,0 +1,10 @@
+[Unit]
+Description=Simple WireGuard Proxy Service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/swgp-go -confPath /etc/swgp-go/%i.json -zapConf systemd
+
+[Install]
+WantedBy=multi-user.target
