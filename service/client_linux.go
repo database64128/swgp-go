@@ -29,14 +29,14 @@ func (c *client) relayWgToProxySendmmsg(clientAddr netip.AddrPort, natEntry *cli
 		wgBytesSent   uint64
 	)
 
-	name, namelen := conn.AddrPortToSockaddr(c.proxyAddr)
+	rsa6 := conn.AddrPortToSockaddrInet6(c.proxyAddr)
 	dequeuedPackets := make([]queuedPacket, vecSize)
 	iovec := make([]unix.Iovec, vecSize)
 	msgvec := make([]conn.Mmsghdr, vecSize)
 
 	for i := range msgvec {
-		msgvec[i].Msghdr.Name = name
-		msgvec[i].Msghdr.Namelen = namelen
+		msgvec[i].Msghdr.Name = (*byte)(unsafe.Pointer(&rsa6))
+		msgvec[i].Msghdr.Namelen = unix.SizeofSockaddrInet6
 		msgvec[i].Msghdr.Iov = &iovec[i]
 		msgvec[i].Msghdr.SetIovlen(1)
 	}
@@ -128,7 +128,7 @@ main:
 }
 
 func (c *client) relayWgToProxySendmmsgRing(clientAddr netip.AddrPort, natEntry *clientNatEntry) {
-	name, namelen := conn.AddrPortToSockaddr(c.proxyAddr)
+	rsa6 := conn.AddrPortToSockaddrInet6(c.proxyAddr)
 	dequeuedPackets := make([]queuedPacket, vecSize)
 	iovec := make([]unix.Iovec, vecSize)
 	msgvec := make([]conn.Mmsghdr, vecSize)
@@ -148,8 +148,8 @@ func (c *client) relayWgToProxySendmmsgRing(clientAddr netip.AddrPort, natEntry 
 	)
 
 	for i := range msgvec {
-		msgvec[i].Msghdr.Name = name
-		msgvec[i].Msghdr.Namelen = namelen
+		msgvec[i].Msghdr.Name = (*byte)(unsafe.Pointer(&rsa6))
+		msgvec[i].Msghdr.Namelen = unix.SizeofSockaddrInet6
 		msgvec[i].Msghdr.Iov = &iovec[i]
 		msgvec[i].Msghdr.SetIovlen(1)
 	}

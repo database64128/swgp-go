@@ -87,9 +87,6 @@ func NewClientService(config ClientConfig, logger *zap.Logger) (Service, error) 
 		return nil, err
 	}
 
-	// Map to v6 since proxyConn is v6 socket.
-	c.proxyAddr = conn.Tov4Mappedv6(c.proxyAddr)
-
 	// maxProxyPacketSize = MTU - IP header length - UDP header length
 	if addr := c.proxyAddr.Addr(); addr.Is4() || addr.Is4In6() {
 		c.maxProxyPacketSize = config.MTU - IPv4HeaderLength - UDPHeaderLength

@@ -105,9 +105,6 @@ func NewServerService(config ServerConfig, logger *zap.Logger) (Service, error) 
 		return nil, err
 	}
 
-	// Map to v6 since wgConn is v6 socket.
-	s.wgAddr = conn.Tov4Mappedv6(s.wgAddr)
-
 	s.setRelayProxyToWgFunc()
 	s.setRelayWgToProxyFunc()
 	return s, nil
