@@ -44,11 +44,11 @@ type Service interface {
 	Stop() error
 }
 
-// ServiceConfig stores configurations for a typical swgp service.
+// Config stores configurations for a typical swgp service.
 // It may be marshaled as or unmarshaled from JSON.
 // Call the Start method to start all configured services.
 // Call the Stop method to properly close all running services.
-type ServiceConfig struct {
+type Config struct {
 	Interfaces []ServerConfig `json:"interfaces"`
 	Peers      []ClientConfig `json:"peers"`
 	services   []Service
@@ -56,7 +56,7 @@ type ServiceConfig struct {
 }
 
 // Start starts all configured server (interface) and client (peer) services.
-func (sc *ServiceConfig) Start(logger *zap.Logger) error {
+func (sc *Config) Start(logger *zap.Logger) error {
 	sc.logger = logger
 	serverCount := len(sc.Interfaces)
 	clientCount := len(sc.Peers)
@@ -97,7 +97,7 @@ func (sc *ServiceConfig) Start(logger *zap.Logger) error {
 }
 
 // Stop stops all running services.
-func (sc *ServiceConfig) Stop() {
+func (sc *Config) Stop() {
 	for _, s := range sc.services {
 		err := s.Stop()
 		if err != nil {

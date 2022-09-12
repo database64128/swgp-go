@@ -6,8 +6,8 @@ import (
 	"net"
 	"testing"
 
-	"github.com/database64128/swgp-go/logging"
 	"github.com/database64128/swgp-go/packet"
+	"go.uber.org/zap"
 )
 
 func generateTestPSK(t *testing.T) []byte {
@@ -20,13 +20,13 @@ func generateTestPSK(t *testing.T) []byte {
 }
 
 func testClientServerHandshake(t *testing.T, serverConfig ServerConfig, clientConfig ClientConfig) {
-	logger, err := logging.NewProductionConsole(false, "debug")
+	logger, err := zap.NewDevelopment()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer logger.Sync()
 
-	sc := ServiceConfig{
+	sc := Config{
 		Interfaces: []ServerConfig{serverConfig},
 		Peers:      []ClientConfig{clientConfig},
 	}
@@ -151,13 +151,13 @@ func TestClientServerHandshakeParanoid(t *testing.T) {
 }
 
 func testClientServerDataPackets(t *testing.T, serverConfig ServerConfig, clientConfig ClientConfig) {
-	logger, err := logging.NewProductionConsole(false, "debug")
+	logger, err := zap.NewDevelopment()
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer logger.Sync()
 
-	sc := ServiceConfig{
+	sc := Config{
 		Interfaces: []ServerConfig{serverConfig},
 		Peers:      []ClientConfig{clientConfig},
 	}
