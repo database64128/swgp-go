@@ -47,10 +47,10 @@ type server struct {
 
 	packetBufPool *sync.Pool
 
-	mu         sync.Mutex
-	wg         sync.WaitGroup
-	natTimeout time.Duration
-	table      map[netip.AddrPort]*serverNatEntry
+	mu    sync.Mutex
+	wg    sync.WaitGroup
+	mwg   sync.WaitGroup
+	table map[netip.AddrPort]*serverNatEntry
 
 	relayProxyToWg func(clientAddr netip.AddrPort, natEntry *serverNatEntry)
 	relayWgToProxy func(clientAddr netip.AddrPort, natEntry *serverNatEntry)
@@ -65,10 +65,9 @@ func NewServerService(config ServerConfig, logger *zap.Logger) (Service, error) 
 	}
 
 	s := &server{
-		config:     config,
-		logger:     logger,
-		natTimeout: RejectAfterTime,
-		table:      make(map[netip.AddrPort]*serverNatEntry),
+		config: config,
+		logger: logger,
+		table:  make(map[netip.AddrPort]*serverNatEntry),
 	}
 	var err error
 
@@ -131,10 +130,10 @@ func (s *server) Start() (err error) {
 		)
 	}
 
-	s.wg.Add(1)
+	s.mwg.Add(1)
 
 	go func() {
-		defer s.wg.Done()
+		defer s.mwg.Done()
 
 		cmsgBuf := make([]byte, conn.SocketControlMessageBufferSize)
 
@@ -205,7 +204,7 @@ func (s *server) Start() (err error) {
 					)
 				}
 
-				err = wgConn.SetReadDeadline(time.Now().Add(s.natTimeout))
+				err = wgConn.SetReadDeadline(time.Now().Add(RejectAfterTime))
 				if err != nil {
 					s.logger.Warn("Failed to SetReadDeadline on wgConn",
 						zap.Stringer("service", s),
@@ -266,7 +265,7 @@ func (s *server) Start() (err error) {
 				// Update wgConn read deadline when a handshake initiation/response message is received.
 				switch packetBuf[wgPacketStart] {
 				case packet.WireGuardMessageTypeHandshakeInitiation, packet.WireGuardMessageTypeHandshakeResponse:
-					err = natEntry.wgConn.SetReadDeadline(time.Now().Add(s.natTimeout))
+					err = natEntry.wgConn.SetReadDeadline(time.Now().Add(RejectAfterTime))
 					if err != nil {
 						s.logger.Warn("Failed to SetReadDeadline on wgConn",
 							zap.Stringer("service", s),
@@ -455,7 +454,9 @@ func (s *server) Stop() error {
 		return err
 	}
 
-	s.natTimeout = 0
+	// Wait for serverConn receive goroutines to exit,
+	// so there won't be any new sessions added to the table.
+	s.mwg.Wait()
 
 	s.mu.Lock()
 	for clientAddr, entry := range s.table {
@@ -471,6 +472,9 @@ func (s *server) Stop() error {
 	}
 	s.mu.Unlock()
 
+	// Wait for all relay goroutines to exit before closing serverConn,
+	// so in-flight packets can be written out.
 	s.wg.Wait()
+
 	return s.proxyConn.Close()
 }
