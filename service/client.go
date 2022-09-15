@@ -51,6 +51,7 @@ type client struct {
 	mwg   sync.WaitGroup
 	table map[netip.AddrPort]*clientNatEntry
 
+	recvFromWgConn func()
 	relayWgToProxy func(clientAddr netip.AddrPort, natEntry *clientNatEntry)
 	relayProxyToWg func(clientAddr netip.AddrPort, natEntry *clientNatEntry)
 }
@@ -107,8 +108,7 @@ func NewClientService(config ClientConfig, logger *zap.Logger) (Service, error) 
 		},
 	}
 
-	c.setRelayWgToProxyFunc()
-	c.setRelayProxyToWgFunc()
+	c.setRecvAndRelayFunctions()
 	return c, nil
 }
 
@@ -119,9 +119,6 @@ func (c *client) String() string {
 
 // Start implements the Service Start method.
 func (c *client) Start() (err error) {
-	frontOverhead := c.handler.FrontOverhead()
-	rearOverhead := c.handler.RearOverhead()
-
 	var serr error
 	c.wgConn, err, serr = conn.ListenUDP("udp", c.config.WgListen, true, c.config.WgFwmark)
 	if err != nil {
@@ -139,67 +136,133 @@ func (c *client) Start() (err error) {
 	c.mwg.Add(1)
 
 	go func() {
-		defer c.mwg.Done()
+		c.recvFromWgConn()
+		c.mwg.Done()
+	}()
 
-		cmsgBuf := make([]byte, conn.SocketControlMessageBufferSize)
+	c.logger.Info("Started service",
+		zap.Stringer("service", c),
+		zap.String("wgListen", c.config.WgListen),
+		zap.String("proxyEndpoint", c.config.ProxyEndpoint),
+		zap.String("proxyMode", c.config.ProxyMode),
+		zap.Int("wgTunnelMTU", c.wgTunnelMTU),
+	)
+	return
+}
 
-		for {
-			packetBufp := c.packetBufPool.Get().(*[]byte)
-			packetBuf := *packetBufp
-			plaintextBuf := packetBuf[frontOverhead : c.maxProxyPacketSize-rearOverhead]
+func (c *client) recvFromWgConnGeneric() {
+	frontOverhead := c.handler.FrontOverhead()
+	rearOverhead := c.handler.RearOverhead()
 
-			n, cmsgn, flags, clientAddr, err := c.wgConn.ReadMsgUDPAddrPort(plaintextBuf, cmsgBuf)
+	cmsgBuf := make([]byte, conn.SocketControlMessageBufferSize)
+
+	for {
+		packetBufp := c.packetBufPool.Get().(*[]byte)
+		packetBuf := *packetBufp
+		plaintextBuf := packetBuf[frontOverhead : c.maxProxyPacketSize-rearOverhead]
+
+		n, cmsgn, flags, clientAddr, err := c.wgConn.ReadMsgUDPAddrPort(plaintextBuf, cmsgBuf)
+		if err != nil {
+			if errors.Is(err, os.ErrDeadlineExceeded) {
+				c.packetBufPool.Put(packetBufp)
+				break
+			}
+			c.logger.Warn("Failed to read from wgConn",
+				zap.Stringer("service", c),
+				zap.String("wgListen", c.config.WgListen),
+				zap.Error(err),
+			)
+			c.packetBufPool.Put(packetBufp)
+			continue
+		}
+		err = conn.ParseFlagsForError(flags)
+		if err != nil {
+			c.logger.Warn("Failed to read from wgConn",
+				zap.Stringer("service", c),
+				zap.String("wgListen", c.config.WgListen),
+				zap.Error(err),
+			)
+			c.packetBufPool.Put(packetBufp)
+			continue
+		}
+
+		c.mu.Lock()
+
+		natEntry := c.table[clientAddr]
+		if natEntry == nil {
+			proxyConn, err, serr := conn.ListenUDP("udp", "", false, c.config.ProxyFwmark)
 			if err != nil {
-				if errors.Is(err, os.ErrDeadlineExceeded) {
-					c.packetBufPool.Put(packetBufp)
-					break
-				}
-				c.logger.Warn("Failed to read from wgConn",
+				c.logger.Warn("Failed to start UDP listener for new UDP session",
 					zap.Stringer("service", c),
 					zap.String("wgListen", c.config.WgListen),
+					zap.Stringer("clientAddress", clientAddr),
 					zap.Error(err),
 				)
 				c.packetBufPool.Put(packetBufp)
+				c.mu.Unlock()
 				continue
 			}
-			err = conn.ParseFlagsForError(flags)
-			if err != nil {
-				c.logger.Warn("Failed to read from wgConn",
+			if serr != nil {
+				c.logger.Warn("An error occurred while setting socket options on proxyConn",
 					zap.Stringer("service", c),
 					zap.String("wgListen", c.config.WgListen),
+					zap.Stringer("clientAddress", clientAddr),
+					zap.Int("proxyFwmark", c.config.ProxyFwmark),
+					zap.NamedError("serr", serr),
+				)
+			}
+
+			err = proxyConn.SetReadDeadline(time.Now().Add(RejectAfterTime))
+			if err != nil {
+				c.logger.Warn("Failed to SetReadDeadline on proxyConn",
+					zap.Stringer("service", c),
+					zap.String("wgListen", c.config.WgListen),
+					zap.Stringer("clientAddress", clientAddr),
+					zap.Stringer("proxyAddress", c.proxyAddr),
 					zap.Error(err),
 				)
 				c.packetBufPool.Put(packetBufp)
+				c.mu.Unlock()
 				continue
 			}
 
-			c.mu.Lock()
+			natEntry = &clientNatEntry{
+				proxyConn:       proxyConn,
+				proxyConnSendCh: make(chan queuedPacket, sendChannelCapacity),
+			}
 
-			natEntry := c.table[clientAddr]
-			if natEntry == nil {
-				proxyConn, err, serr := conn.ListenUDP("udp", "", false, c.config.ProxyFwmark)
-				if err != nil {
-					c.logger.Warn("Failed to start UDP listener for new UDP session",
-						zap.Stringer("service", c),
-						zap.String("wgListen", c.config.WgListen),
-						zap.Stringer("clientAddress", clientAddr),
-						zap.Error(err),
-					)
-					c.packetBufPool.Put(packetBufp)
-					c.mu.Unlock()
-					continue
-				}
-				if serr != nil {
-					c.logger.Warn("An error occurred while setting socket options on proxyConn",
-						zap.Stringer("service", c),
-						zap.String("wgListen", c.config.WgListen),
-						zap.Stringer("clientAddress", clientAddr),
-						zap.Int("proxyFwmark", c.config.ProxyFwmark),
-						zap.NamedError("serr", serr),
-					)
-				}
+			c.table[clientAddr] = natEntry
 
-				err = proxyConn.SetReadDeadline(time.Now().Add(RejectAfterTime))
+			c.wg.Add(2)
+
+			go func() {
+				c.relayProxyToWg(clientAddr, natEntry)
+
+				c.mu.Lock()
+				close(natEntry.proxyConnSendCh)
+				delete(c.table, clientAddr)
+				c.mu.Unlock()
+
+				c.wg.Done()
+			}()
+
+			go func() {
+				c.relayWgToProxy(clientAddr, natEntry)
+				natEntry.proxyConn.Close()
+				c.wg.Done()
+			}()
+
+			c.logger.Info("New UDP session",
+				zap.Stringer("service", c),
+				zap.String("wgListen", c.config.WgListen),
+				zap.Stringer("clientAddress", clientAddr),
+				zap.Stringer("proxyAddress", c.proxyAddr),
+			)
+		} else {
+			// Update proxyConn read deadline when a handshake initiation/response message is received.
+			switch plaintextBuf[0] {
+			case packet.WireGuardMessageTypeHandshakeInitiation, packet.WireGuardMessageTypeHandshakeResponse:
+				err = natEntry.proxyConn.SetReadDeadline(time.Now().Add(RejectAfterTime))
 				if err != nil {
 					c.logger.Warn("Failed to SetReadDeadline on proxyConn",
 						zap.Stringer("service", c),
@@ -212,93 +275,33 @@ func (c *client) Start() (err error) {
 					c.mu.Unlock()
 					continue
 				}
-
-				natEntry = &clientNatEntry{
-					proxyConn:       proxyConn,
-					proxyConnSendCh: make(chan queuedPacket, sendChannelCapacity),
-				}
-
-				c.table[clientAddr] = natEntry
-
-				c.wg.Add(2)
-
-				go func() {
-					c.relayProxyToWg(clientAddr, natEntry)
-
-					c.mu.Lock()
-					close(natEntry.proxyConnSendCh)
-					delete(c.table, clientAddr)
-					c.mu.Unlock()
-
-					c.wg.Done()
-				}()
-
-				go func() {
-					c.relayWgToProxy(clientAddr, natEntry)
-					natEntry.proxyConn.Close()
-					c.wg.Done()
-				}()
-
-				c.logger.Info("New UDP session",
-					zap.Stringer("service", c),
-					zap.String("wgListen", c.config.WgListen),
-					zap.Stringer("clientAddress", clientAddr),
-					zap.Stringer("proxyAddress", c.proxyAddr),
-				)
-			} else {
-				// Update proxyConn read deadline when a handshake initiation/response message is received.
-				switch plaintextBuf[0] {
-				case packet.WireGuardMessageTypeHandshakeInitiation, packet.WireGuardMessageTypeHandshakeResponse:
-					err = natEntry.proxyConn.SetReadDeadline(time.Now().Add(RejectAfterTime))
-					if err != nil {
-						c.logger.Warn("Failed to SetReadDeadline on proxyConn",
-							zap.Stringer("service", c),
-							zap.String("wgListen", c.config.WgListen),
-							zap.Stringer("clientAddress", clientAddr),
-							zap.Stringer("proxyAddress", c.proxyAddr),
-							zap.Error(err),
-						)
-						c.packetBufPool.Put(packetBufp)
-						c.mu.Unlock()
-						continue
-					}
-				}
 			}
-
-			natEntry.clientPktinfoCache, err = conn.UpdatePktinfoCache(natEntry.clientPktinfoCache, cmsgBuf[:cmsgn], c.logger)
-			if err != nil {
-				c.logger.Warn("Failed to process socket control messages from wgConn",
-					zap.Stringer("service", c),
-					zap.String("wgListen", c.config.WgListen),
-					zap.Stringer("clientAddress", clientAddr),
-					zap.Error(err),
-				)
-			}
-
-			select {
-			case natEntry.proxyConnSendCh <- queuedPacket{packetBufp, frontOverhead, n}:
-			default:
-				c.logger.Debug("swgpPacket dropped due to full send channel",
-					zap.Stringer("service", c),
-					zap.String("wgListen", c.config.WgListen),
-					zap.Stringer("clientAddress", clientAddr),
-					zap.Stringer("proxyAddress", c.proxyAddr),
-				)
-				c.packetBufPool.Put(packetBufp)
-			}
-
-			c.mu.Unlock()
 		}
-	}()
 
-	c.logger.Info("Started service",
-		zap.Stringer("service", c),
-		zap.String("wgListen", c.config.WgListen),
-		zap.String("proxyEndpoint", c.config.ProxyEndpoint),
-		zap.String("proxyMode", c.config.ProxyMode),
-		zap.Int("wgTunnelMTU", c.wgTunnelMTU),
-	)
-	return
+		natEntry.clientPktinfoCache, err = conn.UpdatePktinfoCache(natEntry.clientPktinfoCache, cmsgBuf[:cmsgn], c.logger)
+		if err != nil {
+			c.logger.Warn("Failed to process socket control messages from wgConn",
+				zap.Stringer("service", c),
+				zap.String("wgListen", c.config.WgListen),
+				zap.Stringer("clientAddress", clientAddr),
+				zap.Error(err),
+			)
+		}
+
+		select {
+		case natEntry.proxyConnSendCh <- queuedPacket{packetBufp, frontOverhead, n}:
+		default:
+			c.logger.Debug("swgpPacket dropped due to full send channel",
+				zap.Stringer("service", c),
+				zap.String("wgListen", c.config.WgListen),
+				zap.Stringer("clientAddress", clientAddr),
+				zap.Stringer("proxyAddress", c.proxyAddr),
+			)
+			c.packetBufPool.Put(packetBufp)
+		}
+
+		c.mu.Unlock()
+	}
 }
 
 func (c *client) relayWgToProxyGeneric(clientAddr netip.AddrPort, natEntry *clientNatEntry) {

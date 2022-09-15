@@ -11,14 +11,19 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func (c *client) setRelayWgToProxyFunc() {
+func (c *client) setRecvAndRelayFunctions() {
+	c.recvFromWgConn = c.recvFromWgConnGeneric
+
 	switch c.config.BatchMode {
 	case "ring":
 		c.relayWgToProxy = c.relayWgToProxySendmmsgRing
+		c.relayProxyToWg = c.relayProxyToWgSendmmsgRing
 	case "sendmmsg", "":
 		c.relayWgToProxy = c.relayWgToProxySendmmsg
+		c.relayProxyToWg = c.relayProxyToWgSendmmsg
 	default:
 		c.relayWgToProxy = c.relayWgToProxyGeneric
+		c.relayProxyToWg = c.relayProxyToWgGeneric
 	}
 }
 
@@ -262,17 +267,6 @@ main:
 		zap.Uint64("packetsSent", packetsSent),
 		zap.Uint64("wgBytesSent", wgBytesSent),
 	)
-}
-
-func (c *client) setRelayProxyToWgFunc() {
-	switch c.config.BatchMode {
-	case "ring":
-		c.relayProxyToWg = c.relayProxyToWgSendmmsgRing
-	case "sendmmsg", "":
-		c.relayProxyToWg = c.relayProxyToWgSendmmsg
-	default:
-		c.relayProxyToWg = c.relayProxyToWgGeneric
-	}
 }
 
 func (c *client) relayProxyToWgSendmmsg(clientAddr netip.AddrPort, natEntry *clientNatEntry) {
