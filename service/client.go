@@ -395,12 +395,16 @@ func (c *client) relayWgToProxyGeneric(clientAddr netip.AddrPort, natEntry *clie
 
 func (c *client) relayProxyToWgGeneric(clientAddr netip.AddrPort, natEntry *clientNatEntry, clientPktinfop *[]byte) {
 	var (
-		packetsSent uint64
-		wgBytesSent uint64
+		clientPktinfo []byte
+		packetsSent   uint64
+		wgBytesSent   uint64
 	)
 
+	if clientPktinfop != nil {
+		clientPktinfo = *clientPktinfop
+	}
+
 	packetBuf := make([]byte, c.maxProxyPacketSize)
-	clientPktinfo := *clientPktinfop
 
 	for {
 		n, _, flags, raddr, err := natEntry.proxyConn.ReadMsgUDPAddrPort(packetBuf, nil)

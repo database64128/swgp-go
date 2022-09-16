@@ -397,12 +397,16 @@ func (s *server) relayProxyToWgGeneric(clientAddr netip.AddrPort, natEntry *serv
 
 func (s *server) relayWgToProxyGeneric(clientAddr netip.AddrPort, natEntry *serverNatEntry, clientPktinfop *[]byte) {
 	var (
-		packetsSent uint64
-		wgBytesSent uint64
+		clientPktinfo []byte
+		packetsSent   uint64
+		wgBytesSent   uint64
 	)
 
+	if clientPktinfop != nil {
+		clientPktinfo = *clientPktinfop
+	}
+
 	packetBuf := make([]byte, natEntry.maxProxyPacketSize)
-	clientPktinfo := *clientPktinfop
 
 	frontOverhead := s.handler.FrontOverhead()
 	rearOverhead := s.handler.RearOverhead()
