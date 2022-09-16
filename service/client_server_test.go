@@ -6,9 +6,12 @@ import (
 	"net"
 	"testing"
 
+	"github.com/database64128/swgp-go/conn"
 	"github.com/database64128/swgp-go/packet"
 	"go.uber.org/zap"
 )
+
+var logger *zap.Logger
 
 func generateTestPSK(t *testing.T) []byte {
 	psk := make([]byte, 32)
@@ -20,18 +23,11 @@ func generateTestPSK(t *testing.T) []byte {
 }
 
 func testClientServerHandshake(t *testing.T, serverConfig ServerConfig, clientConfig ClientConfig) {
-	logger, err := zap.NewDevelopment()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer logger.Sync()
-
 	sc := Config{
 		Interfaces: []ServerConfig{serverConfig},
 		Peers:      []ClientConfig{clientConfig},
 	}
-	err = sc.Start(logger)
-	if err != nil {
+	if err := sc.Start(logger); err != nil {
 		t.Fatal(err)
 	}
 	defer sc.Stop()
@@ -39,8 +35,7 @@ func testClientServerHandshake(t *testing.T, serverConfig ServerConfig, clientCo
 	// Make packets.
 	handshakeInitiationPacket := make([]byte, packet.WireGuardMessageLengthHandshakeInitiation)
 	handshakeInitiationPacket[0] = packet.WireGuardMessageTypeHandshakeInitiation
-	_, err = rand.Read(handshakeInitiationPacket[1:])
-	if err != nil {
+	if _, err := rand.Read(handshakeInitiationPacket[1:]); err != nil {
 		t.Fatal(err)
 	}
 	expectedHandshakeInitiationPacket := make([]byte, packet.WireGuardMessageLengthHandshakeInitiation)
@@ -49,8 +44,7 @@ func testClientServerHandshake(t *testing.T, serverConfig ServerConfig, clientCo
 
 	handshakeResponsePacket := make([]byte, packet.WireGuardMessageLengthHandshakeResponse)
 	handshakeResponsePacket[0] = packet.WireGuardMessageTypeHandshakeResponse
-	_, err = rand.Read(handshakeResponsePacket[1:])
-	if err != nil {
+	if _, err := rand.Read(handshakeResponsePacket[1:]); err != nil {
 		t.Fatal(err)
 	}
 	expectedHandshakeResponsePacket := make([]byte, packet.WireGuardMessageLengthHandshakeResponse)
@@ -62,9 +56,12 @@ func testClientServerHandshake(t *testing.T, serverConfig ServerConfig, clientCo
 	if err != nil {
 		t.Fatal(err)
 	}
-	serverConn, err := net.ListenPacket("udp", serverConfig.WgEndpoint)
+	serverConn, err, serr := conn.ListenUDP("udp", serverConfig.WgEndpoint, false, 0)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if serr != nil {
+		t.Fatal(serr)
 	}
 
 	// Client sends handshake initiation.
@@ -74,7 +71,7 @@ func testClientServerHandshake(t *testing.T, serverConfig ServerConfig, clientCo
 	}
 
 	// Server receives handshake initiation.
-	n, addr, err := serverConn.ReadFrom(receivedHandshakeInitiationPacket)
+	n, addr, err := serverConn.ReadFromUDPAddrPort(receivedHandshakeInitiationPacket)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +82,7 @@ func testClientServerHandshake(t *testing.T, serverConfig ServerConfig, clientCo
 	}
 
 	// Server sends handshake response.
-	_, err = serverConn.WriteTo(handshakeResponsePacket, addr)
+	_, err = serverConn.WriteToUDPAddrPort(handshakeResponsePacket, addr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,18 +148,11 @@ func TestClientServerHandshakeParanoid(t *testing.T) {
 }
 
 func testClientServerDataPackets(t *testing.T, serverConfig ServerConfig, clientConfig ClientConfig) {
-	logger, err := zap.NewDevelopment()
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer logger.Sync()
-
 	sc := Config{
 		Interfaces: []ServerConfig{serverConfig},
 		Peers:      []ClientConfig{clientConfig},
 	}
-	err = sc.Start(logger)
-	if err != nil {
+	if err := sc.Start(logger); err != nil {
 		t.Fatal(err)
 	}
 	defer sc.Stop()
@@ -170,8 +160,7 @@ func testClientServerDataPackets(t *testing.T, serverConfig ServerConfig, client
 	// Make packets.
 	smallDataPacket := make([]byte, 1024)
 	smallDataPacket[0] = packet.WireGuardMessageTypeData
-	_, err = rand.Read(smallDataPacket[1:])
-	if err != nil {
+	if _, err := rand.Read(smallDataPacket[1:]); err != nil {
 		t.Fatal(err)
 	}
 	expectedSmallDataPacket := make([]byte, 1024)
@@ -180,8 +169,7 @@ func testClientServerDataPackets(t *testing.T, serverConfig ServerConfig, client
 
 	bigDataPacket := make([]byte, 2048)
 	bigDataPacket[0] = packet.WireGuardMessageTypeData
-	_, err = rand.Read(bigDataPacket[1:])
-	if err != nil {
+	if _, err := rand.Read(bigDataPacket[1:]); err != nil {
 		t.Fatal(err)
 	}
 
@@ -190,9 +178,12 @@ func testClientServerDataPackets(t *testing.T, serverConfig ServerConfig, client
 	if err != nil {
 		t.Fatal(err)
 	}
-	serverConn, err := net.ListenPacket("udp", serverConfig.WgEndpoint)
+	serverConn, err, serr := conn.ListenUDP("udp", serverConfig.WgEndpoint, false, 0)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if serr != nil {
+		t.Fatal(serr)
 	}
 
 	// Client sends big data packet.
@@ -208,7 +199,7 @@ func testClientServerDataPackets(t *testing.T, serverConfig ServerConfig, client
 	}
 
 	// Server receives small data packet.
-	n, addr, err := serverConn.ReadFrom(receivedSmallDataPacket)
+	n, addr, err := serverConn.ReadFromUDPAddrPort(receivedSmallDataPacket)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -219,13 +210,13 @@ func testClientServerDataPackets(t *testing.T, serverConfig ServerConfig, client
 	}
 
 	// Server sends big data packet.
-	_, err = serverConn.WriteTo(bigDataPacket, addr)
+	_, err = serverConn.WriteToUDPAddrPort(bigDataPacket, addr)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Server sends small data packet.
-	_, err = serverConn.WriteTo(smallDataPacket, addr)
+	_, err = serverConn.WriteToUDPAddrPort(smallDataPacket, addr)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -288,4 +279,15 @@ func TestClientServerDataPacketsParanoid(t *testing.T) {
 	}
 
 	testClientServerDataPackets(t, serverConfig, clientConfig)
+}
+
+func TestMain(m *testing.M) {
+	var err error
+	logger, err = zap.NewDevelopment()
+	if err != nil {
+		panic(err)
+	}
+	defer logger.Sync()
+
+	m.Run()
 }
