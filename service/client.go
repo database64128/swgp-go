@@ -55,8 +55,6 @@ type client struct {
 	table map[netip.AddrPort]*clientNatEntry
 
 	recvFromWgConn func()
-	relayWgToProxy func(clientAddr netip.AddrPort, natEntry *clientNatEntry)
-	relayProxyToWg func(clientAddr netip.AddrPort, natEntry *clientNatEntry, clientPktinfop *[]byte)
 }
 
 // NewClientService creates a swgp client service from the specified client config.
@@ -111,7 +109,7 @@ func NewClientService(config ClientConfig, logger *zap.Logger) (Service, error) 
 		},
 	}
 
-	c.setRecvAndRelayFunctions()
+	c.setRelayFunc()
 	return c, nil
 }
 
@@ -281,7 +279,7 @@ func (c *client) recvFromWgConnGeneric() {
 			c.wg.Add(2)
 
 			go func() {
-				c.relayProxyToWg(clientAddr, natEntry, clientPktinfop)
+				c.relayProxyToWgGeneric(clientAddr, natEntry, clientPktinfop)
 
 				c.mu.Lock()
 				close(natEntry.proxyConnSendCh)
@@ -292,7 +290,7 @@ func (c *client) recvFromWgConnGeneric() {
 			}()
 
 			go func() {
-				c.relayWgToProxy(clientAddr, natEntry)
+				c.relayWgToProxyGeneric(clientAddr, natEntry)
 				natEntry.proxyConn.Close()
 				c.wg.Done()
 			}()

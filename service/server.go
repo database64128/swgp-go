@@ -56,8 +56,6 @@ type server struct {
 	table map[netip.AddrPort]*serverNatEntry
 
 	recvFromProxyConn func()
-	relayProxyToWg    func(clientAddr netip.AddrPort, natEntry *serverNatEntry)
-	relayWgToProxy    func(clientAddr netip.AddrPort, natEntry *serverNatEntry, clientPktinfop *[]byte)
 }
 
 // NewServerService creates a swgp server service from the specified server config.
@@ -108,7 +106,7 @@ func NewServerService(config ServerConfig, logger *zap.Logger) (Service, error) 
 		return nil, err
 	}
 
-	s.setRecvAndRelayFunctions()
+	s.setRelayFunc()
 	return s, nil
 }
 
@@ -297,7 +295,7 @@ func (s *server) recvFromProxyConnGeneric() {
 			s.wg.Add(2)
 
 			go func() {
-				s.relayWgToProxy(clientAddr, natEntry, clientPktinfop)
+				s.relayWgToProxyGeneric(clientAddr, natEntry, clientPktinfop)
 
 				s.mu.Lock()
 				close(natEntry.wgConnSendCh)
@@ -308,7 +306,7 @@ func (s *server) recvFromProxyConnGeneric() {
 			}()
 
 			go func() {
-				s.relayProxyToWg(clientAddr, natEntry)
+				s.relayProxyToWgGeneric(clientAddr, natEntry)
 				natEntry.wgConn.Close()
 				s.wg.Done()
 			}()

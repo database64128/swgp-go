@@ -1,9 +1,9 @@
 package service
 
+import "github.com/database64128/swgp-go/conn"
+
 // vecSize is the number of iovec used in a sendmmsg relay session.
-//
-// iperf3 tests show that 64 is more than enough.
 const (
-	vecSize  = 64
-	sizeMask = 63
+	vecSize  = conn.UIO_MAXIOV
+	sizeMask = vecSize - 1
 )

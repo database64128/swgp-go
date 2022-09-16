@@ -2,8 +2,6 @@
 
 package service
 
-func (c *client) setRecvAndRelayFunctions() {
+func (c *client) setRelayFunc() {
 	c.recvFromWgConn = c.recvFromWgConnGeneric
-	c.relayWgToProxy = c.relayWgToProxyGeneric
-	c.relayProxyToWg = c.relayProxyToWgGeneric
 }

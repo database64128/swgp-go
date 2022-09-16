@@ -2,8 +2,6 @@
 
 package service
 
-func (s *server) setRecvAndRelayFunctions() {
+func (s *server) setRelayFunc() {
 	s.recvFromProxyConn = s.recvFromProxyConnGeneric
-	s.relayProxyToWg = s.relayProxyToWgGeneric
-	s.relayWgToProxy = s.relayWgToProxyGeneric
 }
