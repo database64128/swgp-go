@@ -353,7 +353,7 @@ func (s *server) relayWgToProxySendmmsg(clientAddr netip.AddrPort, natEntry *ser
 				)
 				continue
 			}
-			if raddr != s.wgAddr {
+			if !conn.AddrPortMappedEqual(raddr, s.wgAddr) {
 				s.logger.Debug("Ignoring packet from non-wg address",
 					zap.Stringer("service", s),
 					zap.String("proxyListen", s.config.ProxyListen),
@@ -532,7 +532,7 @@ func (s *server) relayWgToProxySendmmsgRing(clientAddr netip.AddrPort, natEntry 
 				)
 				continue
 			}
-			if raddr != s.wgAddr {
+			if !conn.AddrPortMappedEqual(raddr, s.wgAddr) {
 				s.logger.Debug("Ignoring packet from non-wg address",
 					zap.Stringer("service", s),
 					zap.String("proxyListen", s.config.ProxyListen),

@@ -434,7 +434,7 @@ func (s *server) relayWgToProxyGeneric(clientAddr netip.AddrPort, natEntry *serv
 			)
 			continue
 		}
-		if raddr != s.wgAddr {
+		if !conn.AddrPortMappedEqual(raddr, s.wgAddr) {
 			s.logger.Debug("Ignoring packet from non-wg address",
 				zap.Stringer("service", s),
 				zap.String("proxyListen", s.config.ProxyListen),
