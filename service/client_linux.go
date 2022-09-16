@@ -269,12 +269,14 @@ main:
 	)
 }
 
-func (c *client) relayProxyToWgSendmmsg(clientAddr netip.AddrPort, natEntry *clientNatEntry) {
+func (c *client) relayProxyToWgSendmmsg(clientAddr netip.AddrPort, natEntry *clientNatEntry, clientPktinfop *[]byte) {
 	var (
 		sendmmsgCount uint64
 		packetsSent   uint64
 		wgBytesSent   uint64
 	)
+
+	clientPktinfo := *clientPktinfop
 
 	name, namelen := conn.AddrPortToSockaddr(clientAddr)
 	savec := make([]unix.RawSockaddrInet6, vecSize)
@@ -299,6 +301,8 @@ func (c *client) relayProxyToWgSendmmsg(clientAddr netip.AddrPort, natEntry *cli
 		smsgvec[i].Msghdr.Namelen = namelen
 		smsgvec[i].Msghdr.Iov = &siovec[i]
 		smsgvec[i].Msghdr.SetIovlen(1)
+		smsgvec[i].Msghdr.Control = &clientPktinfo[0]
+		smsgvec[i].Msghdr.SetControllen(len(clientPktinfo))
 	}
 
 	for {
@@ -317,8 +321,6 @@ func (c *client) relayProxyToWgSendmmsg(clientAddr netip.AddrPort, natEntry *cli
 			continue
 		}
 
-		smsgControl := natEntry.clientPktinfoCache
-		smsgControlLen := len(smsgControl)
 		var ns int
 
 		for i, msg := range rmsgvec[:nr] {
@@ -372,16 +374,22 @@ func (c *client) relayProxyToWgSendmmsg(clientAddr netip.AddrPort, natEntry *cli
 
 			siovec[ns].Base = &packetBuf[wgPacketStart]
 			siovec[ns].SetLen(wgPacketLength)
-			if smsgControlLen > 0 {
-				smsgvec[ns].Msghdr.Control = &smsgControl[0]
-				smsgvec[ns].Msghdr.SetControllen(smsgControlLen)
-			}
 			ns++
 			wgBytesSent += uint64(wgPacketLength)
 		}
 
 		if ns == 0 {
 			continue
+		}
+
+		if cpp := natEntry.clientPktinfo.Load(); cpp != clientPktinfop {
+			clientPktinfo = *cpp
+			clientPktinfop = cpp
+
+			for i := range smsgvec {
+				smsgvec[i].Msghdr.Control = &clientPktinfo[0]
+				smsgvec[i].Msghdr.SetControllen(len(clientPktinfo))
+			}
 		}
 
 		err = conn.WriteMsgvec(c.wgConn, smsgvec[:ns])
@@ -410,7 +418,7 @@ func (c *client) relayProxyToWgSendmmsg(clientAddr netip.AddrPort, natEntry *cli
 	)
 }
 
-func (c *client) relayProxyToWgSendmmsgRing(clientAddr netip.AddrPort, natEntry *clientNatEntry) {
+func (c *client) relayProxyToWgSendmmsgRing(clientAddr netip.AddrPort, natEntry *clientNatEntry, clientPktinfop *[]byte) {
 	const (
 		vecSize  = 64
 		sizeMask = 63
@@ -421,6 +429,8 @@ func (c *client) relayProxyToWgSendmmsgRing(clientAddr netip.AddrPort, natEntry 
 		packetsSent   uint64
 		wgBytesSent   uint64
 	)
+
+	clientPktinfo := *clientPktinfop
 
 	name, namelen := conn.AddrPortToSockaddr(clientAddr)
 	savec := make([]unix.RawSockaddrInet6, vecSize)
@@ -453,6 +463,8 @@ func (c *client) relayProxyToWgSendmmsgRing(clientAddr netip.AddrPort, natEntry 
 		smsgvec[i].Msghdr.Namelen = namelen
 		smsgvec[i].Msghdr.Iov = &siovec[i]
 		smsgvec[i].Msghdr.SetIovlen(1)
+		smsgvec[i].Msghdr.Control = &clientPktinfo[0]
+		smsgvec[i].Msghdr.SetControllen(len(clientPktinfo))
 	}
 
 	var (
@@ -477,9 +489,6 @@ func (c *client) relayProxyToWgSendmmsgRing(clientAddr netip.AddrPort, natEntry 
 			)
 			continue
 		}
-
-		smsgControl := natEntry.clientPktinfoCache
-		smsgControlLen := len(smsgControl)
 
 		for _, msg := range rmsgvec[:nr] {
 			// Advance pos to the current unused buffer.
@@ -540,10 +549,6 @@ func (c *client) relayProxyToWgSendmmsgRing(clientAddr netip.AddrPort, natEntry 
 
 			siovec[ns].Base = &packetBuf[wgPacketStart]
 			siovec[ns].SetLen(wgPacketLength)
-			if smsgControlLen > 0 {
-				smsgvec[ns].Msghdr.Control = &smsgControl[0]
-				smsgvec[ns].Msghdr.SetControllen(smsgControlLen)
-			}
 			ns++
 			wgBytesSent += uint64(wgPacketLength)
 
@@ -553,6 +558,16 @@ func (c *client) relayProxyToWgSendmmsgRing(clientAddr netip.AddrPort, natEntry 
 
 		if ns == 0 {
 			continue
+		}
+
+		if cpp := natEntry.clientPktinfo.Load(); cpp != clientPktinfop {
+			clientPktinfo = *cpp
+			clientPktinfop = cpp
+
+			for i := range smsgvec {
+				smsgvec[i].Msghdr.Control = &clientPktinfo[0]
+				smsgvec[i].Msghdr.SetControllen(len(clientPktinfo))
+			}
 		}
 
 		// Batch write.

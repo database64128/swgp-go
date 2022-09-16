@@ -4,9 +4,11 @@ import (
 	"errors"
 	"net/netip"
 	"os"
+	"time"
 	"unsafe"
 
 	"github.com/database64128/swgp-go/conn"
+	"github.com/database64128/swgp-go/packet"
 	"go.uber.org/zap"
 	"golang.org/x/sys/unix"
 )
@@ -47,7 +49,10 @@ func (s *server) relayProxyToWgSendmmsg(clientAddr netip.AddrPort, natEntry *ser
 	}
 
 	for {
-		var count int
+		var (
+			count       int
+			isHandshake bool
+		)
 
 		// Block on first dequeue op.
 		dequeuedPacket, ok := <-natEntry.wgConnSendCh
@@ -58,6 +63,12 @@ func (s *server) relayProxyToWgSendmmsg(clientAddr netip.AddrPort, natEntry *ser
 
 	dequeue:
 		for {
+			// Update wgConn read deadline when a handshake initiation/response message is received.
+			switch packetBuf[dequeuedPacket.start] {
+			case packet.WireGuardMessageTypeHandshakeInitiation, packet.WireGuardMessageTypeHandshakeResponse:
+				isHandshake = true
+			}
+
 			dequeuedPackets[count] = dequeuedPacket
 			iovec[count].Base = &packetBuf[dequeuedPacket.start]
 			iovec[count].SetLen(dequeuedPacket.length)
@@ -87,6 +98,18 @@ func (s *server) relayProxyToWgSendmmsg(clientAddr netip.AddrPort, natEntry *ser
 				zap.Stringer("wgAddress", s.wgAddr),
 				zap.Error(err),
 			)
+		}
+
+		if isHandshake {
+			if err := natEntry.wgConn.SetReadDeadline(time.Now().Add(RejectAfterTime)); err != nil {
+				s.logger.Warn("Failed to SetReadDeadline on wgConn",
+					zap.Stringer("service", s),
+					zap.String("proxyListen", s.config.ProxyListen),
+					zap.Stringer("clientAddress", clientAddr),
+					zap.Stringer("wgAddress", s.wgAddr),
+					zap.Error(err),
+				)
+			}
 		}
 
 		sendmmsgCount++
@@ -138,6 +161,8 @@ func (s *server) relayProxyToWgSendmmsgRing(clientAddr netip.AddrPort, natEntry 
 	}
 
 	for {
+		var isHandshake bool
+
 		// Block on first dequeue op.
 		dequeuedPacket, ok := <-natEntry.wgConnSendCh
 		if !ok {
@@ -147,6 +172,12 @@ func (s *server) relayProxyToWgSendmmsgRing(clientAddr netip.AddrPort, natEntry 
 
 	dequeue:
 		for {
+			// Update wgConn read deadline when a handshake initiation/response message is received.
+			switch packetBuf[dequeuedPacket.start] {
+			case packet.WireGuardMessageTypeHandshakeInitiation, packet.WireGuardMessageTypeHandshakeResponse:
+				isHandshake = true
+			}
+
 			dequeuedPackets[tail] = dequeuedPacket
 			tail = (tail + 1) & sizeMask
 
@@ -182,6 +213,18 @@ func (s *server) relayProxyToWgSendmmsgRing(clientAddr netip.AddrPort, natEntry 
 			)
 			// Error is caused by the first packet in msgvec.
 			n = 1
+		}
+
+		if isHandshake {
+			if err := natEntry.wgConn.SetReadDeadline(time.Now().Add(RejectAfterTime)); err != nil {
+				s.logger.Warn("Failed to SetReadDeadline on wgConn",
+					zap.Stringer("service", s),
+					zap.String("proxyListen", s.config.ProxyListen),
+					zap.Stringer("clientAddress", clientAddr),
+					zap.Stringer("wgAddress", s.wgAddr),
+					zap.Error(err),
+				)
+			}
 		}
 
 		sendmmsgCount++
@@ -228,12 +271,14 @@ func (s *server) relayProxyToWgSendmmsgRing(clientAddr netip.AddrPort, natEntry 
 	)
 }
 
-func (s *server) relayWgToProxySendmmsg(clientAddr netip.AddrPort, natEntry *serverNatEntry) {
+func (s *server) relayWgToProxySendmmsg(clientAddr netip.AddrPort, natEntry *serverNatEntry, clientPktinfop *[]byte) {
 	var (
 		sendmmsgCount uint64
 		packetsSent   uint64
 		wgBytesSent   uint64
 	)
+
+	clientPktinfo := *clientPktinfop
 
 	name, namelen := conn.AddrPortToSockaddr(clientAddr)
 	frontOverhead := s.handler.FrontOverhead()
@@ -262,6 +307,8 @@ func (s *server) relayWgToProxySendmmsg(clientAddr netip.AddrPort, natEntry *ser
 		smsgvec[i].Msghdr.Namelen = namelen
 		smsgvec[i].Msghdr.Iov = &siovec[i]
 		smsgvec[i].Msghdr.SetIovlen(1)
+		smsgvec[i].Msghdr.Control = &clientPktinfo[0]
+		smsgvec[i].Msghdr.SetControllen(len(clientPktinfo))
 	}
 
 	for {
@@ -280,8 +327,6 @@ func (s *server) relayWgToProxySendmmsg(clientAddr netip.AddrPort, natEntry *ser
 			continue
 		}
 
-		smsgControl := natEntry.clientPktinfoCache
-		smsgControlLen := len(smsgControl)
 		var ns int
 
 		for i, msg := range rmsgvec[:nr] {
@@ -335,16 +380,22 @@ func (s *server) relayWgToProxySendmmsg(clientAddr netip.AddrPort, natEntry *ser
 
 			siovec[ns].Base = &packetBuf[swgpPacketStart]
 			siovec[ns].SetLen(swgpPacketLength)
-			if smsgControlLen > 0 {
-				smsgvec[ns].Msghdr.Control = &smsgControl[0]
-				smsgvec[ns].Msghdr.SetControllen(smsgControlLen)
-			}
 			ns++
 			wgBytesSent += uint64(msg.Msglen)
 		}
 
 		if ns == 0 {
 			continue
+		}
+
+		if cpp := natEntry.clientPktinfo.Load(); cpp != clientPktinfop {
+			clientPktinfo = *cpp
+			clientPktinfop = cpp
+
+			for i := range smsgvec {
+				smsgvec[i].Msghdr.Control = &clientPktinfo[0]
+				smsgvec[i].Msghdr.SetControllen(len(clientPktinfo))
+			}
 		}
 
 		err = conn.WriteMsgvec(s.proxyConn, smsgvec[:ns])
@@ -373,7 +424,7 @@ func (s *server) relayWgToProxySendmmsg(clientAddr netip.AddrPort, natEntry *ser
 	)
 }
 
-func (s *server) relayWgToProxySendmmsgRing(clientAddr netip.AddrPort, natEntry *serverNatEntry) {
+func (s *server) relayWgToProxySendmmsgRing(clientAddr netip.AddrPort, natEntry *serverNatEntry, clientPktinfop *[]byte) {
 	const (
 		vecSize  = 64
 		sizeMask = 63
@@ -384,6 +435,8 @@ func (s *server) relayWgToProxySendmmsgRing(clientAddr netip.AddrPort, natEntry 
 		packetsSent   uint64
 		wgBytesSent   uint64
 	)
+
+	clientPktinfo := *clientPktinfop
 
 	name, namelen := conn.AddrPortToSockaddr(clientAddr)
 	frontOverhead := s.handler.FrontOverhead()
@@ -420,6 +473,8 @@ func (s *server) relayWgToProxySendmmsgRing(clientAddr netip.AddrPort, natEntry 
 		smsgvec[i].Msghdr.Namelen = namelen
 		smsgvec[i].Msghdr.Iov = &siovec[i]
 		smsgvec[i].Msghdr.SetIovlen(1)
+		smsgvec[i].Msghdr.Control = &clientPktinfo[0]
+		smsgvec[i].Msghdr.SetControllen(len(clientPktinfo))
 	}
 
 	var (
@@ -444,9 +499,6 @@ func (s *server) relayWgToProxySendmmsgRing(clientAddr netip.AddrPort, natEntry 
 			)
 			continue
 		}
-
-		smsgControl := natEntry.clientPktinfoCache
-		smsgControlLen := len(smsgControl)
 
 		for _, msg := range rmsgvec[:nr] {
 			// Advance pos to the current unused buffer.
@@ -507,10 +559,6 @@ func (s *server) relayWgToProxySendmmsgRing(clientAddr netip.AddrPort, natEntry 
 
 			siovec[ns].Base = &packetBuf[swgpPacketStart]
 			siovec[ns].SetLen(swgpPacketLength)
-			if smsgControlLen > 0 {
-				smsgvec[ns].Msghdr.Control = &smsgControl[0]
-				smsgvec[ns].Msghdr.SetControllen(smsgControlLen)
-			}
 			ns++
 			wgBytesSent += uint64(msg.Msglen)
 
@@ -520,6 +568,16 @@ func (s *server) relayWgToProxySendmmsgRing(clientAddr netip.AddrPort, natEntry 
 
 		if ns == 0 {
 			continue
+		}
+
+		if cpp := natEntry.clientPktinfo.Load(); cpp != clientPktinfop {
+			clientPktinfo = *cpp
+			clientPktinfop = cpp
+
+			for i := range smsgvec {
+				smsgvec[i].Msghdr.Control = &clientPktinfo[0]
+				smsgvec[i].Msghdr.SetControllen(len(clientPktinfo))
+			}
 		}
 
 		// Batch write.

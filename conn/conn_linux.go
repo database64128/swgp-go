@@ -8,9 +8,11 @@ import (
 	"syscall"
 	"unsafe"
 
-	"go.uber.org/zap"
 	"golang.org/x/sys/unix"
 )
+
+// SocketControlMessageBufferSize specifies the buffer size for receiving socket control messages.
+const SocketControlMessageBufferSize = unix.SizeofCmsghdr + (unix.SizeofInet6Pktinfo+unix.SizeofPtr-1) & ^(unix.SizeofPtr-1)
 
 // ListenUDP wraps Go's net.ListenConfig.ListenPacket and sets socket options on supported platforms.
 //
@@ -36,12 +38,12 @@ func ListenUDP(network string, laddr string, pktinfo bool, fwmark int) (conn *ne
 				}
 
 				if pktinfo {
-					// Set IP_PKTINFO for both v4 and v6.
-					if err := unix.SetsockoptInt(int(fd), unix.IPPROTO_IP, unix.IP_PKTINFO, 1); err != nil {
-						serr = fmt.Errorf("failed to set socket option IP_PKTINFO: %w", err)
-					}
-
-					if network == "udp6" {
+					switch network {
+					case "udp4":
+						if err := unix.SetsockoptInt(int(fd), unix.IPPROTO_IP, unix.IP_PKTINFO, 1); err != nil {
+							serr = fmt.Errorf("failed to set socket option IP_PKTINFO: %w", err)
+						}
+					case "udp6":
 						if err := unix.SetsockoptInt(int(fd), unix.IPPROTO_IPV6, unix.IPV6_RECVPKTINFO, 1); err != nil {
 							serr = fmt.Errorf("failed to set socket option IPV6_RECVPKTINFO: %w", err)
 						}
@@ -65,45 +67,30 @@ func ListenUDP(network string, laddr string, pktinfo bool, fwmark int) (conn *ne
 	return
 }
 
-// On Linux and Windows, UpdatePktinfoCache filters out irrelevant socket control messages,
-// saves IP_PKTINFO or IPV6_PKTINFO socket control messages to the pktinfo cache,
-// and returns the updated pktinfo cache slice.
+// ParsePktinfoCmsg parses a single socket control message of type IP_PKTINFO or IPV6_PKTINFO,
+// and returns the IP address and index of the network interface the packet was received from,
+// or an error.
 //
-// The returned pktinfo cache is unchanged if no relevant control messages are found.
-//
-// On other platforms, this is a no-op.
-func UpdatePktinfoCache(pktinfoCache, cmsgs []byte, logger *zap.Logger) ([]byte, error) {
-	// Since we only set IP_PKTINFO and/or IPV6_PKTINFO,
-	// Inet4Pktinfo or Inet6Pktinfo should be the first
-	// and only socket control message returned.
-	// Therefore we simplify the process by not looping
-	// through the control messages.
-	cmsgLen := len(cmsgs)
-	switch {
-	case cmsgLen == 0:
-		return pktinfoCache, nil
-	case cmsgLen < unix.SizeofCmsghdr:
-		return pktinfoCache, fmt.Errorf("control message length %d shorter than cmsghdr length", cmsgLen)
+// This function is only implemented for Linux and Windows. On other platforms, this is a no-op.
+func ParsePktinfoCmsg(cmsg []byte) (netip.Addr, uint32, error) {
+	if len(cmsg) < unix.SizeofCmsghdr {
+		return netip.Addr{}, 0, fmt.Errorf("control message length %d is shorter than cmsghdr length", len(cmsg))
 	}
 
-	cmsghdr := (*unix.Cmsghdr)(unsafe.Pointer(&cmsgs[0]))
+	cmsghdr := (*unix.Cmsghdr)(unsafe.Pointer(&cmsg[0]))
 
 	switch {
-	case cmsghdr.Level == unix.IPPROTO_IP && cmsghdr.Type == unix.IP_PKTINFO && cmsgLen >= unix.SizeofCmsghdr+unix.SizeofInet4Pktinfo:
-		pktinfo := (*unix.Inet4Pktinfo)(unsafe.Pointer(&cmsgs[unix.SizeofCmsghdr]))
-		// Clear destination address.
-		pktinfo.Addr = [4]byte{}
-		// logger.Debug("Matched Inet4Pktinfo", zap.Int32("ifindex", pktinfo.Ifindex))
+	case cmsghdr.Level == unix.IPPROTO_IP && cmsghdr.Type == unix.IP_PKTINFO && len(cmsg) >= unix.SizeofCmsghdr+unix.SizeofInet4Pktinfo:
+		pktinfo := (*unix.Inet4Pktinfo)(unsafe.Pointer(&cmsg[unix.SizeofCmsghdr]))
+		return netip.AddrFrom4(pktinfo.Spec_dst), uint32(pktinfo.Ifindex), nil
 
-	case cmsghdr.Level == unix.IPPROTO_IPV6 && cmsghdr.Type == unix.IPV6_PKTINFO && cmsgLen >= unix.SizeofCmsghdr+unix.SizeofInet6Pktinfo:
-		// pktinfo := (*unix.Inet6Pktinfo)(unsafe.Pointer(&cmsgs[unix.SizeofCmsghdr]))
-		// logger.Debug("Matched Inet6Pktinfo", zap.Uint32("ifindex", pktinfo.Ifindex))
+	case cmsghdr.Level == unix.IPPROTO_IPV6 && cmsghdr.Type == unix.IPV6_PKTINFO && len(cmsg) >= unix.SizeofCmsghdr+unix.SizeofInet6Pktinfo:
+		pktinfo := (*unix.Inet6Pktinfo)(unsafe.Pointer(&cmsg[unix.SizeofCmsghdr]))
+		return netip.AddrFrom16(pktinfo.Addr), pktinfo.Ifindex, nil
 
 	default:
-		return pktinfoCache, fmt.Errorf("unknown control message level %d type %d", cmsghdr.Level, cmsghdr.Type)
+		return netip.Addr{}, 0, fmt.Errorf("unknown control message level %d type %d", cmsghdr.Level, cmsghdr.Type)
 	}
-
-	return append(pktinfoCache[:0], cmsgs...), nil
 }
 
 // Source: include/uapi/linux/uio.h

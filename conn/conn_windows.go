@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/netip"
 	"syscall"
 	"unsafe"
 
-	"go.uber.org/zap"
 	"golang.org/x/sys/windows"
 )
 
@@ -91,46 +91,39 @@ type Inet6Pktinfo struct {
 	Ifindex uint32
 }
 
-// Defined for getting structure size using unsafe.Sizeof.
-var (
-	cmsghdrForSize      Cmsghdr
-	inet4PktinfoForSize Inet4Pktinfo
-	inet6PktinfoForSize Inet6Pktinfo
+const (
+	SizeofCmsghdr      = unsafe.Sizeof(Cmsghdr{})
+	SizeofInet4Pktinfo = unsafe.Sizeof(Inet4Pktinfo{})
+	SizeofInet6Pktinfo = unsafe.Sizeof(Inet6Pktinfo{})
 )
 
-// On Linux and Windows, UpdatePktinfoCache filters out irrelevant socket control messages,
-// saves IP_PKTINFO or IPV6_PKTINFO socket control messages to the pktinfo cache,
-// and returns the updated pktinfo cache slice.
+const SizeofPtr = unsafe.Sizeof(uintptr(0))
+
+// SocketControlMessageBufferSize specifies the buffer size for receiving socket control messages.
+const SocketControlMessageBufferSize = SizeofCmsghdr + (SizeofInet6Pktinfo+SizeofPtr-1) & ^(SizeofPtr-1)
+
+// ParsePktinfoCmsg parses a single socket control message of type IP_PKTINFO or IPV6_PKTINFO,
+// and returns the IP address and index of the network interface the packet was received from,
+// or an error.
 //
-// The returned pktinfo cache is unchanged if no relevant control messages are found.
-//
-// On other platforms, this is a no-op.
-func UpdatePktinfoCache(pktinfoCache, cmsgs []byte, logger *zap.Logger) ([]byte, error) {
-	// Since we only set IP_PKTINFO and/or IPV6_PKTINFO,
-	// Inet4Pktinfo or Inet6Pktinfo should be the first
-	// and only socket control message returned.
-	// Therefore we simplify the process by not looping
-	// through the control messages.
-	cmsgLen := len(cmsgs)
-	switch {
-	case cmsgLen == 0:
-		return pktinfoCache, nil
-	case cmsgLen < int(unsafe.Sizeof(cmsghdrForSize)):
-		return pktinfoCache, fmt.Errorf("control message length %d shorter than cmsghdr length", cmsgLen)
+// This function is only implemented for Linux and Windows. On other platforms, this is a no-op.
+func ParsePktinfoCmsg(cmsg []byte) (netip.Addr, uint32, error) {
+	if len(cmsg) < int(SizeofCmsghdr) {
+		return netip.Addr{}, 0, fmt.Errorf("control message length %d is shorter than cmsghdr length", len(cmsg))
 	}
 
-	cmsghdr := (*Cmsghdr)(unsafe.Pointer(&cmsgs[0]))
+	cmsghdr := (*Cmsghdr)(unsafe.Pointer(&cmsg[0]))
 
 	switch {
-	case cmsghdr.Level == windows.IPPROTO_IP && cmsghdr.Type == windows.IP_PKTINFO && cmsgLen >= int(unsafe.Sizeof(cmsghdrForSize)+unsafe.Sizeof(inet4PktinfoForSize)):
-		// pktinfo := (*Inet4Pktinfo)(unsafe.Pointer(&cmsgs[unsafe.Sizeof(cmsghdrForSize)]))
-		// logger.Debug("Matched Inet4Pktinfo", zap.Uint32("ifindex", pktinfo.Ifindex))
-	case cmsghdr.Level == windows.IPPROTO_IPV6 && cmsghdr.Type == windows.IPV6_PKTINFO && cmsgLen >= int(unsafe.Sizeof(cmsghdrForSize)+unsafe.Sizeof(inet6PktinfoForSize)):
-		// pktinfo := (*Inet6Pktinfo)(unsafe.Pointer(&cmsgs[unsafe.Sizeof(cmsghdrForSize)]))
-		// logger.Debug("Matched Inet6Pktinfo", zap.Uint32("ifindex", pktinfo.Ifindex))
+	case cmsghdr.Level == windows.IPPROTO_IP && cmsghdr.Type == windows.IP_PKTINFO && len(cmsg) >= int(SizeofCmsghdr+SizeofInet4Pktinfo):
+		pktinfo := (*Inet4Pktinfo)(unsafe.Pointer(&cmsg[SizeofCmsghdr]))
+		return netip.AddrFrom4(pktinfo.Addr), pktinfo.Ifindex, nil
+
+	case cmsghdr.Level == windows.IPPROTO_IPV6 && cmsghdr.Type == windows.IPV6_PKTINFO && len(cmsg) >= int(SizeofCmsghdr+SizeofInet6Pktinfo):
+		pktinfo := (*Inet6Pktinfo)(unsafe.Pointer(&cmsg[SizeofCmsghdr]))
+		return netip.AddrFrom16(pktinfo.Addr), pktinfo.Ifindex, nil
+
 	default:
-		return pktinfoCache, fmt.Errorf("unknown control message level %d type %d", cmsghdr.Level, cmsghdr.Type)
+		return netip.Addr{}, 0, fmt.Errorf("unknown control message level %d type %d", cmsghdr.Level, cmsghdr.Type)
 	}
-
-	return append(pktinfoCache[:0], cmsgs...), nil
 }

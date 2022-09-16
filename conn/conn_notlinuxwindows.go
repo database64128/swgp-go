@@ -2,18 +2,16 @@
 
 package conn
 
-import "go.uber.org/zap"
+import "net/netip"
 
 // SocketControlMessageBufferSize specifies the buffer size for receiving socket control messages.
 const SocketControlMessageBufferSize = 0
 
-// On Linux and Windows, UpdatePktinfoCache filters out irrelevant socket control messages,
-// saves IP_PKTINFO or IPV6_PKTINFO socket control messages to the pktinfo cache,
-// and returns the updated pktinfo cache slice.
+// ParsePktinfoCmsg parses a single socket control message of type IP_PKTINFO or IPV6_PKTINFO,
+// and returns the IP address and index of the network interface the packet was received from,
+// or an error.
 //
-// The returned pktinfo cache is unchanged if no relevant control messages are found.
-//
-// On other platforms, this is a no-op.
-func UpdatePktinfoCache(pktinfoCache, cmsgs []byte, logger *zap.Logger) ([]byte, error) {
-	return nil, nil
+// This function is only implemented for Linux and Windows. On other platforms, this is a no-op.
+func ParsePktinfoCmsg(cmsg []byte) (netip.Addr, uint32, error) {
+	return netip.Addr{}, 0, nil
 }
