@@ -117,18 +117,9 @@ func (s *server) String() string {
 
 // Start implements the Service Start method.
 func (s *server) Start() (err error) {
-	var serr error
-	s.proxyConn, err, serr = conn.ListenUDP("udp", s.config.ProxyListen, true, s.config.ProxyFwmark)
+	s.proxyConn, err = conn.ListenUDP("udp", s.config.ProxyListen, true, s.config.ProxyFwmark)
 	if err != nil {
 		return
-	}
-	if serr != nil {
-		s.logger.Warn("An error occurred while setting socket options on listener",
-			zap.Stringer("service", s),
-			zap.String("proxyListen", s.config.ProxyListen),
-			zap.Int("proxyFwmark", s.config.ProxyFwmark),
-			zap.NamedError("serr", serr),
-		)
 	}
 
 	s.mwg.Add(1)
@@ -208,7 +199,7 @@ func (s *server) recvFromProxyConnGeneric() {
 
 		natEntry, ok := s.table[clientAddr]
 		if !ok {
-			wgConn, err, serr := conn.ListenUDP("udp", "", false, s.config.WgFwmark)
+			wgConn, err := conn.ListenUDP("udp", "", false, s.config.WgFwmark)
 			if err != nil {
 				s.logger.Warn("Failed to start UDP listener for new UDP session",
 					zap.Stringer("service", s),
@@ -219,15 +210,6 @@ func (s *server) recvFromProxyConnGeneric() {
 				s.packetBufPool.Put(packetBufp)
 				s.mu.Unlock()
 				continue
-			}
-			if serr != nil {
-				s.logger.Warn("An error occurred while setting socket options on wgConn",
-					zap.Stringer("service", s),
-					zap.String("proxyListen", s.config.ProxyListen),
-					zap.Stringer("clientAddress", clientAddr),
-					zap.Int("wgFwmark", s.config.WgFwmark),
-					zap.NamedError("serr", serr),
-				)
 			}
 
 			err = wgConn.SetReadDeadline(time.Now().Add(RejectAfterTime))

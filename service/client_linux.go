@@ -126,7 +126,7 @@ func (c *client) recvFromWgConnRecvmmsg() {
 
 			natEntry, ok := c.table[clientAddrPort]
 			if !ok {
-				proxyConn, err, serr := conn.ListenUDP("udp", "", false, c.config.ProxyFwmark)
+				proxyConn, err := conn.ListenUDP("udp", "", false, c.config.ProxyFwmark)
 				if err != nil {
 					c.logger.Warn("Failed to start UDP listener for new UDP session",
 						zap.Stringer("service", c),
@@ -137,15 +137,6 @@ func (c *client) recvFromWgConnRecvmmsg() {
 					c.packetBufPool.Put(packetBufp)
 					c.mu.Unlock()
 					continue
-				}
-				if serr != nil {
-					c.logger.Warn("An error occurred while setting socket options on proxyConn",
-						zap.Stringer("service", c),
-						zap.String("wgListen", c.config.WgListen),
-						zap.Stringer("clientAddress", clientAddrPort),
-						zap.Int("proxyFwmark", c.config.ProxyFwmark),
-						zap.NamedError("serr", serr),
-					)
 				}
 
 				err = proxyConn.SetReadDeadline(time.Now().Add(RejectAfterTime))

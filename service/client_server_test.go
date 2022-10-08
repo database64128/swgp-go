@@ -56,12 +56,9 @@ func testClientServerHandshake(t *testing.T, serverConfig ServerConfig, clientCo
 	if err != nil {
 		t.Fatal(err)
 	}
-	serverConn, err, serr := conn.ListenUDP("udp", serverConfig.WgEndpoint, false, 0)
+	serverConn, err := conn.ListenUDP("udp", serverConfig.WgEndpoint, false, 0)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if serr != nil {
-		t.Fatal(serr)
 	}
 
 	// Client sends handshake initiation.
@@ -178,12 +175,9 @@ func testClientServerDataPackets(t *testing.T, serverConfig ServerConfig, client
 	if err != nil {
 		t.Fatal(err)
 	}
-	serverConn, err, serr := conn.ListenUDP("udp", serverConfig.WgEndpoint, false, 0)
+	serverConn, err := conn.ListenUDP("udp", serverConfig.WgEndpoint, false, 0)
 	if err != nil {
 		t.Fatal(err)
-	}
-	if serr != nil {
-		t.Fatal(serr)
 	}
 
 	// Client sends big data packet.
