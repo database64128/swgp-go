@@ -5,7 +5,7 @@ go 1.19
 require (
 	go.uber.org/zap v1.23.0
 	golang.org/x/crypto v0.0.0-20221012134737-56aed061732a
-	golang.org/x/sys v0.0.0-20221013171732-95e765b1cc43
+	golang.org/x/sys v0.1.0
 )
 
 require (
