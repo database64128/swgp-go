@@ -44,12 +44,15 @@ func main() {
 	case "development":
 		zc = zap.NewDevelopmentConfig()
 	default:
-		data, err := os.ReadFile(*zapConf)
+		f, err := os.Open(*zapConf)
 		if err != nil {
 			fmt.Println(err)
 			os.Exit(1)
 		}
-		err = json.Unmarshal(data, &zc)
+		d := json.NewDecoder(f)
+		d.DisallowUnknownFields()
+		err = d.Decode(&zc)
+		f.Close()
 		if err != nil {
 			fmt.Println(err)
 			os.Exit(1)
@@ -72,17 +75,20 @@ func main() {
 	}
 	defer logger.Sync()
 
-	cj, err := os.ReadFile(*confPath)
+	f, err := os.Open(*confPath)
 	if err != nil {
-		logger.Fatal("Failed to load config",
+		logger.Fatal("Failed to open config file",
 			zap.Stringp("confPath", confPath),
 			zap.Error(err),
 		)
 	}
 
-	err = json.Unmarshal(cj, &sc)
+	d := json.NewDecoder(f)
+	d.DisallowUnknownFields()
+	err = d.Decode(&sc)
+	f.Close()
 	if err != nil {
-		logger.Fatal("Failed to unmarshal config",
+		logger.Fatal("Failed to decode config",
 			zap.Stringp("confPath", confPath),
 			zap.Error(err),
 		)
