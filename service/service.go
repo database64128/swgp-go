@@ -46,67 +46,67 @@ type Service interface {
 
 // Config stores configurations for a typical swgp service.
 // It may be marshaled as or unmarshaled from JSON.
-// Call the Start method to start all configured services.
-// Call the Stop method to properly close all running services.
 type Config struct {
 	Interfaces []ServerConfig `json:"interfaces"`
 	Peers      []ClientConfig `json:"peers"`
-	services   []Service
-	logger     *zap.Logger
 }
 
-// Start starts all configured server (interface) and client (peer) services.
-func (sc *Config) Start(logger *zap.Logger) error {
-	sc.logger = logger
+// Manager initializes the service manager.
+func (sc *Config) Manager(logger *zap.Logger) (*Manager, error) {
 	serverCount := len(sc.Interfaces)
 	clientCount := len(sc.Peers)
 	serviceCount := serverCount + clientCount
 	if serviceCount == 0 {
-		return errors.New("no services to start")
+		return nil, errors.New("no services to start")
 	}
 
-	sc.services = make([]Service, serviceCount)
+	services := make([]Service, serviceCount)
 
 	for i := range sc.Interfaces {
 		s, err := NewServerService(sc.Interfaces[i], logger)
 		if err != nil {
-			return fmt.Errorf("failed to create server service %s: %w", sc.Interfaces[i].Name, err)
+			return nil, fmt.Errorf("failed to create server service %s: %w", sc.Interfaces[i].Name, err)
 		}
-		sc.services[i] = s
-
-		err = s.Start()
-		if err != nil {
-			return fmt.Errorf("failed to start %s: %w", s.String(), err)
-		}
+		services[i] = s
 	}
 
 	for i := range sc.Peers {
 		c, err := NewClientService(sc.Peers[i], logger)
 		if err != nil {
-			return fmt.Errorf("failed to create client service %s: %w", sc.Peers[i].Name, err)
+			return nil, fmt.Errorf("failed to create client service %s: %w", sc.Peers[i].Name, err)
 		}
-		sc.services[serverCount+i] = c
-
-		err = c.Start()
-		if err != nil {
-			return fmt.Errorf("failed to start %s: %w", c.String(), err)
-		}
+		services[serverCount+i] = c
 	}
 
+	return &Manager{services, logger}, nil
+}
+
+// Manager manages the services.
+type Manager struct {
+	services []Service
+	logger   *zap.Logger
+}
+
+// Start starts all configured server (interface) and client (peer) services.
+func (m *Manager) Start() error {
+	for _, s := range m.services {
+		if err := s.Start(); err != nil {
+			return fmt.Errorf("failed to start %s: %w", s.String(), err)
+		}
+	}
 	return nil
 }
 
 // Stop stops all running services.
-func (sc *Config) Stop() {
-	for _, s := range sc.services {
-		err := s.Stop()
-		if err != nil {
-			sc.logger.Warn("An error occurred while stopping service",
+func (m *Manager) Stop() {
+	for _, s := range m.services {
+		if err := s.Stop(); err != nil {
+			m.logger.Warn("Failed to stop service",
 				zap.Stringer("service", s),
-				zap.NamedError("stopError", err),
+				zap.Error(err),
 			)
 		}
-		sc.logger.Info("Stopped service", zap.Stringer("service", s))
+		m.logger.Info("Stopped service", zap.Stringer("service", s))
 	}
 }
 

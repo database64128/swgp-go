@@ -94,9 +94,16 @@ func main() {
 		)
 	}
 
-	err = sc.Start(logger)
+	m, err := sc.Manager(logger)
 	if err != nil {
-		logger.Fatal("Failed to start configured services",
+		logger.Fatal("Failed to create service manager",
+			zap.Stringp("confPath", confPath),
+			zap.Error(err),
+		)
+	}
+
+	if err = m.Start(); err != nil {
+		logger.Fatal("Failed to start services",
 			zap.Stringp("confPath", confPath),
 			zap.Error(err),
 		)
@@ -108,5 +115,5 @@ func main() {
 
 	logger.Info("Received signal, stopping...", zap.Stringer("signal", sig))
 
-	sc.Stop()
+	m.Stop()
 }

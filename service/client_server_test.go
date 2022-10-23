@@ -27,15 +27,19 @@ func testClientServerHandshake(t *testing.T, serverConfig ServerConfig, clientCo
 		Interfaces: []ServerConfig{serverConfig},
 		Peers:      []ClientConfig{clientConfig},
 	}
-	if err := sc.Start(logger); err != nil {
+	m, err := sc.Manager(logger)
+	if err != nil {
 		t.Fatal(err)
 	}
-	defer sc.Stop()
+	if err = m.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer m.Stop()
 
 	// Make packets.
 	handshakeInitiationPacket := make([]byte, packet.WireGuardMessageLengthHandshakeInitiation)
 	handshakeInitiationPacket[0] = packet.WireGuardMessageTypeHandshakeInitiation
-	if _, err := rand.Read(handshakeInitiationPacket[1:]); err != nil {
+	if _, err = rand.Read(handshakeInitiationPacket[1:]); err != nil {
 		t.Fatal(err)
 	}
 	expectedHandshakeInitiationPacket := make([]byte, packet.WireGuardMessageLengthHandshakeInitiation)
@@ -44,7 +48,7 @@ func testClientServerHandshake(t *testing.T, serverConfig ServerConfig, clientCo
 
 	handshakeResponsePacket := make([]byte, packet.WireGuardMessageLengthHandshakeResponse)
 	handshakeResponsePacket[0] = packet.WireGuardMessageTypeHandshakeResponse
-	if _, err := rand.Read(handshakeResponsePacket[1:]); err != nil {
+	if _, err = rand.Read(handshakeResponsePacket[1:]); err != nil {
 		t.Fatal(err)
 	}
 	expectedHandshakeResponsePacket := make([]byte, packet.WireGuardMessageLengthHandshakeResponse)
@@ -149,15 +153,19 @@ func testClientServerDataPackets(t *testing.T, serverConfig ServerConfig, client
 		Interfaces: []ServerConfig{serverConfig},
 		Peers:      []ClientConfig{clientConfig},
 	}
-	if err := sc.Start(logger); err != nil {
+	m, err := sc.Manager(logger)
+	if err != nil {
 		t.Fatal(err)
 	}
-	defer sc.Stop()
+	if err = m.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer m.Stop()
 
 	// Make packets.
 	smallDataPacket := make([]byte, 1024)
 	smallDataPacket[0] = packet.WireGuardMessageTypeData
-	if _, err := rand.Read(smallDataPacket[1:]); err != nil {
+	if _, err = rand.Read(smallDataPacket[1:]); err != nil {
 		t.Fatal(err)
 	}
 	expectedSmallDataPacket := make([]byte, 1024)
@@ -166,7 +174,7 @@ func testClientServerDataPackets(t *testing.T, serverConfig ServerConfig, client
 
 	bigDataPacket := make([]byte, 2048)
 	bigDataPacket[0] = packet.WireGuardMessageTypeData
-	if _, err := rand.Read(bigDataPacket[1:]); err != nil {
+	if _, err = rand.Read(bigDataPacket[1:]); err != nil {
 		t.Fatal(err)
 	}
 
