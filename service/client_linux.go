@@ -116,6 +116,7 @@ func (c *client) recvFromWgConnRecvmmsg() {
 					zap.String("client", c.name),
 					zap.String("wgListen", c.wgListen),
 					zap.Stringer("clientAddress", clientAddrPort),
+					zap.Uint32("packetLength", msg.Msglen),
 					zap.Error(err),
 				)
 				c.packetBufPool.Put(packetBufp)
@@ -128,10 +129,11 @@ func (c *client) recvFromWgConnRecvmmsg() {
 			if !ok {
 				proxyConn, err := conn.ListenUDP("udp", "", false, c.proxyFwmark)
 				if err != nil {
-					c.logger.Warn("Failed to start UDP listener for new UDP session",
+					c.logger.Warn("Failed to create UDP socket for new UDP session",
 						zap.String("client", c.name),
 						zap.String("wgListen", c.wgListen),
 						zap.Stringer("clientAddress", clientAddrPort),
+						zap.Int("proxyFwmark", c.proxyFwmark),
 						zap.Error(err),
 					)
 					c.packetBufPool.Put(packetBufp)
@@ -183,13 +185,15 @@ func (c *client) recvFromWgConnRecvmmsg() {
 				natEntry.clientPktinfo.Store(clientPktinfop)
 				natEntry.clientPktinfoCache = clientPktinfoCache
 
-				c.logger.Debug("Updated client pktinfo",
-					zap.String("client", c.name),
-					zap.String("wgListen", c.wgListen),
-					zap.Stringer("clientAddress", clientAddrPort),
-					zap.Stringer("clientPktinfoAddr", clientPktinfoAddr),
-					zap.Uint32("clientPktinfoIfindex", clientPktinfoIfindex),
-				)
+				if ce := c.logger.Check(zap.DebugLevel, "Updated client pktinfo"); ce != nil {
+					ce.Write(
+						zap.String("client", c.name),
+						zap.String("wgListen", c.wgListen),
+						zap.Stringer("clientAddress", clientAddrPort),
+						zap.Stringer("clientPktinfoAddr", clientPktinfoAddr),
+						zap.Uint32("clientPktinfoIfindex", clientPktinfoIfindex),
+					)
+				}
 			}
 
 			if !ok {
@@ -223,12 +227,14 @@ func (c *client) recvFromWgConnRecvmmsg() {
 			select {
 			case natEntry.proxyConnSendCh <- queuedPacket{packetBufp, frontOverhead, int(msg.Msglen)}:
 			default:
-				c.logger.Debug("swgpPacket dropped due to full send channel",
-					zap.String("client", c.name),
-					zap.String("wgListen", c.wgListen),
-					zap.Stringer("clientAddress", clientAddrPort),
-					zap.Stringer("proxyAddress", c.proxyAddrPort),
-				)
+				if ce := c.logger.Check(zap.DebugLevel, "swgpPacket dropped due to full send channel"); ce != nil {
+					ce.Write(
+						zap.String("client", c.name),
+						zap.String("wgListen", c.wgListen),
+						zap.Stringer("clientAddress", clientAddrPort),
+						zap.Stringer("proxyAddress", c.proxyAddrPort),
+					)
+				}
 				c.packetBufPool.Put(packetBufp)
 			}
 		}
@@ -559,12 +565,13 @@ func (c *client) relayProxyToWgSendmmsg(clientAddrPort netip.AddrPort, natEntry 
 				continue
 			}
 			if !conn.AddrPortMappedEqual(packetSourceAddrPort, c.proxyAddrPort) {
-				c.logger.Debug("Ignoring packet from non-proxy address",
+				c.logger.Warn("Ignoring packet from non-proxy address",
 					zap.String("client", c.name),
 					zap.String("wgListen", c.wgListen),
 					zap.Stringer("clientAddress", clientAddrPort),
 					zap.Stringer("proxyAddress", c.proxyAddrPort),
 					zap.Stringer("packetSourceAddress", packetSourceAddrPort),
+					zap.Uint32("packetLength", msg.Msglen),
 					zap.Error(err),
 				)
 				continue
@@ -577,6 +584,8 @@ func (c *client) relayProxyToWgSendmmsg(clientAddrPort netip.AddrPort, natEntry 
 					zap.String("wgListen", c.wgListen),
 					zap.Stringer("clientAddress", clientAddrPort),
 					zap.Stringer("proxyAddress", c.proxyAddrPort),
+					zap.Stringer("packetSourceAddress", packetSourceAddrPort),
+					zap.Uint32("packetLength", msg.Msglen),
 					zap.Error(err),
 				)
 				continue
@@ -590,6 +599,7 @@ func (c *client) relayProxyToWgSendmmsg(clientAddrPort netip.AddrPort, natEntry 
 					zap.String("wgListen", c.wgListen),
 					zap.Stringer("clientAddress", clientAddrPort),
 					zap.Stringer("proxyAddress", c.proxyAddrPort),
+					zap.Uint32("packetLength", msg.Msglen),
 					zap.Error(err),
 				)
 				continue
@@ -734,12 +744,13 @@ func (c *client) relayProxyToWgSendmmsgRing(clientAddrPort netip.AddrPort, natEn
 				continue
 			}
 			if !conn.AddrPortMappedEqual(packetSourceAddrPort, c.proxyAddrPort) {
-				c.logger.Debug("Ignoring packet from non-proxy address",
+				c.logger.Warn("Ignoring packet from non-proxy address",
 					zap.String("client", c.name),
 					zap.String("wgListen", c.wgListen),
 					zap.Stringer("clientAddress", clientAddrPort),
 					zap.Stringer("proxyAddress", c.proxyAddrPort),
 					zap.Stringer("packetSourceAddress", packetSourceAddrPort),
+					zap.Uint32("packetLength", msg.Msglen),
 					zap.Error(err),
 				)
 				continue
@@ -752,6 +763,8 @@ func (c *client) relayProxyToWgSendmmsgRing(clientAddrPort netip.AddrPort, natEn
 					zap.String("wgListen", c.wgListen),
 					zap.Stringer("clientAddress", clientAddrPort),
 					zap.Stringer("proxyAddress", c.proxyAddrPort),
+					zap.Stringer("packetSourceAddress", packetSourceAddrPort),
+					zap.Uint32("packetLength", msg.Msglen),
 					zap.Error(err),
 				)
 				continue
@@ -765,6 +778,7 @@ func (c *client) relayProxyToWgSendmmsgRing(clientAddrPort netip.AddrPort, natEn
 					zap.String("wgListen", c.wgListen),
 					zap.Stringer("clientAddress", clientAddrPort),
 					zap.Stringer("proxyAddress", c.proxyAddrPort),
+					zap.Uint32("packetLength", msg.Msglen),
 					zap.Error(err),
 				)
 				continue
