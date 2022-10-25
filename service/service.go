@@ -11,8 +11,13 @@ import (
 	"go.uber.org/zap"
 )
 
-// sendChannelCapacity defines client and server NAT entry's send channel capacity.
-const sendChannelCapacity = 1024
+const (
+	// minimumMTU is the minimum allowed MTU.
+	minimumMTU = 1280
+
+	// sendChannelCapacity defines client and server NAT entry's send channel capacity.
+	sendChannelCapacity = 1024
+)
 
 // We use WireGuard's RejectAfterTime as NAT timeout.
 const RejectAfterTime = 180 * time.Second

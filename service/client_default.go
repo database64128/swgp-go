@@ -2,6 +2,6 @@
 
 package service
 
-func (c *client) setRelayFunc() {
+func (c *client) setRelayFunc(batchMode string) {
 	c.recvFromWgConn = c.recvFromWgConnGeneric
 }

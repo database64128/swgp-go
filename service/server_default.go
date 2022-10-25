@@ -2,6 +2,6 @@
 
 package service
 
-func (s *server) setRelayFunc() {
+func (s *server) setRelayFunc(batchMode string) {
 	s.recvFromProxyConn = s.recvFromProxyConnGeneric
 }
