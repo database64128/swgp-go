@@ -15,6 +15,7 @@ import (
 )
 
 var (
+	testConf = flag.Bool("testConf", false, "Test the configuration file without starting the services")
 	confPath = flag.String("confPath", "", "Path to JSON configuration file")
 	zapConf  = flag.String("zapConf", "", "Preset name or path to JSON configuration file for building the zap logger.\nAvailable presets: console (default), systemd, production, development")
 	logLevel = flag.String("logLevel", "", "Override the logger configuration's log level.\nAvailable levels: debug, info, warn, error, dpanic, panic, fatal")
@@ -100,6 +101,11 @@ func main() {
 			zap.Stringp("confPath", confPath),
 			zap.Error(err),
 		)
+	}
+
+	if *testConf {
+		logger.Info("Config test OK", zap.Stringp("confPath", confPath))
+		return
 	}
 
 	if err = m.Start(); err != nil {
