@@ -54,22 +54,22 @@ type client struct {
 	recvFromWgConn     func()
 }
 
-// NewClientService creates a swgp client service from the specified client config.
+// Client creates a swgp client service from the client config.
 // Call the Start method on the returned service to start it.
-func NewClientService(config ClientConfig, logger *zap.Logger) (Service, error) {
+func (cc *ClientConfig) Client(logger *zap.Logger) (*client, error) {
 	// Require MTU to be at least 1280.
-	if config.MTU < minimumMTU {
+	if cc.MTU < minimumMTU {
 		return nil, ErrMTUTooSmall
 	}
 
 	// Create packet handler for user-specified proxy mode.
-	handler, err := getPacketHandlerForProxyMode(config.ProxyMode, config.ProxyPSK)
+	handler, err := getPacketHandlerForProxyMode(cc.ProxyMode, cc.ProxyPSK)
 	if err != nil {
 		return nil, err
 	}
 
 	// Resolve endpoint address.
-	proxyAddrPort, err := conn.ResolveAddrPort(config.ProxyEndpoint)
+	proxyAddrPort, err := conn.ResolveAddrPort(cc.ProxyEndpoint)
 	if err != nil {
 		return nil, err
 	}
@@ -78,27 +78,29 @@ func NewClientService(config ClientConfig, logger *zap.Logger) (Service, error) 
 
 	// maxProxyPacketSize = MTU - IP header length - UDP header length
 	if addr := proxyAddrPort.Addr(); addr.Is4() || addr.Is4In6() {
-		maxProxyPacketSize = config.MTU - IPv4HeaderLength - UDPHeaderLength
+		maxProxyPacketSize = cc.MTU - IPv4HeaderLength - UDPHeaderLength
 	} else {
-		maxProxyPacketSize = config.MTU - IPv6HeaderLength - UDPHeaderLength
+		maxProxyPacketSize = cc.MTU - IPv6HeaderLength - UDPHeaderLength
 	}
 
 	c := client{
-		name:               config.Name,
-		wgListen:           config.WgListen,
-		wgFwmark:           config.WgFwmark,
-		proxyFwmark:        config.ProxyFwmark,
+		name:               cc.Name,
+		wgListen:           cc.WgListen,
+		wgFwmark:           cc.WgFwmark,
+		proxyFwmark:        cc.ProxyFwmark,
 		maxProxyPacketSize: maxProxyPacketSize,
 		proxyAddrPort:      proxyAddrPort,
 		handler:            handler,
 		logger:             logger,
-		table:              make(map[netip.AddrPort]*clientNatEntry),
+		packetBufPool: sync.Pool{
+			New: func() any {
+				b := make([]byte, maxProxyPacketSize)
+				return &b
+			},
+		},
+		table: make(map[netip.AddrPort]*clientNatEntry),
 	}
-	c.packetBufPool.New = func() any {
-		b := make([]byte, maxProxyPacketSize)
-		return &b
-	}
-	c.setRelayFunc(config.BatchMode)
+	c.setRelayFunc(cc.BatchMode)
 	return &c, nil
 }
 

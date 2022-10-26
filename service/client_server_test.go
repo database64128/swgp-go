@@ -24,8 +24,8 @@ func generateTestPSK(t *testing.T) []byte {
 
 func testClientServerHandshake(t *testing.T, serverConfig ServerConfig, clientConfig ClientConfig) {
 	sc := Config{
-		Interfaces: []ServerConfig{serverConfig},
-		Peers:      []ClientConfig{clientConfig},
+		Servers: []ServerConfig{serverConfig},
+		Clients: []ClientConfig{clientConfig},
 	}
 	m, err := sc.Manager(logger)
 	if err != nil {
@@ -150,8 +150,8 @@ func TestClientServerHandshakeParanoid(t *testing.T) {
 
 func testClientServerDataPackets(t *testing.T, serverConfig ServerConfig, clientConfig ClientConfig) {
 	sc := Config{
-		Interfaces: []ServerConfig{serverConfig},
-		Peers:      []ClientConfig{clientConfig},
+		Servers: []ServerConfig{serverConfig},
+		Clients: []ClientConfig{clientConfig},
 	}
 	m, err := sc.Manager(logger)
 	if err != nil {

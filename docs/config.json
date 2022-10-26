@@ -1,8 +1,8 @@
 {
-    "interfaces": [
+    "servers": [
         {
-            "name": "wg0",
-            "proxyListen": "[::]:20220",
+            "name": "server",
+            "proxyListen": ":20220",
             "proxyMode": "zero-overhead",
             "proxyPSK": "sAe5RvzLJ3Q0Ll88QRM1N01dYk83Q4y0rXMP1i4rDmI=",
             "proxyFwmark": 0,
@@ -12,10 +12,10 @@
             "batchMode": ""
         }
     ],
-    "peers": [
+    "clients": [
         {
-            "name": "laptop",
-            "wgListen": "[::]:20222",
+            "name": "client",
+            "wgListen": ":20222",
             "wgFwmark": 0,
             "proxyEndpoint": "[2001:db8:1f74:3c86:aef9:a75:5d2a:425e]:20220",
             "proxyMode": "zero-overhead",

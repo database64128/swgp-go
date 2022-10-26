@@ -58,29 +58,29 @@ type server struct {
 	recvFromProxyConn    func()
 }
 
-// NewServerService creates a swgp server service from the specified server config.
+// Server creates a swgp server service from the server config.
 // Call the Start method on the returned service to start it.
-func NewServerService(config ServerConfig, logger *zap.Logger) (Service, error) {
+func (sc *ServerConfig) Server(logger *zap.Logger) (*server, error) {
 	// Require MTU to be at least 1280.
-	if config.MTU < minimumMTU {
+	if sc.MTU < minimumMTU {
 		return nil, ErrMTUTooSmall
 	}
 
 	// Create packet handler for user-specified proxy mode.
-	handler, err := getPacketHandlerForProxyMode(config.ProxyMode, config.ProxyPSK)
+	handler, err := getPacketHandlerForProxyMode(sc.ProxyMode, sc.ProxyPSK)
 	if err != nil {
 		return nil, err
 	}
 
 	// Resolve endpoint address.
-	wgAddrPort, err := conn.ResolveAddrPort(config.WgEndpoint)
+	wgAddrPort, err := conn.ResolveAddrPort(sc.WgEndpoint)
 	if err != nil {
 		return nil, err
 	}
 
 	// maxProxyPacketSize = MTU - IP header length - UDP header length
-	maxProxyPacketSizev4 := config.MTU - IPv4HeaderLength - UDPHeaderLength
-	maxProxyPacketSizev6 := config.MTU - IPv6HeaderLength - UDPHeaderLength
+	maxProxyPacketSizev4 := sc.MTU - IPv4HeaderLength - UDPHeaderLength
+	maxProxyPacketSizev6 := sc.MTU - IPv6HeaderLength - UDPHeaderLength
 
 	frontOverhead := handler.FrontOverhead()
 	rearOverhead := handler.RearOverhead()
@@ -90,10 +90,10 @@ func NewServerService(config ServerConfig, logger *zap.Logger) (Service, error) 
 	wgTunnelMTUv6 := (maxProxyPacketSizev6 - overhead - WireGuardDataPacketOverhead) & WireGuardDataPacketLengthMask
 
 	s := server{
-		name:                 config.Name,
-		proxyListen:          config.ProxyListen,
-		proxyFwmark:          config.ProxyFwmark,
-		wgFwmark:             config.WgFwmark,
+		name:                 sc.Name,
+		proxyListen:          sc.ProxyListen,
+		proxyFwmark:          sc.ProxyFwmark,
+		wgFwmark:             sc.WgFwmark,
 		maxProxyPacketSizev4: maxProxyPacketSizev4,
 		maxProxyPacketSizev6: maxProxyPacketSizev6,
 		wgTunnelMTUv4:        wgTunnelMTUv4,
@@ -101,13 +101,15 @@ func NewServerService(config ServerConfig, logger *zap.Logger) (Service, error) 
 		wgAddrPort:           wgAddrPort,
 		handler:              handler,
 		logger:               logger,
-		table:                make(map[netip.AddrPort]*serverNatEntry),
+		packetBufPool: sync.Pool{
+			New: func() any {
+				b := make([]byte, maxProxyPacketSizev4)
+				return &b
+			},
+		},
+		table: make(map[netip.AddrPort]*serverNatEntry),
 	}
-	s.packetBufPool.New = func() any {
-		b := make([]byte, maxProxyPacketSizev4)
-		return &b
-	}
-	s.setRelayFunc(config.BatchMode)
+	s.setRelayFunc(sc.BatchMode)
 	return &s, nil
 }
 

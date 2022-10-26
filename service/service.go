@@ -39,7 +39,6 @@ var ErrMTUTooSmall = errors.New("MTU must be at least 1280")
 // to provide swgp service over a connection or other abstractions.
 type Service interface {
 	// String returns the service's name.
-	// This method may be called on a nil pointer.
 	String() string
 
 	// Start starts the service.
@@ -52,35 +51,33 @@ type Service interface {
 // Config stores configurations for a typical swgp service.
 // It may be marshaled as or unmarshaled from JSON.
 type Config struct {
-	Interfaces []ServerConfig `json:"interfaces"`
-	Peers      []ClientConfig `json:"peers"`
+	Servers []ServerConfig `json:"servers"`
+	Clients []ClientConfig `json:"clients"`
 }
 
 // Manager initializes the service manager.
 func (sc *Config) Manager(logger *zap.Logger) (*Manager, error) {
-	serverCount := len(sc.Interfaces)
-	clientCount := len(sc.Peers)
-	serviceCount := serverCount + clientCount
+	serviceCount := len(sc.Servers) + len(sc.Clients)
 	if serviceCount == 0 {
 		return nil, errors.New("no services to start")
 	}
 
-	services := make([]Service, serviceCount)
+	services := make([]Service, 0, serviceCount)
 
-	for i := range sc.Interfaces {
-		s, err := NewServerService(sc.Interfaces[i], logger)
+	for i := range sc.Servers {
+		s, err := sc.Servers[i].Server(logger)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create server service %s: %w", sc.Interfaces[i].Name, err)
+			return nil, fmt.Errorf("failed to create server service %s: %w", sc.Servers[i].Name, err)
 		}
-		services[i] = s
+		services = append(services, s)
 	}
 
-	for i := range sc.Peers {
-		c, err := NewClientService(sc.Peers[i], logger)
+	for i := range sc.Clients {
+		c, err := sc.Clients[i].Client(logger)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create client service %s: %w", sc.Peers[i].Name, err)
+			return nil, fmt.Errorf("failed to create client service %s: %w", sc.Clients[i].Name, err)
 		}
-		services[serverCount+i] = c
+		services = append(services, c)
 	}
 
 	return &Manager{services, logger}, nil
