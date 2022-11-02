@@ -50,6 +50,7 @@ func (c *client) recvFromWgConnRecvmmsg() {
 		recvmmsgCount   uint64
 		packetsReceived uint64
 		wgBytesReceived uint64
+		burstBatchSize  int
 	)
 
 	for {
@@ -78,6 +79,9 @@ func (c *client) recvFromWgConnRecvmmsg() {
 
 		recvmmsgCount++
 		packetsReceived += uint64(n)
+		if burstBatchSize < n {
+			burstBatchSize = n
+		}
 
 		c.mu.Lock()
 
@@ -251,14 +255,16 @@ func (c *client) recvFromWgConnRecvmmsg() {
 		zap.Uint64("recvmmsgCount", recvmmsgCount),
 		zap.Uint64("packetsReceived", packetsReceived),
 		zap.Uint64("wgBytesReceived", wgBytesReceived),
+		zap.Int("burstBatchSize", burstBatchSize),
 	)
 }
 
 func (c *client) relayWgToProxySendmmsg(clientAddrPort netip.AddrPort, natEntry *clientNatEntry) {
 	var (
-		sendmmsgCount uint64
-		packetsSent   uint64
-		wgBytesSent   uint64
+		sendmmsgCount  uint64
+		packetsSent    uint64
+		wgBytesSent    uint64
+		burstBatchSize int
 	)
 
 	rsa6 := conn.AddrPortToSockaddrInet6(c.proxyAddrPort)
@@ -336,6 +342,9 @@ main:
 
 		sendmmsgCount++
 		packetsSent += uint64(count)
+		if burstBatchSize < count {
+			burstBatchSize = count
+		}
 
 		bufvecn := bufvec[:count]
 
@@ -356,14 +365,16 @@ main:
 		zap.Uint64("sendmmsgCount", sendmmsgCount),
 		zap.Uint64("packetsSent", packetsSent),
 		zap.Uint64("wgBytesSent", wgBytesSent),
+		zap.Int("burstBatchSize", burstBatchSize),
 	)
 }
 
 func (c *client) relayProxyToWgSendmmsg(clientAddrPort netip.AddrPort, natEntry *clientNatEntry, clientPktinfop *[]byte) {
 	var (
-		sendmmsgCount uint64
-		packetsSent   uint64
-		wgBytesSent   uint64
+		sendmmsgCount  uint64
+		packetsSent    uint64
+		wgBytesSent    uint64
+		burstBatchSize int
 	)
 
 	clientPktinfo := *clientPktinfop
@@ -502,6 +513,9 @@ func (c *client) relayProxyToWgSendmmsg(clientAddrPort netip.AddrPort, natEntry 
 
 		sendmmsgCount++
 		packetsSent += uint64(ns)
+		if burstBatchSize < ns {
+			burstBatchSize = ns
+		}
 	}
 
 	c.logger.Info("Finished relay proxyConn -> wgConn",
@@ -512,5 +526,6 @@ func (c *client) relayProxyToWgSendmmsg(clientAddrPort netip.AddrPort, natEntry 
 		zap.Uint64("sendmmsgCount", sendmmsgCount),
 		zap.Uint64("packetsSent", packetsSent),
 		zap.Uint64("wgBytesSent", wgBytesSent),
+		zap.Int("burstBatchSize", burstBatchSize),
 	)
 }

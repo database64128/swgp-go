@@ -47,6 +47,7 @@ func (s *server) recvFromProxyConnRecvmmsg() {
 		recvmmsgCount   uint64
 		packetsReceived uint64
 		wgBytesReceived uint64
+		burstBatchSize  int
 	)
 
 	for {
@@ -75,6 +76,9 @@ func (s *server) recvFromProxyConnRecvmmsg() {
 
 		recvmmsgCount++
 		packetsReceived += uint64(n)
+		if burstBatchSize < n {
+			burstBatchSize = n
+		}
 
 		s.mu.Lock()
 
@@ -272,14 +276,16 @@ func (s *server) recvFromProxyConnRecvmmsg() {
 		zap.Uint64("recvmmsgCount", recvmmsgCount),
 		zap.Uint64("packetsReceived", packetsReceived),
 		zap.Uint64("wgBytesReceived", wgBytesReceived),
+		zap.Int("burstBatchSize", burstBatchSize),
 	)
 }
 
 func (s *server) relayProxyToWgSendmmsg(clientAddrPort netip.AddrPort, natEntry *serverNatEntry) {
 	var (
-		sendmmsgCount uint64
-		packetsSent   uint64
-		wgBytesSent   uint64
+		sendmmsgCount  uint64
+		packetsSent    uint64
+		wgBytesSent    uint64
+		burstBatchSize int
 	)
 
 	rsa6 := conn.AddrPortToSockaddrInet6(s.wgAddrPort)
@@ -358,6 +364,9 @@ func (s *server) relayProxyToWgSendmmsg(clientAddrPort netip.AddrPort, natEntry 
 
 		sendmmsgCount++
 		packetsSent += uint64(count)
+		if burstBatchSize < count {
+			burstBatchSize = count
+		}
 
 		bufvecn := bufvec[:count]
 
@@ -378,14 +387,16 @@ func (s *server) relayProxyToWgSendmmsg(clientAddrPort netip.AddrPort, natEntry 
 		zap.Uint64("sendmmsgCount", sendmmsgCount),
 		zap.Uint64("packetsSent", packetsSent),
 		zap.Uint64("wgBytesSent", wgBytesSent),
+		zap.Int("burstBatchSize", burstBatchSize),
 	)
 }
 
 func (s *server) relayWgToProxySendmmsg(clientAddrPort netip.AddrPort, natEntry *serverNatEntry, clientPktinfop *[]byte) {
 	var (
-		sendmmsgCount uint64
-		packetsSent   uint64
-		wgBytesSent   uint64
+		sendmmsgCount  uint64
+		packetsSent    uint64
+		wgBytesSent    uint64
+		burstBatchSize int
 	)
 
 	clientPktinfo := *clientPktinfop
@@ -526,6 +537,9 @@ func (s *server) relayWgToProxySendmmsg(clientAddrPort netip.AddrPort, natEntry 
 
 		sendmmsgCount++
 		packetsSent += uint64(ns)
+		if burstBatchSize < ns {
+			burstBatchSize = ns
+		}
 	}
 
 	s.logger.Info("Finished relay wgConn -> proxyConn",
@@ -536,5 +550,6 @@ func (s *server) relayWgToProxySendmmsg(clientAddrPort netip.AddrPort, natEntry 
 		zap.Uint64("sendmmsgCount", sendmmsgCount),
 		zap.Uint64("packetsSent", packetsSent),
 		zap.Uint64("wgBytesSent", wgBytesSent),
+		zap.Int("burstBatchSize", burstBatchSize),
 	)
 }
