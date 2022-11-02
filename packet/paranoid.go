@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	mrand "math/rand"
+	"time"
 
 	"golang.org/x/crypto/chacha20poly1305"
 )
@@ -15,11 +16,12 @@ import (
 // All packets, irrespective of message type, are padded up to the maximum packet length
 // to hide any possible characteristics.
 //
-// 	swgpPacket := 24B nonce + AEAD_Seal(u16be payload length + payload + padding)
+//	swgpPacket := 24B nonce + AEAD_Seal(u16be payload length + payload + padding)
 //
 // paranoidHandler implements the Handler interface.
 type paranoidHandler struct {
 	aead cipher.AEAD
+	rng  *mrand.Rand
 }
 
 // NewParanoidHandler creates a "paranoid" handler that
@@ -32,6 +34,7 @@ func NewParanoidHandler(psk []byte) (Handler, error) {
 
 	return &paranoidHandler{
 		aead: aead,
+		rng:  mrand.New(mrand.NewSource(time.Now().UnixNano())),
 	}, nil
 }
 
@@ -57,7 +60,7 @@ func (h *paranoidHandler) EncryptZeroCopy(buf []byte, wgPacketStart, wgPacketLen
 	paddingHeadroom := rearHeadroom - chacha20poly1305.Overhead
 	var paddingLen int
 	if paddingHeadroom > 0 {
-		paddingLen = mrand.Intn(paddingHeadroom) + 1
+		paddingLen = h.rng.Intn(paddingHeadroom) + 1
 	}
 
 	// Calculate offsets.

@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	mrand "math/rand"
+	"time"
 
 	"golang.org/x/crypto/chacha20poly1305"
 )
@@ -19,13 +20,14 @@ const zeroOverheadHandshakePacketMinimumOverhead = 2 + chacha20poly1305.Overhead
 // The remainder of handshake packets (message type 1, 2, 3) are also randomly padded and encrypted
 // using an XChaCha20-Poly1305 AEAD cipher to blend into normal traffic.
 //
-// 	swgpPacket := aes(wgDataPacket[:16]) + wgDataPacket[16:]
-// 	swgpPacket := aes(wgHandshakePacket[:16]) + AEAD_Seal(payload + padding + u16be payload length) + 24B nonce
+//	swgpPacket := aes(wgDataPacket[:16]) + wgDataPacket[16:]
+//	swgpPacket := aes(wgHandshakePacket[:16]) + AEAD_Seal(payload + padding + u16be payload length) + 24B nonce
 //
 // zeroOverheadHandler implements the Handler interface.
 type zeroOverheadHandler struct {
 	cb   cipher.Block
 	aead cipher.AEAD
+	rng  *mrand.Rand
 }
 
 // NewZeroOverheadHandler creates a zero-overhead handler that
@@ -44,6 +46,7 @@ func NewZeroOverheadHandler(psk []byte) (Handler, error) {
 	return &zeroOverheadHandler{
 		cb:   cb,
 		aead: aead,
+		rng:  mrand.New(mrand.NewSource(time.Now().UnixNano())),
 	}, nil
 }
 
@@ -90,7 +93,7 @@ func (h *zeroOverheadHandler) EncryptZeroCopy(buf []byte, wgPacketStart, wgPacke
 
 	var paddingLen int
 	if paddingHeadroom > 0 {
-		paddingLen = mrand.Intn(paddingHeadroom) + 1
+		paddingLen = h.rng.Intn(paddingHeadroom) + 1
 	}
 
 	swgpPacketLength += paddingLen + zeroOverheadHandshakePacketMinimumOverhead
