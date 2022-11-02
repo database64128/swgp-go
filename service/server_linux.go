@@ -24,7 +24,7 @@ func (s *server) setRelayFunc(batchMode string) {
 }
 
 func (s *server) recvFromProxyConnRecvmmsg() {
-	bufvec := make([]*[]byte, conn.UIO_MAXIOV)
+	bufvec := make([][]byte, conn.UIO_MAXIOV)
 	namevec := make([]unix.RawSockaddrInet6, conn.UIO_MAXIOV)
 	iovec := make([]unix.Iovec, conn.UIO_MAXIOV)
 	cmsgvec := make([][]byte, conn.UIO_MAXIOV)
@@ -51,9 +51,8 @@ func (s *server) recvFromProxyConnRecvmmsg() {
 
 	for {
 		for i := range iovec[:n] {
-			packetBufp := s.packetBufPool.Get().(*[]byte)
-			packetBuf := *packetBufp
-			bufvec[i] = packetBufp
+			packetBuf := s.getPacketBuf()
+			bufvec[i] = packetBuf
 			iovec[i].Base = &packetBuf[0]
 			iovec[i].SetLen(len(packetBuf))
 			msgvec[i].Msghdr.SetControllen(conn.SocketControlMessageBufferSize)
@@ -70,7 +69,7 @@ func (s *server) recvFromProxyConnRecvmmsg() {
 				zap.Error(err),
 			)
 			n = 1
-			s.packetBufPool.Put(bufvec[0])
+			s.putPacketBuf(bufvec[0])
 			continue
 		}
 
@@ -83,14 +82,14 @@ func (s *server) recvFromProxyConnRecvmmsg() {
 
 		for i := range msgvecn {
 			msg := &msgvecn[i]
-			packetBufp := bufvec[i]
+			packetBuf := bufvec[i]
 
 			if msg.Msghdr.Controllen == 0 {
 				s.logger.Warn("Skipping packet with no control message from proxyConn",
 					zap.String("server", s.name),
 					zap.String("proxyListen", s.proxyListen),
 				)
-				s.packetBufPool.Put(packetBufp)
+				s.putPacketBuf(packetBuf)
 				continue
 			}
 
@@ -101,7 +100,7 @@ func (s *server) recvFromProxyConnRecvmmsg() {
 					zap.String("proxyListen", s.proxyListen),
 					zap.Error(err),
 				)
-				s.packetBufPool.Put(packetBufp)
+				s.putPacketBuf(packetBuf)
 				continue
 			}
 
@@ -114,11 +113,11 @@ func (s *server) recvFromProxyConnRecvmmsg() {
 					zap.Uint32("packetLength", msg.Msglen),
 					zap.Error(err),
 				)
-				s.packetBufPool.Put(packetBufp)
+				s.putPacketBuf(packetBuf)
 				continue
 			}
 
-			wgPacketStart, wgPacketLength, err := s.handler.DecryptZeroCopy(*packetBufp, 0, int(msg.Msglen))
+			wgPacketStart, wgPacketLength, err := s.handler.DecryptZeroCopy(packetBuf, 0, int(msg.Msglen))
 			if err != nil {
 				s.logger.Warn("Failed to decrypt swgpPacket",
 					zap.String("server", s.name),
@@ -127,7 +126,7 @@ func (s *server) recvFromProxyConnRecvmmsg() {
 					zap.Uint32("packetLength", msg.Msglen),
 					zap.Error(err),
 				)
-				s.packetBufPool.Put(packetBufp)
+				s.putPacketBuf(packetBuf)
 				continue
 			}
 
@@ -146,7 +145,7 @@ func (s *server) recvFromProxyConnRecvmmsg() {
 						zap.Int("wgFwmark", s.wgFwmark),
 						zap.Error(err),
 					)
-					s.packetBufPool.Put(packetBufp)
+					s.putPacketBuf(packetBuf)
 					s.mu.Unlock()
 					continue
 				}
@@ -160,7 +159,7 @@ func (s *server) recvFromProxyConnRecvmmsg() {
 						zap.Stringer("wgAddress", s.wgAddrPort),
 						zap.Error(err),
 					)
-					s.packetBufPool.Put(packetBufp)
+					s.putPacketBuf(packetBuf)
 					s.mu.Unlock()
 					continue
 				}
@@ -193,7 +192,7 @@ func (s *server) recvFromProxyConnRecvmmsg() {
 						zap.Stringer("clientAddress", clientAddrPort),
 						zap.Error(err),
 					)
-					s.packetBufPool.Put(packetBufp)
+					s.putPacketBuf(packetBuf)
 					s.mu.Unlock()
 					continue
 				}
@@ -245,7 +244,7 @@ func (s *server) recvFromProxyConnRecvmmsg() {
 			}
 
 			select {
-			case natEntry.wgConnSendCh <- queuedPacket{packetBufp, wgPacketStart, wgPacketLength}:
+			case natEntry.wgConnSendCh <- queuedPacket{packetBuf, wgPacketStart, wgPacketLength}:
 			default:
 				if ce := s.logger.Check(zap.DebugLevel, "wgPacket dropped due to full send channel"); ce != nil {
 					ce.Write(
@@ -255,7 +254,7 @@ func (s *server) recvFromProxyConnRecvmmsg() {
 						zap.Stringer("wgAddress", s.wgAddrPort),
 					)
 				}
-				s.packetBufPool.Put(packetBufp)
+				s.putPacketBuf(packetBuf)
 			}
 		}
 
@@ -263,7 +262,7 @@ func (s *server) recvFromProxyConnRecvmmsg() {
 	}
 
 	for i := range bufvec {
-		s.packetBufPool.Put(bufvec[i])
+		s.putPacketBuf(bufvec[i])
 	}
 
 	s.logger.Info("Finished receiving from proxyConn",
@@ -284,7 +283,7 @@ func (s *server) relayProxyToWgSendmmsg(clientAddrPort netip.AddrPort, natEntry 
 	)
 
 	rsa6 := conn.AddrPortToSockaddrInet6(s.wgAddrPort)
-	dequeuedPackets := make([]queuedPacket, conn.UIO_MAXIOV)
+	bufvec := make([][]byte, conn.UIO_MAXIOV)
 	iovec := make([]unix.Iovec, conn.UIO_MAXIOV)
 	msgvec := make([]conn.Mmsghdr, conn.UIO_MAXIOV)
 
@@ -306,18 +305,17 @@ func (s *server) relayProxyToWgSendmmsg(clientAddrPort netip.AddrPort, natEntry 
 		if !ok {
 			break
 		}
-		packetBuf := *dequeuedPacket.bufp
 
 	dequeue:
 		for {
 			// Update wgConn read deadline when a handshake initiation/response message is received.
-			switch packetBuf[dequeuedPacket.start] {
+			switch dequeuedPacket.buf[dequeuedPacket.start] {
 			case packet.WireGuardMessageTypeHandshakeInitiation, packet.WireGuardMessageTypeHandshakeResponse:
 				isHandshake = true
 			}
 
-			dequeuedPackets[count] = dequeuedPacket
-			iovec[count].Base = &packetBuf[dequeuedPacket.start]
+			bufvec[count] = dequeuedPacket.buf
+			iovec[count].Base = &dequeuedPacket.buf[dequeuedPacket.start]
 			iovec[count].SetLen(dequeuedPacket.length)
 			count++
 			wgBytesSent += uint64(dequeuedPacket.length)
@@ -331,7 +329,6 @@ func (s *server) relayProxyToWgSendmmsg(clientAddrPort netip.AddrPort, natEntry 
 				if !ok {
 					break dequeue
 				}
-				packetBuf = *dequeuedPacket.bufp
 			default:
 				break dequeue
 			}
@@ -362,8 +359,10 @@ func (s *server) relayProxyToWgSendmmsg(clientAddrPort netip.AddrPort, natEntry 
 		sendmmsgCount++
 		packetsSent += uint64(count)
 
-		for _, packet := range dequeuedPackets[:count] {
-			s.packetBufPool.Put(packet.bufp)
+		bufvecn := bufvec[:count]
+
+		for i := range bufvecn {
+			s.putPacketBuf(bufvecn[i])
 		}
 
 		if !ok {

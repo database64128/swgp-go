@@ -27,7 +27,7 @@ func (c *client) recvFromWgConnRecvmmsg() {
 	rearOverhead := c.handler.RearOverhead()
 	packetBufRecvSize := c.maxProxyPacketSize - frontOverhead - rearOverhead
 
-	bufvec := make([]*[]byte, conn.UIO_MAXIOV)
+	bufvec := make([][]byte, conn.UIO_MAXIOV)
 	namevec := make([]unix.RawSockaddrInet6, conn.UIO_MAXIOV)
 	iovec := make([]unix.Iovec, conn.UIO_MAXIOV)
 	cmsgvec := make([][]byte, conn.UIO_MAXIOV)
@@ -54,9 +54,8 @@ func (c *client) recvFromWgConnRecvmmsg() {
 
 	for {
 		for i := range iovec[:n] {
-			packetBufp := c.packetBufPool.Get().(*[]byte)
-			packetBuf := *packetBufp
-			bufvec[i] = packetBufp
+			packetBuf := c.getPacketBuf()
+			bufvec[i] = packetBuf
 			iovec[i].Base = &packetBuf[frontOverhead]
 			iovec[i].SetLen(packetBufRecvSize)
 			msgvec[i].Msghdr.SetControllen(conn.SocketControlMessageBufferSize)
@@ -73,7 +72,7 @@ func (c *client) recvFromWgConnRecvmmsg() {
 				zap.Error(err),
 			)
 			n = 1
-			c.packetBufPool.Put(bufvec[0])
+			c.putPacketBuf(bufvec[0])
 			continue
 		}
 
@@ -86,14 +85,14 @@ func (c *client) recvFromWgConnRecvmmsg() {
 
 		for i := range msgvecn {
 			msg := &msgvecn[i]
-			packetBufp := bufvec[i]
+			packetBuf := bufvec[i]
 
 			if msg.Msghdr.Controllen == 0 {
 				c.logger.Warn("Skipping packet with no control message from wgConn",
 					zap.String("client", c.name),
 					zap.String("wgListen", c.wgListen),
 				)
-				c.packetBufPool.Put(packetBufp)
+				c.putPacketBuf(packetBuf)
 				continue
 			}
 
@@ -104,7 +103,7 @@ func (c *client) recvFromWgConnRecvmmsg() {
 					zap.String("wgListen", c.wgListen),
 					zap.Error(err),
 				)
-				c.packetBufPool.Put(packetBufp)
+				c.putPacketBuf(packetBuf)
 				continue
 			}
 
@@ -117,7 +116,7 @@ func (c *client) recvFromWgConnRecvmmsg() {
 					zap.Uint32("packetLength", msg.Msglen),
 					zap.Error(err),
 				)
-				c.packetBufPool.Put(packetBufp)
+				c.putPacketBuf(packetBuf)
 				continue
 			}
 
@@ -134,7 +133,7 @@ func (c *client) recvFromWgConnRecvmmsg() {
 						zap.Int("proxyFwmark", c.proxyFwmark),
 						zap.Error(err),
 					)
-					c.packetBufPool.Put(packetBufp)
+					c.putPacketBuf(packetBuf)
 					c.mu.Unlock()
 					continue
 				}
@@ -148,7 +147,7 @@ func (c *client) recvFromWgConnRecvmmsg() {
 						zap.Stringer("proxyAddress", c.proxyAddrPort),
 						zap.Error(err),
 					)
-					c.packetBufPool.Put(packetBufp)
+					c.putPacketBuf(packetBuf)
 					c.mu.Unlock()
 					continue
 				}
@@ -173,7 +172,7 @@ func (c *client) recvFromWgConnRecvmmsg() {
 						zap.Stringer("clientAddress", clientAddrPort),
 						zap.Error(err),
 					)
-					c.packetBufPool.Put(packetBufp)
+					c.putPacketBuf(packetBuf)
 					c.mu.Unlock()
 					continue
 				}
@@ -224,7 +223,7 @@ func (c *client) recvFromWgConnRecvmmsg() {
 			}
 
 			select {
-			case natEntry.proxyConnSendCh <- queuedPacket{packetBufp, frontOverhead, int(msg.Msglen)}:
+			case natEntry.proxyConnSendCh <- queuedPacket{packetBuf, frontOverhead, int(msg.Msglen)}:
 			default:
 				if ce := c.logger.Check(zap.DebugLevel, "swgpPacket dropped due to full send channel"); ce != nil {
 					ce.Write(
@@ -234,7 +233,7 @@ func (c *client) recvFromWgConnRecvmmsg() {
 						zap.Stringer("proxyAddress", c.proxyAddrPort),
 					)
 				}
-				c.packetBufPool.Put(packetBufp)
+				c.putPacketBuf(packetBuf)
 			}
 		}
 
@@ -242,7 +241,7 @@ func (c *client) recvFromWgConnRecvmmsg() {
 	}
 
 	for i := range bufvec {
-		c.packetBufPool.Put(bufvec[i])
+		c.putPacketBuf(bufvec[i])
 	}
 
 	c.logger.Info("Finished receiving from wgConn",
@@ -263,7 +262,7 @@ func (c *client) relayWgToProxySendmmsg(clientAddrPort netip.AddrPort, natEntry 
 	)
 
 	rsa6 := conn.AddrPortToSockaddrInet6(c.proxyAddrPort)
-	dequeuedPackets := make([]queuedPacket, conn.UIO_MAXIOV)
+	bufvec := make([][]byte, conn.UIO_MAXIOV)
 	iovec := make([]unix.Iovec, conn.UIO_MAXIOV)
 	msgvec := make([]conn.Mmsghdr, conn.UIO_MAXIOV)
 
@@ -283,11 +282,10 @@ main:
 		if !ok {
 			break
 		}
-		packetBuf := *dequeuedPacket.bufp
 
 	dequeue:
 		for {
-			swgpPacketStart, swgpPacketLength, err := c.handler.EncryptZeroCopy(packetBuf, dequeuedPacket.start, dequeuedPacket.length)
+			swgpPacketStart, swgpPacketLength, err := c.handler.EncryptZeroCopy(dequeuedPacket.buf, dequeuedPacket.start, dequeuedPacket.length)
 			if err != nil {
 				c.logger.Warn("Failed to encrypt WireGuard packet",
 					zap.String("client", c.name),
@@ -296,7 +294,7 @@ main:
 					zap.Error(err),
 				)
 
-				c.packetBufPool.Put(dequeuedPacket.bufp)
+				c.putPacketBuf(dequeuedPacket.buf)
 
 				if count == 0 {
 					continue main
@@ -304,8 +302,8 @@ main:
 				goto next
 			}
 
-			dequeuedPackets[count] = dequeuedPacket
-			iovec[count].Base = &packetBuf[swgpPacketStart]
+			bufvec[count] = dequeuedPacket.buf
+			iovec[count].Base = &dequeuedPacket.buf[swgpPacketStart]
 			iovec[count].SetLen(swgpPacketLength)
 			count++
 			wgBytesSent += uint64(dequeuedPacket.length)
@@ -320,7 +318,6 @@ main:
 				if !ok {
 					break dequeue
 				}
-				packetBuf = *dequeuedPacket.bufp
 			default:
 				break dequeue
 			}
@@ -340,8 +337,10 @@ main:
 		sendmmsgCount++
 		packetsSent += uint64(count)
 
-		for _, packet := range dequeuedPackets[:count] {
-			c.packetBufPool.Put(packet.bufp)
+		bufvecn := bufvec[:count]
+
+		for i := range bufvecn {
+			c.putPacketBuf(bufvecn[i])
 		}
 
 		if !ok {

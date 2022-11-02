@@ -126,7 +126,7 @@ func getPacketHandlerForProxyMode(proxyMode string, proxyPSK []byte) (handler pa
 
 // queuedPacket is the structure used by send channels to queue packets for sending.
 type queuedPacket struct {
-	bufp   *[]byte
+	buf    []byte
 	start  int
 	length int
 }

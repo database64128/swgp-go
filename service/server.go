@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unsafe"
 
 	"github.com/database64128/swgp-go/conn"
 	"github.com/database64128/swgp-go/packet"
@@ -104,7 +105,7 @@ func (sc *ServerConfig) Server(logger *zap.Logger) (*server, error) {
 		packetBufPool: sync.Pool{
 			New: func() any {
 				b := make([]byte, maxProxyPacketSizev4)
-				return &b
+				return &b[0]
 			},
 		},
 		table: make(map[netip.AddrPort]*serverNatEntry),
@@ -151,13 +152,12 @@ func (s *server) recvFromProxyConnGeneric() {
 	)
 
 	for {
-		packetBufp := s.packetBufPool.Get().(*[]byte)
-		packetBuf := *packetBufp
+		packetBuf := s.getPacketBuf()
 
 		n, cmsgn, flags, clientAddrPort, err := s.proxyConn.ReadMsgUDPAddrPort(packetBuf, cmsgBuf)
 		if err != nil {
 			if errors.Is(err, os.ErrDeadlineExceeded) {
-				s.packetBufPool.Put(packetBufp)
+				s.putPacketBuf(packetBuf)
 				break
 			}
 			s.logger.Warn("Failed to read from proxyConn",
@@ -167,7 +167,7 @@ func (s *server) recvFromProxyConnGeneric() {
 				zap.Int("packetLength", n),
 				zap.Error(err),
 			)
-			s.packetBufPool.Put(packetBufp)
+			s.putPacketBuf(packetBuf)
 			continue
 		}
 		err = conn.ParseFlagsForError(flags)
@@ -179,7 +179,7 @@ func (s *server) recvFromProxyConnGeneric() {
 				zap.Int("packetLength", n),
 				zap.Error(err),
 			)
-			s.packetBufPool.Put(packetBufp)
+			s.putPacketBuf(packetBuf)
 			continue
 		}
 
@@ -192,7 +192,7 @@ func (s *server) recvFromProxyConnGeneric() {
 				zap.Int("packetLength", n),
 				zap.Error(err),
 			)
-			s.packetBufPool.Put(packetBufp)
+			s.putPacketBuf(packetBuf)
 			continue
 		}
 
@@ -214,7 +214,7 @@ func (s *server) recvFromProxyConnGeneric() {
 					zap.Int("wgFwmark", s.wgFwmark),
 					zap.Error(err),
 				)
-				s.packetBufPool.Put(packetBufp)
+				s.putPacketBuf(packetBuf)
 				s.mu.Unlock()
 				continue
 			}
@@ -228,7 +228,7 @@ func (s *server) recvFromProxyConnGeneric() {
 					zap.Stringer("wgAddress", s.wgAddrPort),
 					zap.Error(err),
 				)
-				s.packetBufPool.Put(packetBufp)
+				s.putPacketBuf(packetBuf)
 				s.mu.Unlock()
 				continue
 			}
@@ -261,7 +261,7 @@ func (s *server) recvFromProxyConnGeneric() {
 					zap.Stringer("clientAddress", clientAddrPort),
 					zap.Error(err),
 				)
-				s.packetBufPool.Put(packetBufp)
+				s.putPacketBuf(packetBuf)
 				s.mu.Unlock()
 				continue
 			}
@@ -313,7 +313,7 @@ func (s *server) recvFromProxyConnGeneric() {
 		}
 
 		select {
-		case natEntry.wgConnSendCh <- queuedPacket{packetBufp, wgPacketStart, wgPacketLength}:
+		case natEntry.wgConnSendCh <- queuedPacket{packetBuf, wgPacketStart, wgPacketLength}:
 		default:
 			if ce := s.logger.Check(zap.DebugLevel, "wgPacket dropped due to full send channel"); ce != nil {
 				ce.Write(
@@ -323,7 +323,7 @@ func (s *server) recvFromProxyConnGeneric() {
 					zap.Stringer("wgAddress", s.wgAddrPort),
 				)
 			}
-			s.packetBufPool.Put(packetBufp)
+			s.putPacketBuf(packetBuf)
 		}
 
 		s.mu.Unlock()
@@ -345,8 +345,7 @@ func (s *server) relayProxyToWgGeneric(clientAddrPort netip.AddrPort, natEntry *
 	)
 
 	for queuedPacket := range natEntry.wgConnSendCh {
-		packetBuf := *queuedPacket.bufp
-		wgPacket := packetBuf[queuedPacket.start : queuedPacket.start+queuedPacket.length]
+		wgPacket := queuedPacket.buf[queuedPacket.start : queuedPacket.start+queuedPacket.length]
 
 		if _, err := natEntry.wgConn.WriteToUDPAddrPort(wgPacket, s.wgAddrPort); err != nil {
 			s.logger.Warn("Failed to write wgPacket to wgConn",
@@ -372,7 +371,7 @@ func (s *server) relayProxyToWgGeneric(clientAddrPort netip.AddrPort, natEntry *
 			}
 		}
 
-		s.packetBufPool.Put(queuedPacket.bufp)
+		s.putPacketBuf(queuedPacket.buf)
 		packetsSent++
 		wgBytesSent += uint64(queuedPacket.length)
 	}
@@ -488,6 +487,16 @@ func (s *server) relayWgToProxyGeneric(clientAddrPort netip.AddrPort, natEntry *
 		zap.Uint64("packetsSent", packetsSent),
 		zap.Uint64("wgBytesSent", wgBytesSent),
 	)
+}
+
+// getPacketBuf retrieves a packet buffer from the pool.
+func (s *server) getPacketBuf() []byte {
+	return unsafe.Slice(s.packetBufPool.Get().(*byte), s.maxProxyPacketSizev4)
+}
+
+// putPacketBuf puts the packet buffer back into the pool.
+func (s *server) putPacketBuf(packetBuf []byte) {
+	s.packetBufPool.Put(&packetBuf[0])
 }
 
 // Stop implements the Service Stop method.
