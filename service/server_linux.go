@@ -79,10 +79,11 @@ func (s *server) recvFromProxyConnRecvmmsg() {
 
 		s.mu.Lock()
 
-		for i, msg := range msgvec[:n] {
+		msgvecn := msgvec[:n]
+
+		for i := range msgvecn {
+			msg := &msgvecn[i]
 			packetBufp := bufvec[i]
-			packetBuf := *packetBufp
-			cmsg := cmsgvec[i][:msg.Msghdr.Controllen]
 
 			if msg.Msghdr.Controllen == 0 {
 				s.logger.Warn("Skipping packet with no control message from proxyConn",
@@ -117,7 +118,7 @@ func (s *server) recvFromProxyConnRecvmmsg() {
 				continue
 			}
 
-			wgPacketStart, wgPacketLength, err := s.handler.DecryptZeroCopy(packetBuf, 0, int(msg.Msglen))
+			wgPacketStart, wgPacketLength, err := s.handler.DecryptZeroCopy(*packetBufp, 0, int(msg.Msglen))
 			if err != nil {
 				s.logger.Warn("Failed to decrypt swgpPacket",
 					zap.String("server", s.name),
@@ -181,6 +182,7 @@ func (s *server) recvFromProxyConnRecvmmsg() {
 			}
 
 			var clientPktinfop *[]byte
+			cmsg := cmsgvec[i][:msg.Msghdr.Controllen]
 
 			if !bytes.Equal(natEntry.clientPktinfoCache, cmsg) {
 				clientPktinfoAddr, clientPktinfoIfindex, err := conn.ParsePktinfoCmsg(cmsg)
@@ -260,8 +262,8 @@ func (s *server) recvFromProxyConnRecvmmsg() {
 		s.mu.Unlock()
 	}
 
-	for _, packetBufp := range bufvec {
-		s.packetBufPool.Put(packetBufp)
+	for i := range bufvec {
+		s.packetBufPool.Put(bufvec[i])
 	}
 
 	s.logger.Info("Finished receiving from proxyConn",
@@ -437,8 +439,11 @@ func (s *server) relayWgToProxySendmmsg(clientAddrPort netip.AddrPort, natEntry 
 		}
 
 		var ns int
+		rmsgvecn := rmsgvec[:nr]
 
-		for i, msg := range rmsgvec[:nr] {
+		for i := range rmsgvecn {
+			msg := &rmsgvecn[i]
+
 			packetSourceAddrPort, err := conn.SockaddrToAddrPort(msg.Msghdr.Name, msg.Msghdr.Namelen)
 			if err != nil {
 				s.logger.Warn("Failed to parse sockaddr of packet from wgConn",

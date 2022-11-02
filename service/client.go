@@ -178,7 +178,6 @@ func (c *client) recvFromWgConnGeneric() {
 			c.packetBufPool.Put(packetBufp)
 			continue
 		}
-		cmsg := cmsgBuf[:cmsgn]
 
 		packetsReceived++
 		wgBytesReceived += uint64(n)
@@ -224,6 +223,7 @@ func (c *client) recvFromWgConnGeneric() {
 		}
 
 		var clientPktinfop *[]byte
+		cmsg := cmsgBuf[:cmsgn]
 
 		if !bytes.Equal(natEntry.clientPktinfoCache, cmsg) {
 			clientPktinfoAddr, clientPktinfoIfindex, err := conn.ParsePktinfoCmsg(cmsg)

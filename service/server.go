@@ -182,7 +182,6 @@ func (s *server) recvFromProxyConnGeneric() {
 			s.packetBufPool.Put(packetBufp)
 			continue
 		}
-		cmsg := cmsgBuf[:cmsgn]
 
 		wgPacketStart, wgPacketLength, err := s.handler.DecryptZeroCopy(packetBuf, 0, n)
 		if err != nil {
@@ -251,6 +250,7 @@ func (s *server) recvFromProxyConnGeneric() {
 		}
 
 		var clientPktinfop *[]byte
+		cmsg := cmsgBuf[:cmsgn]
 
 		if !bytes.Equal(natEntry.clientPktinfoCache, cmsg) {
 			clientPktinfoAddr, clientPktinfoIfindex, err := conn.ParsePktinfoCmsg(cmsg)
