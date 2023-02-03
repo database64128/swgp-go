@@ -14,7 +14,7 @@ jobs:
 
     steps:
       - name: Install Git & Go
-        run: pacman -Syu --needed --noconfirm git go
+        run: pacman -Syu --needed --noconfirm gcc git go
 
       - name: Disable Git's stupid security theater
         run: git config --global safe.directory '*'
