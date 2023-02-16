@@ -9,6 +9,7 @@ import (
 	"unsafe"
 
 	"github.com/database64128/swgp-go/conn"
+	"github.com/database64128/swgp-go/packet"
 	"go.uber.org/zap"
 	"golang.org/x/sys/unix"
 )
@@ -281,7 +282,10 @@ func (c *client) relayWgToProxySendmmsg(clientAddrPort netip.AddrPort, natEntry 
 
 main:
 	for {
-		var count int
+		var (
+			count       int
+			isHandshake bool
+		)
 
 		// Block on first dequeue op.
 		dequeuedPacket, ok := <-natEntry.proxyConnSendCh
@@ -291,6 +295,12 @@ main:
 
 	dequeue:
 		for {
+			// Update proxyConn read deadline when a handshake initiation/response message is received.
+			switch dequeuedPacket.buf[dequeuedPacket.start] {
+			case packet.WireGuardMessageTypeHandshakeInitiation, packet.WireGuardMessageTypeHandshakeResponse:
+				isHandshake = true
+			}
+
 			swgpPacketStart, swgpPacketLength, err := c.handler.EncryptZeroCopy(dequeuedPacket.buf, dequeuedPacket.start, dequeuedPacket.length)
 			if err != nil {
 				c.logger.Warn("Failed to encrypt WireGuard packet",
@@ -338,6 +348,18 @@ main:
 				zap.Stringer("proxyAddress", c.proxyAddrPort),
 				zap.Error(err),
 			)
+		}
+
+		if isHandshake {
+			if err := natEntry.proxyConn.SetReadDeadline(time.Now().Add(RejectAfterTime)); err != nil {
+				c.logger.Warn("Failed to SetReadDeadline on proxyConn",
+					zap.String("client", c.name),
+					zap.String("wgListen", c.wgListen),
+					zap.Stringer("clientAddress", clientAddrPort),
+					zap.Stringer("proxyAddress", c.proxyAddrPort),
+					zap.Error(err),
+				)
+			}
 		}
 
 		sendmmsgCount++
