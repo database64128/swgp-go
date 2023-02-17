@@ -1,13 +1,13 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
 
+	"github.com/database64128/swgp-go/jsonhelper"
 	"github.com/database64128/swgp-go/logging"
 	"github.com/database64128/swgp-go/service"
 	"go.uber.org/zap"
@@ -45,16 +45,7 @@ func main() {
 	case "development":
 		zc = zap.NewDevelopmentConfig()
 	default:
-		f, err := os.Open(*zapConf)
-		if err != nil {
-			fmt.Println(err)
-			os.Exit(1)
-		}
-		d := json.NewDecoder(f)
-		d.DisallowUnknownFields()
-		err = d.Decode(&zc)
-		f.Close()
-		if err != nil {
+		if err := jsonhelper.LoadAndDecodeDisallowUnknownFields(*zapConf, &zc); err != nil {
 			fmt.Println(err)
 			os.Exit(1)
 		}
@@ -76,20 +67,8 @@ func main() {
 	}
 	defer logger.Sync()
 
-	f, err := os.Open(*confPath)
-	if err != nil {
-		logger.Fatal("Failed to open config file",
-			zap.Stringp("confPath", confPath),
-			zap.Error(err),
-		)
-	}
-
-	d := json.NewDecoder(f)
-	d.DisallowUnknownFields()
-	err = d.Decode(&sc)
-	f.Close()
-	if err != nil {
-		logger.Fatal("Failed to decode config",
+	if err = jsonhelper.LoadAndDecodeDisallowUnknownFields(*confPath, &sc); err != nil {
+		logger.Fatal("Failed to load config",
 			zap.Stringp("confPath", confPath),
 			zap.Error(err),
 		)
