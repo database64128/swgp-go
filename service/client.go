@@ -27,7 +27,7 @@ type ClientConfig struct {
 	ProxyPSK      []byte `json:"proxyPSK"`
 	ProxyFwmark   int    `json:"proxyFwmark"`
 	MTU           int    `json:"mtu"`
-	BatchMode     string `json:"batchMode"`
+	PerfConfig
 }
 
 type clientNatEntry struct {
@@ -38,21 +38,24 @@ type clientNatEntry struct {
 }
 
 type client struct {
-	name               string
-	wgListen           string
-	wgFwmark           int
-	proxyFwmark        int
-	maxProxyPacketSize int
-	proxyAddrPort      netip.AddrPort
-	handler            packet.Handler
-	wgConn             *net.UDPConn
-	logger             *zap.Logger
-	packetBufPool      sync.Pool
-	mu                 sync.Mutex
-	wg                 sync.WaitGroup
-	mwg                sync.WaitGroup
-	table              map[netip.AddrPort]*clientNatEntry
-	recvFromWgConn     func()
+	name                string
+	wgListen            string
+	wgFwmark            int
+	proxyFwmark         int
+	relayBatchSize      int
+	mainRecvBatchSize   int
+	sendChannelCapacity int
+	maxProxyPacketSize  int
+	proxyAddrPort       netip.AddrPort
+	handler             packet.Handler
+	wgConn              *net.UDPConn
+	logger              *zap.Logger
+	packetBufPool       sync.Pool
+	mu                  sync.Mutex
+	wg                  sync.WaitGroup
+	mwg                 sync.WaitGroup
+	table               map[netip.AddrPort]*clientNatEntry
+	recvFromWgConn      func()
 }
 
 // Client creates a swgp client service from the client config.
@@ -61,6 +64,11 @@ func (cc *ClientConfig) Client(logger *zap.Logger) (*client, error) {
 	// Require MTU to be at least 1280.
 	if cc.MTU < minimumMTU {
 		return nil, ErrMTUTooSmall
+	}
+
+	// Check and apply PerfConfig defaults.
+	if err := cc.CheckAndApplyDefaults(); err != nil {
+		return nil, err
 	}
 
 	// Create packet handler for user-specified proxy mode.
@@ -85,14 +93,17 @@ func (cc *ClientConfig) Client(logger *zap.Logger) (*client, error) {
 	}
 
 	c := client{
-		name:               cc.Name,
-		wgListen:           cc.WgListen,
-		wgFwmark:           cc.WgFwmark,
-		proxyFwmark:        cc.ProxyFwmark,
-		maxProxyPacketSize: maxProxyPacketSize,
-		proxyAddrPort:      proxyAddrPort,
-		handler:            handler,
-		logger:             logger,
+		name:                cc.Name,
+		wgListen:            cc.WgListen,
+		wgFwmark:            cc.WgFwmark,
+		proxyFwmark:         cc.ProxyFwmark,
+		relayBatchSize:      cc.RelayBatchSize,
+		mainRecvBatchSize:   cc.MainRecvBatchSize,
+		sendChannelCapacity: cc.SendChannelCapacity,
+		maxProxyPacketSize:  maxProxyPacketSize,
+		proxyAddrPort:       proxyAddrPort,
+		handler:             handler,
+		logger:              logger,
 		packetBufPool: sync.Pool{
 			New: func() any {
 				b := make([]byte, maxProxyPacketSize)
@@ -216,7 +227,7 @@ func (c *client) recvFromWgConnGeneric() {
 
 			natEntry = &clientNatEntry{
 				proxyConn:       proxyConn,
-				proxyConnSendCh: make(chan queuedPacket, sendChannelCapacity),
+				proxyConnSendCh: make(chan queuedPacket, c.sendChannelCapacity),
 			}
 
 			c.table[clientAddrPort] = natEntry

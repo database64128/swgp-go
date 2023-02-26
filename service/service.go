@@ -15,8 +15,21 @@ const (
 	// minimumMTU is the minimum allowed MTU.
 	minimumMTU = 1280
 
-	// sendChannelCapacity defines client and server NAT entry's send channel capacity.
-	sendChannelCapacity = 1024
+	// defaultRelayBatchSize is the default batch size of recvmmsg(2) and sendmmsg(2) calls in relay sessions.
+	//
+	// On an i9-13900K, the average number of messages received in a single recvmmsg(2) call is
+	// around 100 in iperf3 tests. Bumping the msgvec size to greater than 256 does not seem to
+	// yield any performance improvement.
+	//
+	// Note that the mainline iperf3 does not use sendmmsg(2) or io_uring for batch sending at the
+	// time of writing. So this value is still subject to change in the future.
+	defaultRelayBatchSize = 256
+
+	// defaultMainRecvBatchSize is the default batch size of a relay service's main receive routine.
+	defaultMainRecvBatchSize = 64
+
+	// defaultSendChannelCapacity is the default capacity of a relay session's uplink send channel.
+	defaultSendChannelCapacity = 1024
 )
 
 // We use WireGuard's RejectAfterTime as NAT timeout.
@@ -46,6 +59,61 @@ type Service interface {
 
 	// Stop stops the service.
 	Stop() error
+}
+
+// PerfConfig exposes performance tuning knobs.
+type PerfConfig struct {
+	// BatchMode controls the mode of batch receiving and sending.
+	//
+	// Available values:
+	// - "": Platform default. This is equivalent to "sendmmsg" on Linux and "no" on other platforms.
+	// - "no": Do not receive or send packets in batches.
+	// - "sendmmsg": Use recvmmsg(2) and sendmmsg(2) on Linux.
+	BatchMode string `json:"batchMode"`
+
+	// RelayBatchSize is the batch size of recvmmsg(2) and sendmmsg(2) calls in relay sessions.
+	RelayBatchSize int `json:"relayBatchSize"`
+
+	// MainRecvBatchSize is the batch size of a relay service's main receive routine.
+	MainRecvBatchSize int `json:"mainRecvBatchSize"`
+
+	// SendChannelCapacity is the capacity of a relay session's uplink send channel.
+	SendChannelCapacity int `json:"sendChannelCapacity"`
+}
+
+// CheckAndApplyDefaults checks and applies default values to the configuration.
+func (pc *PerfConfig) CheckAndApplyDefaults() error {
+	switch pc.BatchMode {
+	case "", "no", "sendmmsg":
+	default:
+		return fmt.Errorf("unknown batch mode: %s", pc.BatchMode)
+	}
+
+	switch {
+	case pc.RelayBatchSize > 0 && pc.RelayBatchSize <= 1024:
+	case pc.RelayBatchSize == 0:
+		pc.RelayBatchSize = defaultRelayBatchSize
+	default:
+		return fmt.Errorf("relay batch size out of range [0, 1024]: %d", pc.RelayBatchSize)
+	}
+
+	switch {
+	case pc.MainRecvBatchSize > 0 && pc.MainRecvBatchSize <= 1024:
+	case pc.MainRecvBatchSize == 0:
+		pc.MainRecvBatchSize = defaultMainRecvBatchSize
+	default:
+		return fmt.Errorf("main recv batch size out of range [0, 1024]: %d", pc.MainRecvBatchSize)
+	}
+
+	switch {
+	case pc.SendChannelCapacity >= 64:
+	case pc.SendChannelCapacity == 0:
+		pc.SendChannelCapacity = defaultSendChannelCapacity
+	default:
+		return fmt.Errorf("send channel capacity must be at least 64: %d", pc.SendChannelCapacity)
+	}
+
+	return nil
 }
 
 // Config stores configurations for a typical swgp service.

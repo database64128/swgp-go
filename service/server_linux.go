@@ -24,11 +24,12 @@ func (s *server) setRelayFunc(batchMode string) {
 }
 
 func (s *server) recvFromProxyConnRecvmmsg() {
-	bufvec := make([][]byte, conn.UIO_MAXIOV)
-	namevec := make([]unix.RawSockaddrInet6, conn.UIO_MAXIOV)
-	iovec := make([]unix.Iovec, conn.UIO_MAXIOV)
-	cmsgvec := make([][]byte, conn.UIO_MAXIOV)
-	msgvec := make([]conn.Mmsghdr, conn.UIO_MAXIOV)
+	n := s.mainRecvBatchSize
+	bufvec := make([][]byte, n)
+	namevec := make([]unix.RawSockaddrInet6, n)
+	iovec := make([]unix.Iovec, n)
+	cmsgvec := make([][]byte, n)
+	msgvec := make([]conn.Mmsghdr, n)
 
 	for i := range msgvec {
 		cmsgBuf := make([]byte, conn.SocketControlMessageBufferSize)
@@ -39,8 +40,6 @@ func (s *server) recvFromProxyConnRecvmmsg() {
 		msgvec[i].Msghdr.SetIovlen(1)
 		msgvec[i].Msghdr.Control = &cmsgBuf[0]
 	}
-
-	n := conn.UIO_MAXIOV
 
 	var (
 		err             error
@@ -170,7 +169,7 @@ func (s *server) recvFromProxyConnRecvmmsg() {
 
 				natEntry = &serverNatEntry{
 					wgConn:       wgConn,
-					wgConnSendCh: make(chan queuedPacket, sendChannelCapacity),
+					wgConnSendCh: make(chan queuedPacket, s.sendChannelCapacity),
 				}
 
 				if addr := clientAddrPort.Addr(); addr.Is4() || addr.Is4In6() {
@@ -289,9 +288,9 @@ func (s *server) relayProxyToWgSendmmsg(clientAddrPort netip.AddrPort, natEntry 
 	)
 
 	rsa6 := conn.AddrPortToSockaddrInet6(s.wgAddrPort)
-	bufvec := make([][]byte, conn.UIO_MAXIOV)
-	iovec := make([]unix.Iovec, conn.UIO_MAXIOV)
-	msgvec := make([]conn.Mmsghdr, conn.UIO_MAXIOV)
+	bufvec := make([][]byte, s.relayBatchSize)
+	iovec := make([]unix.Iovec, s.relayBatchSize)
+	msgvec := make([]conn.Mmsghdr, s.relayBatchSize)
 
 	for i := range msgvec {
 		msgvec[i].Msghdr.Name = (*byte)(unsafe.Pointer(&rsa6))
@@ -326,7 +325,7 @@ func (s *server) relayProxyToWgSendmmsg(clientAddrPort netip.AddrPort, natEntry 
 			count++
 			wgBytesSent += uint64(dequeuedPacket.length)
 
-			if count == conn.UIO_MAXIOV {
+			if count == s.relayBatchSize {
 				break
 			}
 
@@ -406,14 +405,14 @@ func (s *server) relayWgToProxySendmmsg(clientAddrPort netip.AddrPort, natEntry 
 	rearOverhead := s.handler.RearOverhead()
 	plaintextLen := natEntry.maxProxyPacketSize - frontOverhead - rearOverhead
 
-	savec := make([]unix.RawSockaddrInet6, conn.UIO_MAXIOV)
-	bufvec := make([][]byte, conn.UIO_MAXIOV)
-	riovec := make([]unix.Iovec, conn.UIO_MAXIOV)
-	siovec := make([]unix.Iovec, conn.UIO_MAXIOV)
-	rmsgvec := make([]conn.Mmsghdr, conn.UIO_MAXIOV)
-	smsgvec := make([]conn.Mmsghdr, conn.UIO_MAXIOV)
+	savec := make([]unix.RawSockaddrInet6, s.relayBatchSize)
+	bufvec := make([][]byte, s.relayBatchSize)
+	riovec := make([]unix.Iovec, s.relayBatchSize)
+	siovec := make([]unix.Iovec, s.relayBatchSize)
+	rmsgvec := make([]conn.Mmsghdr, s.relayBatchSize)
+	smsgvec := make([]conn.Mmsghdr, s.relayBatchSize)
 
-	for i := 0; i < conn.UIO_MAXIOV; i++ {
+	for i := 0; i < s.relayBatchSize; i++ {
 		bufvec[i] = make([]byte, natEntry.maxProxyPacketSize)
 
 		riovec[i].Base = &bufvec[i][frontOverhead]

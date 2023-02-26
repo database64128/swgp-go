@@ -44,8 +44,7 @@ In this example, `swgp-go` runs a proxy server instance on port 20220. Decrypted
             "proxyFwmark": 0,
             "wgEndpoint": "[::1]:20221",
             "wgFwmark": 0,
-            "mtu": 1500,
-            "batchMode": ""
+            "mtu": 1500
         }
     ]
 }
@@ -66,8 +65,7 @@ In this example, `swgp-go` runs a proxy client instance on port 20222. Encrypted
             "proxyMode": "zero-overhead",
             "proxyPSK": "sAe5RvzLJ3Q0Ll88QRM1N01dYk83Q4y0rXMP1i4rDmI=",
             "proxyFwmark": 0,
-            "mtu": 1500,
-            "batchMode": ""
+            "mtu": 1500
         }
     ]
 }

@@ -28,11 +28,12 @@ func (c *client) recvFromWgConnRecvmmsg() {
 	rearOverhead := c.handler.RearOverhead()
 	packetBufRecvSize := c.maxProxyPacketSize - frontOverhead - rearOverhead
 
-	bufvec := make([][]byte, conn.UIO_MAXIOV)
-	namevec := make([]unix.RawSockaddrInet6, conn.UIO_MAXIOV)
-	iovec := make([]unix.Iovec, conn.UIO_MAXIOV)
-	cmsgvec := make([][]byte, conn.UIO_MAXIOV)
-	msgvec := make([]conn.Mmsghdr, conn.UIO_MAXIOV)
+	n := c.mainRecvBatchSize
+	bufvec := make([][]byte, n)
+	namevec := make([]unix.RawSockaddrInet6, n)
+	iovec := make([]unix.Iovec, n)
+	cmsgvec := make([][]byte, n)
+	msgvec := make([]conn.Mmsghdr, n)
 
 	for i := range msgvec {
 		cmsgBuf := make([]byte, conn.SocketControlMessageBufferSize)
@@ -43,8 +44,6 @@ func (c *client) recvFromWgConnRecvmmsg() {
 		msgvec[i].Msghdr.SetIovlen(1)
 		msgvec[i].Msghdr.Control = &cmsgBuf[0]
 	}
-
-	n := conn.UIO_MAXIOV
 
 	var (
 		err             error
@@ -159,7 +158,7 @@ func (c *client) recvFromWgConnRecvmmsg() {
 
 				natEntry = &clientNatEntry{
 					proxyConn:       proxyConn,
-					proxyConnSendCh: make(chan queuedPacket, sendChannelCapacity),
+					proxyConnSendCh: make(chan queuedPacket, c.sendChannelCapacity),
 				}
 
 				c.table[clientAddrPort] = natEntry
@@ -269,9 +268,9 @@ func (c *client) relayWgToProxySendmmsg(clientAddrPort netip.AddrPort, natEntry 
 	)
 
 	rsa6 := conn.AddrPortToSockaddrInet6(c.proxyAddrPort)
-	bufvec := make([][]byte, conn.UIO_MAXIOV)
-	iovec := make([]unix.Iovec, conn.UIO_MAXIOV)
-	msgvec := make([]conn.Mmsghdr, conn.UIO_MAXIOV)
+	bufvec := make([][]byte, c.relayBatchSize)
+	iovec := make([]unix.Iovec, c.relayBatchSize)
+	msgvec := make([]conn.Mmsghdr, c.relayBatchSize)
 
 	for i := range msgvec {
 		msgvec[i].Msghdr.Name = (*byte)(unsafe.Pointer(&rsa6))
@@ -324,7 +323,7 @@ main:
 			count++
 			wgBytesSent += uint64(dequeuedPacket.length)
 
-			if count == conn.UIO_MAXIOV {
+			if count == c.relayBatchSize {
 				break
 			}
 
@@ -402,14 +401,14 @@ func (c *client) relayProxyToWgSendmmsg(clientAddrPort netip.AddrPort, natEntry 
 	clientPktinfo := *clientPktinfop
 
 	name, namelen := conn.AddrPortToSockaddr(clientAddrPort)
-	savec := make([]unix.RawSockaddrInet6, conn.UIO_MAXIOV)
-	bufvec := make([][]byte, conn.UIO_MAXIOV)
-	riovec := make([]unix.Iovec, conn.UIO_MAXIOV)
-	siovec := make([]unix.Iovec, conn.UIO_MAXIOV)
-	rmsgvec := make([]conn.Mmsghdr, conn.UIO_MAXIOV)
-	smsgvec := make([]conn.Mmsghdr, conn.UIO_MAXIOV)
+	savec := make([]unix.RawSockaddrInet6, c.relayBatchSize)
+	bufvec := make([][]byte, c.relayBatchSize)
+	riovec := make([]unix.Iovec, c.relayBatchSize)
+	siovec := make([]unix.Iovec, c.relayBatchSize)
+	rmsgvec := make([]conn.Mmsghdr, c.relayBatchSize)
+	smsgvec := make([]conn.Mmsghdr, c.relayBatchSize)
 
-	for i := 0; i < conn.UIO_MAXIOV; i++ {
+	for i := 0; i < c.relayBatchSize; i++ {
 		bufvec[i] = make([]byte, c.maxProxyPacketSize)
 
 		riovec[i].Base = &bufvec[i][0]

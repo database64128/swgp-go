@@ -27,7 +27,7 @@ type ServerConfig struct {
 	WgEndpoint  string `json:"wgEndpoint"`
 	WgFwmark    int    `json:"wgFwmark"`
 	MTU         int    `json:"mtu"`
-	BatchMode   string `json:"batchMode"`
+	PerfConfig
 }
 
 type serverNatEntry struct {
@@ -43,6 +43,9 @@ type server struct {
 	proxyListen          string
 	proxyFwmark          int
 	wgFwmark             int
+	relayBatchSize       int
+	mainRecvBatchSize    int
+	sendChannelCapacity  int
 	maxProxyPacketSizev4 int
 	maxProxyPacketSizev6 int
 	wgTunnelMTUv4        int
@@ -65,6 +68,11 @@ func (sc *ServerConfig) Server(logger *zap.Logger) (*server, error) {
 	// Require MTU to be at least 1280.
 	if sc.MTU < minimumMTU {
 		return nil, ErrMTUTooSmall
+	}
+
+	// Check and apply PerfConfig defaults.
+	if err := sc.CheckAndApplyDefaults(); err != nil {
+		return nil, err
 	}
 
 	// Create packet handler for user-specified proxy mode.
@@ -95,6 +103,9 @@ func (sc *ServerConfig) Server(logger *zap.Logger) (*server, error) {
 		proxyListen:          sc.ProxyListen,
 		proxyFwmark:          sc.ProxyFwmark,
 		wgFwmark:             sc.WgFwmark,
+		relayBatchSize:       sc.RelayBatchSize,
+		mainRecvBatchSize:    sc.MainRecvBatchSize,
+		sendChannelCapacity:  sc.SendChannelCapacity,
 		maxProxyPacketSizev4: maxProxyPacketSizev4,
 		maxProxyPacketSizev6: maxProxyPacketSizev6,
 		wgTunnelMTUv4:        wgTunnelMTUv4,
@@ -235,7 +246,7 @@ func (s *server) recvFromProxyConnGeneric() {
 
 			natEntry = &serverNatEntry{
 				wgConn:       wgConn,
-				wgConnSendCh: make(chan queuedPacket, sendChannelCapacity),
+				wgConnSendCh: make(chan queuedPacket, s.sendChannelCapacity),
 			}
 
 			if addr := clientAddrPort.Addr(); addr.Is4() || addr.Is4In6() {

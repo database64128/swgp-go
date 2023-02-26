@@ -9,7 +9,10 @@
             "wgEndpoint": "[::1]:20221",
             "wgFwmark": 0,
             "mtu": 1500,
-            "batchMode": ""
+            "batchMode": "",
+            "relayBatchSize": 0,
+            "mainRecvBatchSize": 0,
+            "sendChannelCapacity": 0
         }
     ],
     "clients": [
@@ -22,7 +25,10 @@
             "proxyPSK": "sAe5RvzLJ3Q0Ll88QRM1N01dYk83Q4y0rXMP1i4rDmI=",
             "proxyFwmark": 0,
             "mtu": 1500,
-            "batchMode": ""
+            "batchMode": "",
+            "relayBatchSize": 0,
+            "mainRecvBatchSize": 0,
+            "sendChannelCapacity": 0
         }
     ]
 }
