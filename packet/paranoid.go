@@ -6,9 +6,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
-	mrand "math/rand"
-	"time"
 
+	"github.com/database64128/swgp-go/fastrand"
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
@@ -21,7 +20,6 @@ import (
 // paranoidHandler implements the Handler interface.
 type paranoidHandler struct {
 	aead cipher.AEAD
-	rng  *mrand.Rand
 }
 
 // NewParanoidHandler creates a "paranoid" handler that
@@ -34,7 +32,6 @@ func NewParanoidHandler(psk []byte) (Handler, error) {
 
 	return &paranoidHandler{
 		aead: aead,
-		rng:  mrand.New(mrand.NewSource(time.Now().UnixNano())),
 	}, nil
 }
 
@@ -60,7 +57,7 @@ func (h *paranoidHandler) EncryptZeroCopy(buf []byte, wgPacketStart, wgPacketLen
 	paddingHeadroom := rearHeadroom - chacha20poly1305.Overhead
 	var paddingLen int
 	if paddingHeadroom > 0 {
-		paddingLen = h.rng.Intn(paddingHeadroom) + 1
+		paddingLen = 1 + int(fastrand.Uint32n(uint32(paddingHeadroom)))
 	}
 
 	// Calculate offsets.

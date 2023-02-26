@@ -6,9 +6,8 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"fmt"
-	mrand "math/rand"
-	"time"
 
+	"github.com/database64128/swgp-go/fastrand"
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
@@ -27,7 +26,6 @@ const zeroOverheadHandshakePacketMinimumOverhead = 2 + chacha20poly1305.Overhead
 type zeroOverheadHandler struct {
 	cb   cipher.Block
 	aead cipher.AEAD
-	rng  *mrand.Rand
 }
 
 // NewZeroOverheadHandler creates a zero-overhead handler that
@@ -46,7 +44,6 @@ func NewZeroOverheadHandler(psk []byte) (Handler, error) {
 	return &zeroOverheadHandler{
 		cb:   cb,
 		aead: aead,
-		rng:  mrand.New(mrand.NewSource(time.Now().UnixNano())),
 	}, nil
 }
 
@@ -93,7 +90,7 @@ func (h *zeroOverheadHandler) EncryptZeroCopy(buf []byte, wgPacketStart, wgPacke
 
 	var paddingLen int
 	if paddingHeadroom > 0 {
-		paddingLen = h.rng.Intn(paddingHeadroom) + 1
+		paddingLen = 1 + int(fastrand.Uint32n(uint32(paddingHeadroom)))
 	}
 
 	swgpPacketLength += paddingLen + zeroOverheadHandshakePacketMinimumOverhead
