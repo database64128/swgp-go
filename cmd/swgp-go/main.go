@@ -97,8 +97,7 @@ func main() {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	sig := <-sigCh
-
-	logger.Info("Received signal, stopping...", zap.Stringer("signal", sig))
+	logger.Info("Received exit signal", zap.Stringer("signal", sig))
 
 	m.Stop()
 }
