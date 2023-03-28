@@ -3,7 +3,6 @@ package conn
 import (
 	"fmt"
 	"net"
-	"net/netip"
 	"unsafe"
 
 	"golang.org/x/sys/unix"
@@ -84,67 +83,6 @@ const UIO_MAXIOV = 1024
 type Mmsghdr struct {
 	Msghdr unix.Msghdr
 	Msglen uint32
-}
-
-func AddrPortToSockaddr(addrPort netip.AddrPort) (name *byte, namelen uint32) {
-	if addrPort.Addr().Is4() {
-		rsa4 := AddrPortToSockaddrInet4(addrPort)
-		name = (*byte)(unsafe.Pointer(&rsa4))
-		namelen = unix.SizeofSockaddrInet4
-	} else {
-		rsa6 := AddrPortToSockaddrInet6(addrPort)
-		name = (*byte)(unsafe.Pointer(&rsa6))
-		namelen = unix.SizeofSockaddrInet6
-	}
-
-	return
-}
-
-func AddrPortToSockaddrInet4(addrPort netip.AddrPort) unix.RawSockaddrInet4 {
-	addr := addrPort.Addr()
-	port := addrPort.Port()
-	rsa4 := unix.RawSockaddrInet4{
-		Family: unix.AF_INET,
-		Addr:   addr.As4(),
-	}
-	p := (*[2]byte)(unsafe.Pointer(&rsa4.Port))
-	p[0] = byte(port >> 8)
-	p[1] = byte(port)
-	return rsa4
-}
-
-func AddrPortToSockaddrInet6(addrPort netip.AddrPort) unix.RawSockaddrInet6 {
-	addr := addrPort.Addr()
-	port := addrPort.Port()
-	rsa6 := unix.RawSockaddrInet6{
-		Family: unix.AF_INET6,
-		Addr:   addr.As16(),
-	}
-	p := (*[2]byte)(unsafe.Pointer(&rsa6.Port))
-	p[0] = byte(port >> 8)
-	p[1] = byte(port)
-	return rsa6
-}
-
-func SockaddrToAddrPort(name *byte, namelen uint32) (netip.AddrPort, error) {
-	switch namelen {
-	case unix.SizeofSockaddrInet4:
-		rsa4 := (*unix.RawSockaddrInet4)(unsafe.Pointer(name))
-		portp := (*[2]byte)(unsafe.Pointer(&rsa4.Port))
-		port := uint16(portp[0])<<8 + uint16(portp[1])
-		ip := netip.AddrFrom4(rsa4.Addr)
-		return netip.AddrPortFrom(ip, port), nil
-
-	case unix.SizeofSockaddrInet6:
-		rsa6 := (*unix.RawSockaddrInet6)(unsafe.Pointer(name))
-		portp := (*[2]byte)(unsafe.Pointer(&rsa6.Port))
-		port := uint16(portp[0])<<8 + uint16(portp[1])
-		ip := netip.AddrFrom16(rsa6.Addr)
-		return netip.AddrPortFrom(ip, port), nil
-
-	default:
-		return netip.AddrPort{}, fmt.Errorf("bad sockaddr length: %d", namelen)
-	}
 }
 
 func Recvmmsg(conn *net.UDPConn, msgvec []Mmsghdr) (n int, err error) {
