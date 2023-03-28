@@ -77,14 +77,6 @@ func (lso ListenerSocketOptions) buildSetFns() setFuncSlice {
 		appendSetRecvPktinfoFunc(lso.ReceivePacketInfo)
 }
 
-// Source: include/uapi/linux/uio.h
-const UIO_MAXIOV = 1024
-
-type Mmsghdr struct {
-	Msghdr unix.Msghdr
-	Msglen uint32
-}
-
 func Recvmmsg(conn *net.UDPConn, msgvec []Mmsghdr) (n int, err error) {
 	rawConn, err := conn.SyscallConn()
 	if err != nil {
