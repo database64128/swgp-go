@@ -139,13 +139,12 @@ func (s *server) recvFromProxyConnRecvmmsg() {
 
 			natEntry, ok := s.table[clientAddrPort]
 			if !ok {
-				wgConn, err := conn.ListenUDP("udp", "", false, s.wgFwmark)
+				wgConn, err := s.wgConnListenConfig.ListenUDP("udp", "")
 				if err != nil {
 					s.logger.Warn("Failed to create UDP socket for new session",
 						zap.String("server", s.name),
 						zap.String("listenAddress", s.proxyListen),
 						zap.Stringer("clientAddress", clientAddrPort),
-						zap.Int("wgFwmark", s.wgFwmark),
 						zap.Error(err),
 					)
 					s.putPacketBuf(packetBuf)

@@ -19,14 +19,16 @@ import (
 // ServerConfig stores configurations for a swgp server service.
 // It may be marshaled as or unmarshaled from JSON.
 type ServerConfig struct {
-	Name        string `json:"name"`
-	ProxyListen string `json:"proxyListen"`
-	ProxyMode   string `json:"proxyMode"`
-	ProxyPSK    []byte `json:"proxyPSK"`
-	ProxyFwmark int    `json:"proxyFwmark"`
-	WgEndpoint  string `json:"wgEndpoint"`
-	WgFwmark    int    `json:"wgFwmark"`
-	MTU         int    `json:"mtu"`
+	Name              string `json:"name"`
+	ProxyListen       string `json:"proxyListen"`
+	ProxyMode         string `json:"proxyMode"`
+	ProxyPSK          []byte `json:"proxyPSK"`
+	ProxyFwmark       int    `json:"proxyFwmark"`
+	ProxyTrafficClass int    `json:"proxyTrafficClass"`
+	WgEndpoint        string `json:"wgEndpoint"`
+	WgFwmark          int    `json:"wgFwmark"`
+	WgTrafficClass    int    `json:"wgTrafficClass"`
+	MTU               int    `json:"mtu"`
 	PerfConfig
 }
 
@@ -39,32 +41,32 @@ type serverNatEntry struct {
 }
 
 type server struct {
-	name                 string
-	proxyListen          string
-	proxyFwmark          int
-	wgFwmark             int
-	relayBatchSize       int
-	mainRecvBatchSize    int
-	sendChannelCapacity  int
-	maxProxyPacketSizev4 int
-	maxProxyPacketSizev6 int
-	wgTunnelMTUv4        int
-	wgTunnelMTUv6        int
-	wgAddrPort           netip.AddrPort
-	handler              packet.Handler
-	logger               *zap.Logger
-	proxyConn            *net.UDPConn
-	packetBufPool        sync.Pool
-	mu                   sync.Mutex
-	wg                   sync.WaitGroup
-	mwg                  sync.WaitGroup
-	table                map[netip.AddrPort]*serverNatEntry
-	recvFromProxyConn    func()
+	name                  string
+	proxyListen           string
+	relayBatchSize        int
+	mainRecvBatchSize     int
+	sendChannelCapacity   int
+	maxProxyPacketSizev4  int
+	maxProxyPacketSizev6  int
+	wgTunnelMTUv4         int
+	wgTunnelMTUv6         int
+	wgAddrPort            netip.AddrPort
+	handler               packet.Handler
+	logger                *zap.Logger
+	proxyConn             *net.UDPConn
+	proxyConnListenConfig conn.ListenConfig
+	wgConnListenConfig    conn.ListenConfig
+	packetBufPool         sync.Pool
+	mu                    sync.Mutex
+	wg                    sync.WaitGroup
+	mwg                   sync.WaitGroup
+	table                 map[netip.AddrPort]*serverNatEntry
+	recvFromProxyConn     func()
 }
 
 // Server creates a swgp server service from the server config.
 // Call the Start method on the returned service to start it.
-func (sc *ServerConfig) Server(logger *zap.Logger) (*server, error) {
+func (sc *ServerConfig) Server(logger *zap.Logger, listenConfigCache conn.ListenConfigCache) (*server, error) {
 	// Require MTU to be at least 1280.
 	if sc.MTU < minimumMTU {
 		return nil, ErrMTUTooSmall
@@ -101,8 +103,6 @@ func (sc *ServerConfig) Server(logger *zap.Logger) (*server, error) {
 	s := server{
 		name:                 sc.Name,
 		proxyListen:          sc.ProxyListen,
-		proxyFwmark:          sc.ProxyFwmark,
-		wgFwmark:             sc.WgFwmark,
 		relayBatchSize:       sc.RelayBatchSize,
 		mainRecvBatchSize:    sc.MainRecvBatchSize,
 		sendChannelCapacity:  sc.SendChannelCapacity,
@@ -113,6 +113,17 @@ func (sc *ServerConfig) Server(logger *zap.Logger) (*server, error) {
 		wgAddrPort:           wgAddrPort,
 		handler:              handler,
 		logger:               logger,
+		proxyConnListenConfig: listenConfigCache.Get(conn.ListenerSocketOptions{
+			Fwmark:            sc.ProxyFwmark,
+			TrafficClass:      sc.ProxyTrafficClass,
+			PathMTUDiscovery:  true,
+			ReceivePacketInfo: true,
+		}),
+		wgConnListenConfig: listenConfigCache.Get(conn.ListenerSocketOptions{
+			Fwmark:           sc.WgFwmark,
+			TrafficClass:     sc.WgTrafficClass,
+			PathMTUDiscovery: true,
+		}),
 		packetBufPool: sync.Pool{
 			New: func() any {
 				b := make([]byte, maxProxyPacketSizev4)
@@ -132,7 +143,7 @@ func (s *server) String() string {
 
 // Start implements the Service Start method.
 func (s *server) Start() (err error) {
-	s.proxyConn, err = conn.ListenUDP("udp", s.proxyListen, true, s.proxyFwmark)
+	s.proxyConn, err = s.proxyConnListenConfig.ListenUDP("udp", s.proxyListen)
 	if err != nil {
 		return
 	}
@@ -216,13 +227,12 @@ func (s *server) recvFromProxyConnGeneric() {
 
 		natEntry, ok := s.table[clientAddrPort]
 		if !ok {
-			wgConn, err := conn.ListenUDP("udp", "", false, s.wgFwmark)
+			wgConn, err := s.wgConnListenConfig.ListenUDP("udp", "")
 			if err != nil {
 				s.logger.Warn("Failed to create UDP socket for new session",
 					zap.String("server", s.name),
 					zap.String("listenAddress", s.proxyListen),
 					zap.Stringer("clientAddress", clientAddrPort),
-					zap.Int("wgFwmark", s.wgFwmark),
 					zap.Error(err),
 				)
 				s.putPacketBuf(packetBuf)

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/database64128/swgp-go/conn"
 	"github.com/database64128/swgp-go/packet"
 	"go.uber.org/zap"
 )
@@ -131,9 +132,10 @@ func (sc *Config) Manager(logger *zap.Logger) (*Manager, error) {
 	}
 
 	services := make([]Service, 0, serviceCount)
+	listenConfigCache := conn.NewListenConfigCache()
 
 	for i := range sc.Servers {
-		s, err := sc.Servers[i].Server(logger)
+		s, err := sc.Servers[i].Server(logger, listenConfigCache)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create server service %s: %w", sc.Servers[i].Name, err)
 		}
@@ -141,7 +143,7 @@ func (sc *Config) Manager(logger *zap.Logger) (*Manager, error) {
 	}
 
 	for i := range sc.Clients {
-		c, err := sc.Clients[i].Client(logger)
+		c, err := sc.Clients[i].Client(logger, listenConfigCache)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create client service %s: %w", sc.Clients[i].Name, err)
 		}
