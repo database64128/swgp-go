@@ -25,34 +25,48 @@ const (
 	IP_PMTUDISC_MAX
 )
 
-func setDF(fd windows.Handle, network string) error {
+func setPMTUD(fd int, network string) error {
 	// Set IP_MTU_DISCOVER for both v4 and v6.
-	if err := windows.SetsockoptInt(fd, windows.IPPROTO_IP, IP_MTU_DISCOVER, IP_PMTUDISC_DO); err != nil {
+	if err := windows.SetsockoptInt(windows.Handle(fd), windows.IPPROTO_IP, IP_MTU_DISCOVER, IP_PMTUDISC_DO); err != nil {
 		return fmt.Errorf("failed to set socket option IP_MTU_DISCOVER: %w", err)
 	}
 
-	if network == "udp6" {
-		if err := windows.SetsockoptInt(fd, windows.IPPROTO_IPV6, IPV6_MTU_DISCOVER, IP_PMTUDISC_DO); err != nil {
+	switch network {
+	case "tcp4", "udp4":
+	case "tcp6", "udp6":
+		if err := windows.SetsockoptInt(windows.Handle(fd), windows.IPPROTO_IPV6, IPV6_MTU_DISCOVER, IP_PMTUDISC_DO); err != nil {
 			return fmt.Errorf("failed to set socket option IPV6_MTU_DISCOVER: %w", err)
 		}
+	default:
+		return fmt.Errorf("unsupported network: %s", network)
 	}
 
 	return nil
 }
 
-func setPktinfo(fd windows.Handle, network string) error {
+func setRecvPktinfo(fd int, network string) error {
 	// Set IP_PKTINFO for both v4 and v6.
-	if err := windows.SetsockoptInt(fd, windows.IPPROTO_IP, windows.IP_PKTINFO, 1); err != nil {
+	if err := windows.SetsockoptInt(windows.Handle(fd), windows.IPPROTO_IP, windows.IP_PKTINFO, 1); err != nil {
 		return fmt.Errorf("failed to set socket option IP_PKTINFO: %w", err)
 	}
 
-	if network == "udp6" {
-		if err := windows.SetsockoptInt(fd, windows.IPPROTO_IPV6, windows.IPV6_PKTINFO, 1); err != nil {
+	switch network {
+	case "udp4":
+	case "udp6":
+		if err := windows.SetsockoptInt(windows.Handle(fd), windows.IPPROTO_IPV6, windows.IPV6_PKTINFO, 1); err != nil {
 			return fmt.Errorf("failed to set socket option IPV6_PKTINFO: %w", err)
 		}
+	default:
+		return fmt.Errorf("unsupported network: %s", network)
 	}
 
 	return nil
+}
+
+func (lso ListenerSocketOptions) buildSetFns() setFuncSlice {
+	return setFuncSlice{}.
+		appendSetPMTUDFunc(lso.PathMTUDiscovery).
+		appendSetRecvPktinfoFunc(lso.ReceivePacketInfo)
 }
 
 // ListenUDP wraps [net.ListenConfig.ListenPacket] and sets socket options on supported platforms.
@@ -67,12 +81,12 @@ func ListenUDP(network string, laddr string, pktinfo bool, fwmark int) (*net.UDP
 	lc := net.ListenConfig{
 		Control: func(network, address string, c syscall.RawConn) (err error) {
 			if cerr := c.Control(func(fd uintptr) {
-				if err = setDF(windows.Handle(fd), network); err != nil {
+				if err = setPMTUD(int(fd), network); err != nil {
 					return
 				}
 
 				if pktinfo {
-					err = setPktinfo(windows.Handle(fd), network)
+					err = setRecvPktinfo(int(fd), network)
 				}
 			}); cerr != nil {
 				return cerr

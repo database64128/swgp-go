@@ -11,25 +11,52 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// SocketControlMessageBufferSize specifies the buffer size for receiving socket control messages.
-const SocketControlMessageBufferSize = unix.SizeofCmsghdr + (unix.SizeofInet6Pktinfo+unix.SizeofPtr-1) & ^(unix.SizeofPtr-1)
+func setFwmark(fd, fwmark int) error {
+	if err := unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_MARK, fwmark); err != nil {
+		return fmt.Errorf("failed to set socket option SO_MARK: %w", err)
+	}
+	return nil
+}
 
-func setDF(fd int, network string) error {
-	// Set IP_MTU_DISCOVER for both v4 and v6.
-	if err := unix.SetsockoptInt(fd, unix.IPPROTO_IP, unix.IP_MTU_DISCOVER, unix.IP_PMTUDISC_DO); err != nil {
-		return fmt.Errorf("failed to set socket option IP_MTU_DISCOVER: %w", err)
+func setTrafficClass(fd int, network string, trafficClass int) error {
+	// Set IP_TOS for both v4 and v6.
+	if err := unix.SetsockoptInt(fd, unix.IPPROTO_IP, unix.IP_TOS, trafficClass); err != nil {
+		return fmt.Errorf("failed to set socket option IP_TOS: %w", err)
 	}
 
-	if network == "udp6" {
-		if err := unix.SetsockoptInt(fd, unix.IPPROTO_IPV6, unix.IPV6_MTU_DISCOVER, unix.IP_PMTUDISC_DO); err != nil {
-			return fmt.Errorf("failed to set socket option IPV6_MTU_DISCOVER: %w", err)
+	switch network {
+	case "tcp4", "udp4":
+	case "tcp6", "udp6":
+		if err := unix.SetsockoptInt(fd, unix.IPPROTO_IPV6, unix.IPV6_TCLASS, trafficClass); err != nil {
+			return fmt.Errorf("failed to set socket option IPV6_TCLASS: %w", err)
 		}
+	default:
+		return fmt.Errorf("unsupported network: %s", network)
 	}
 
 	return nil
 }
 
-func setPktinfo(fd int, network string) error {
+func setPMTUD(fd int, network string) error {
+	// Set IP_MTU_DISCOVER for both v4 and v6.
+	if err := unix.SetsockoptInt(fd, unix.IPPROTO_IP, unix.IP_MTU_DISCOVER, unix.IP_PMTUDISC_DO); err != nil {
+		return fmt.Errorf("failed to set socket option IP_MTU_DISCOVER: %w", err)
+	}
+
+	switch network {
+	case "tcp4", "udp4":
+	case "tcp6", "udp6":
+		if err := unix.SetsockoptInt(fd, unix.IPPROTO_IPV6, unix.IPV6_MTU_DISCOVER, unix.IP_PMTUDISC_DO); err != nil {
+			return fmt.Errorf("failed to set socket option IPV6_MTU_DISCOVER: %w", err)
+		}
+	default:
+		return fmt.Errorf("unsupported network: %s", network)
+	}
+
+	return nil
+}
+
+func setRecvPktinfo(fd int, network string) error {
 	switch network {
 	case "udp4":
 		if err := unix.SetsockoptInt(fd, unix.IPPROTO_IP, unix.IP_PKTINFO, 1); err != nil {
@@ -45,11 +72,12 @@ func setPktinfo(fd int, network string) error {
 	return nil
 }
 
-func setFwmark(fd, fwmark int) error {
-	if err := unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_MARK, fwmark); err != nil {
-		return fmt.Errorf("failed to set socket option SO_MARK: %w", err)
-	}
-	return nil
+func (lso ListenerSocketOptions) buildSetFns() setFuncSlice {
+	return setFuncSlice{}.
+		appendSetFwmarkFunc(lso.Fwmark).
+		appendSetTrafficClassFunc(lso.TrafficClass).
+		appendSetPMTUDFunc(lso.PathMTUDiscovery).
+		appendSetRecvPktinfoFunc(lso.ReceivePacketInfo)
 }
 
 // ListenUDP wraps [net.ListenConfig.ListenPacket] and sets socket options on supported platforms.
@@ -64,12 +92,12 @@ func ListenUDP(network string, laddr string, pktinfo bool, fwmark int) (*net.UDP
 	lc := net.ListenConfig{
 		Control: func(network, address string, c syscall.RawConn) (err error) {
 			if cerr := c.Control(func(fd uintptr) {
-				if err = setDF(int(fd), network); err != nil {
+				if err = setPMTUD(int(fd), network); err != nil {
 					return
 				}
 
 				if pktinfo {
-					if err = setPktinfo(int(fd), network); err != nil {
+					if err = setRecvPktinfo(int(fd), network); err != nil {
 						return
 					}
 				}
@@ -89,32 +117,6 @@ func ListenUDP(network string, laddr string, pktinfo bool, fwmark int) (*net.UDP
 		return nil, err
 	}
 	return pc.(*net.UDPConn), nil
-}
-
-// ParsePktinfoCmsg parses a single socket control message of type IP_PKTINFO or IPV6_PKTINFO,
-// and returns the IP address and index of the network interface the packet was received from,
-// or an error.
-//
-// This function is only implemented for Linux and Windows. On other platforms, this is a no-op.
-func ParsePktinfoCmsg(cmsg []byte) (netip.Addr, uint32, error) {
-	if len(cmsg) < unix.SizeofCmsghdr {
-		return netip.Addr{}, 0, fmt.Errorf("control message length %d is shorter than cmsghdr length", len(cmsg))
-	}
-
-	cmsghdr := (*unix.Cmsghdr)(unsafe.Pointer(&cmsg[0]))
-
-	switch {
-	case cmsghdr.Level == unix.IPPROTO_IP && cmsghdr.Type == unix.IP_PKTINFO && len(cmsg) >= unix.SizeofCmsghdr+unix.SizeofInet4Pktinfo:
-		pktinfo := (*unix.Inet4Pktinfo)(unsafe.Pointer(&cmsg[unix.SizeofCmsghdr]))
-		return netip.AddrFrom4(pktinfo.Spec_dst), uint32(pktinfo.Ifindex), nil
-
-	case cmsghdr.Level == unix.IPPROTO_IPV6 && cmsghdr.Type == unix.IPV6_PKTINFO && len(cmsg) >= unix.SizeofCmsghdr+unix.SizeofInet6Pktinfo:
-		pktinfo := (*unix.Inet6Pktinfo)(unsafe.Pointer(&cmsg[unix.SizeofCmsghdr]))
-		return netip.AddrFrom16(pktinfo.Addr), pktinfo.Ifindex, nil
-
-	default:
-		return netip.Addr{}, 0, fmt.Errorf("unknown control message level %d type %d", cmsghdr.Level, cmsghdr.Type)
-	}
 }
 
 // Source: include/uapi/linux/uio.h

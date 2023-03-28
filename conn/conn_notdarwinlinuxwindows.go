@@ -1,4 +1,4 @@
-//go:build !linux && !windows
+//go:build !darwin && !linux && !windows
 
 package conn
 
@@ -11,7 +11,7 @@ const SocketControlMessageBufferSize = 0
 // and returns the IP address and index of the network interface the packet was received from,
 // or an error.
 //
-// This function is only implemented for Linux and Windows. On other platforms, this is a no-op.
+// This function is only implemented for Linux, macOS and Windows. On other platforms, this is a no-op.
 func ParsePktinfoCmsg(cmsg []byte) (netip.Addr, uint32, error) {
 	return netip.Addr{}, 0, nil
 }

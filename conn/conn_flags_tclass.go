@@ -1,4 +1,4 @@
-//go:build linux || darwin || freebsd
+//go:build aix || darwin || dragonfly || freebsd || linux || netbsd || openbsd || solaris || zos
 
 package conn
 
@@ -20,13 +20,22 @@ var (
 // The check is skipped on Windows, because an error (WSAEMSGSIZE)
 // is also returned when MSG_PARTIAL is set.
 func ParseFlagsForError(flags int) error {
-	if flags&unix.MSG_TRUNC == unix.MSG_TRUNC {
+	if flags&unix.MSG_TRUNC != 0 {
 		return ErrMessageTruncated
 	}
 
-	if flags&unix.MSG_CTRUNC == unix.MSG_CTRUNC {
+	if flags&unix.MSG_CTRUNC != 0 {
 		return ErrControlMessageTruncated
 	}
 
 	return nil
+}
+
+func (fns setFuncSlice) appendSetTrafficClassFunc(trafficClass int) setFuncSlice {
+	if trafficClass != 0 {
+		return append(fns, func(fd int, network string) error {
+			return setTrafficClass(fd, network, trafficClass)
+		})
+	}
+	return fns
 }

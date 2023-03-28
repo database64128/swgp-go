@@ -4,28 +4,9 @@ package conn
 
 import (
 	"context"
-	"fmt"
 	"net"
 	"syscall"
-
-	"golang.org/x/sys/unix"
 )
-
-func setDF(fd int, network string) error {
-	switch network {
-	case "udp4":
-		if err := unix.SetsockoptInt(int(fd), unix.IPPROTO_IP, unix.IP_DONTFRAG, 1); err != nil {
-			return fmt.Errorf("failed to set socket option IP_DONTFRAG: %w", err)
-		}
-	case "udp6":
-		if err := unix.SetsockoptInt(int(fd), unix.IPPROTO_IPV6, unix.IPV6_DONTFRAG, 1); err != nil {
-			return fmt.Errorf("failed to set socket option IPV6_DONTFRAG: %w", err)
-		}
-	default:
-		return fmt.Errorf("unsupported network: %s", network)
-	}
-	return nil
-}
 
 // ListenUDP wraps [net.ListenConfig.ListenPacket] and sets socket options on supported platforms.
 //
@@ -39,7 +20,7 @@ func ListenUDP(network string, laddr string, pktinfo bool, fwmark int) (*net.UDP
 	lc := net.ListenConfig{
 		Control: func(network, address string, c syscall.RawConn) (err error) {
 			if cerr := c.Control(func(fd uintptr) {
-				err = setDF(int(fd), network)
+				err = setPMTUD(int(fd), network)
 			}); cerr != nil {
 				return cerr
 			}
