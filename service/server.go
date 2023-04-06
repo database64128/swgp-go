@@ -486,9 +486,8 @@ func (s *server) relayWgToProxyGeneric(downlink serverNatDownlinkGeneric) {
 
 	packetBuf := make([]byte, downlink.maxProxyPacketSize)
 
-	frontOverhead := s.handler.FrontOverhead()
-	rearOverhead := s.handler.RearOverhead()
-	plaintextBuf := packetBuf[frontOverhead : downlink.maxProxyPacketSize-rearOverhead]
+	headroom := s.handler.Headroom()
+	plaintextBuf := packetBuf[headroom.Front : downlink.maxProxyPacketSize-headroom.Rear]
 
 	for {
 		n, _, flags, packetSourceAddrPort, err := downlink.wgConn.ReadMsgUDPAddrPort(plaintextBuf, nil)
@@ -533,7 +532,7 @@ func (s *server) relayWgToProxyGeneric(downlink serverNatDownlinkGeneric) {
 			continue
 		}
 
-		swgpPacketStart, swgpPacketLength, err := s.handler.EncryptZeroCopy(packetBuf, frontOverhead, n)
+		swgpPacketStart, swgpPacketLength, err := s.handler.EncryptZeroCopy(packetBuf, headroom.Front, n)
 		if err != nil {
 			s.logger.Warn("Failed to encrypt WireGuard packet",
 				zap.String("server", s.name),

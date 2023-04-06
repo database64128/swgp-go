@@ -14,32 +14,25 @@ func testHandler(
 	expectedEncryptErr, expectedDecryptErr error,
 	verifyFunc func(t *testing.T, wgPacket, swgpPacket, decryptedWgPacket []byte),
 ) {
-	var frontHeadroom, rearHeadroom int
-	frontOverhead, rearOverhead := h.FrontOverhead(), h.RearOverhead()
-	if frontOverhead > frontHeadroom {
-		frontHeadroom = frontOverhead
-	}
-	frontHeadroom += extraFrontHeadroom
-	if rearOverhead > rearHeadroom {
-		rearHeadroom = rearOverhead
-	}
-	rearHeadroom += extraRearHeadroom
+	headroom := h.Headroom()
+	headroom.Front += extraFrontHeadroom
+	headroom.Rear += extraRearHeadroom
 
 	// Prepare buffer.
-	buf := make([]byte, frontHeadroom+length+rearHeadroom)
+	buf := make([]byte, headroom.Front+length+headroom.Rear)
 	_, err := rand.Read(buf)
 	if err != nil {
 		t.Fatal(err)
 	}
-	buf[frontHeadroom] = msgType
+	buf[headroom.Front] = msgType
 
 	var wgPacket, swgpPacket, decryptedWgPacket []byte
 
 	// Save original packet.
-	wgPacket = append(wgPacket, buf[frontHeadroom:frontHeadroom+length]...)
+	wgPacket = append(wgPacket, buf[headroom.Front:headroom.Front+length]...)
 
 	// Encrypt.
-	swgpPacketStart, swgpPacketLength, err := h.EncryptZeroCopy(buf, frontHeadroom, length)
+	swgpPacketStart, swgpPacketLength, err := h.EncryptZeroCopy(buf, headroom.Front, length)
 	if !errors.Is(err, expectedEncryptErr) {
 		t.Fatalf("Expected encryption error: %s\nGot: %s", expectedEncryptErr, err)
 	}

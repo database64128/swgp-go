@@ -205,8 +205,7 @@ func (c *client) startGeneric() error {
 }
 
 func (c *client) recvFromWgConnGeneric(wgConn *net.UDPConn) {
-	frontOverhead := c.handler.FrontOverhead()
-	rearOverhead := c.handler.RearOverhead()
+	headroom := c.handler.Headroom()
 
 	cmsgBuf := make([]byte, conn.SocketControlMessageBufferSize)
 
@@ -217,7 +216,7 @@ func (c *client) recvFromWgConnGeneric(wgConn *net.UDPConn) {
 
 	for {
 		packetBuf := c.getPacketBuf()
-		plaintextBuf := packetBuf[frontOverhead : c.maxProxyPacketSize-rearOverhead]
+		plaintextBuf := packetBuf[headroom.Front : c.maxProxyPacketSize-headroom.Rear]
 
 		n, cmsgn, flags, clientAddrPort, err := wgConn.ReadMsgUDPAddrPort(plaintextBuf, cmsgBuf)
 		if err != nil {
@@ -411,7 +410,7 @@ func (c *client) recvFromWgConnGeneric(wgConn *net.UDPConn) {
 		}
 
 		select {
-		case natEntry.proxyConnSendCh <- queuedPacket{packetBuf, frontOverhead, n}:
+		case natEntry.proxyConnSendCh <- queuedPacket{packetBuf, headroom.Front, n}:
 		default:
 			if ce := c.logger.Check(zap.DebugLevel, "swgpPacket dropped due to full send channel"); ce != nil {
 				ce.Write(

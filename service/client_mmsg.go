@@ -80,9 +80,8 @@ func (c *client) startMmsg() error {
 }
 
 func (c *client) recvFromWgConnRecvmmsg(wgConn *conn.MmsgRConn) {
-	frontOverhead := c.handler.FrontOverhead()
-	rearOverhead := c.handler.RearOverhead()
-	packetBufRecvSize := c.maxProxyPacketSize - frontOverhead - rearOverhead
+	headroom := c.handler.Headroom()
+	packetBufRecvSize := c.maxProxyPacketSize - headroom.Front - headroom.Rear
 
 	n := c.mainRecvBatchSize
 	bufvec := make([][]byte, n)
@@ -113,7 +112,7 @@ func (c *client) recvFromWgConnRecvmmsg(wgConn *conn.MmsgRConn) {
 		for i := range iovec[:n] {
 			packetBuf := c.getPacketBuf()
 			bufvec[i] = packetBuf
-			iovec[i].Base = &packetBuf[frontOverhead]
+			iovec[i].Base = &packetBuf[headroom.Front]
 			iovec[i].SetLen(packetBufRecvSize)
 			msgvec[i].Msghdr.SetControllen(conn.SocketControlMessageBufferSize)
 		}
@@ -343,7 +342,7 @@ func (c *client) recvFromWgConnRecvmmsg(wgConn *conn.MmsgRConn) {
 			}
 
 			select {
-			case natEntry.proxyConnSendCh <- queuedPacket{packetBuf, frontOverhead, int(msg.Msglen)}:
+			case natEntry.proxyConnSendCh <- queuedPacket{packetBuf, headroom.Front, int(msg.Msglen)}:
 			default:
 				if ce := c.logger.Check(zap.DebugLevel, "swgpPacket dropped due to full send channel"); ce != nil {
 					ce.Write(

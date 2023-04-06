@@ -47,14 +47,9 @@ func NewZeroOverheadHandler(psk []byte) (Handler, error) {
 	}, nil
 }
 
-// FrontOverhead implements the Handler FrontOverhead method.
-func (h *zeroOverheadHandler) FrontOverhead() int {
-	return 0
-}
-
-// RearOverhead implements the Handler RearOverhead method.
-func (h *zeroOverheadHandler) RearOverhead() int {
-	return 0
+// Headroom implements the Handler Headroom method.
+func (*zeroOverheadHandler) Headroom() Headroom {
+	return Headroom{}
 }
 
 // EncryptZeroCopy implements the Handler EncryptZeroCopy method.

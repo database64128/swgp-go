@@ -35,14 +35,12 @@ func NewParanoidHandler(psk []byte) (Handler, error) {
 	}, nil
 }
 
-// FrontOverhead implements the Handler FrontOverhead method.
-func (h *paranoidHandler) FrontOverhead() int {
-	return chacha20poly1305.NonceSizeX + 2
-}
-
-// RearOverhead implements the Handler RearOverhead method.
-func (h *paranoidHandler) RearOverhead() int {
-	return chacha20poly1305.Overhead
+// Headroom implements the Handler Headroom method.
+func (*paranoidHandler) Headroom() Headroom {
+	return Headroom{
+		Front: chacha20poly1305.NonceSizeX + 2,
+		Rear:  chacha20poly1305.Overhead,
+	}
 }
 
 // EncryptZeroCopy implements the Handler EncryptZeroCopy method.

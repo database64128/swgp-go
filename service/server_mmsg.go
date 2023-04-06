@@ -498,9 +498,8 @@ func (s *server) relayWgToProxySendmmsg(downlink serverNatDownlinkMmsg) {
 	clientPktinfo := *clientPktinfop
 
 	name, namelen := conn.AddrPortToSockaddr(downlink.clientAddrPort)
-	frontOverhead := s.handler.FrontOverhead()
-	rearOverhead := s.handler.RearOverhead()
-	plaintextLen := downlink.maxProxyPacketSize - frontOverhead - rearOverhead
+	headroom := s.handler.Headroom()
+	plaintextLen := downlink.maxProxyPacketSize - headroom.Front - headroom.Rear
 
 	savec := make([]unix.RawSockaddrInet6, s.relayBatchSize)
 	bufvec := make([][]byte, s.relayBatchSize)
@@ -512,7 +511,7 @@ func (s *server) relayWgToProxySendmmsg(downlink serverNatDownlinkMmsg) {
 	for i := 0; i < s.relayBatchSize; i++ {
 		bufvec[i] = make([]byte, downlink.maxProxyPacketSize)
 
-		riovec[i].Base = &bufvec[i][frontOverhead]
+		riovec[i].Base = &bufvec[i][headroom.Front]
 		riovec[i].SetLen(plaintextLen)
 
 		rmsgvec[i].Msghdr.Name = (*byte)(unsafe.Pointer(&savec[i]))
@@ -588,7 +587,7 @@ func (s *server) relayWgToProxySendmmsg(downlink serverNatDownlinkMmsg) {
 			}
 
 			packetBuf := bufvec[i]
-			swgpPacketStart, swgpPacketLength, err := s.handler.EncryptZeroCopy(packetBuf, frontOverhead, int(msg.Msglen))
+			swgpPacketStart, swgpPacketLength, err := s.handler.EncryptZeroCopy(packetBuf, headroom.Front, int(msg.Msglen))
 			if err != nil {
 				s.logger.Warn("Failed to encrypt WireGuard packet",
 					zap.String("server", s.name),

@@ -19,6 +19,15 @@ var (
 	ErrPayloadLength = errors.New("payload length field value is out of range")
 )
 
+// Headroom reports the amount of extra space required in read/write buffers besides the payload.
+type Headroom struct {
+	// Front is the minimum space required at the beginning of the buffer before payload.
+	Front int
+
+	// Rear is the minimum space required at the end of the buffer after payload.
+	Rear int
+}
+
 type HandlerErr struct {
 	Err     error
 	Message string
@@ -37,11 +46,8 @@ func (e *HandlerErr) Error() string {
 
 // Handler encrypts WireGuard packets and decrypts swgp packets.
 type Handler interface {
-	// FrontOverhead returns the headroom to reserve in buffer before payload.
-	FrontOverhead() int
-
-	// RearOverhead returns the headroom to reserve in buffer after payload.
-	RearOverhead() int
+	// Headroom returns the amount of extra space required in read/write buffers besides the payload.
+	Headroom() Headroom
 
 	// EncryptZeroCopy encrypts a WireGuard packet and returns a swgp packet without copying or incurring any allocations.
 	//
