@@ -19,28 +19,39 @@ import (
 // ServerConfig stores configurations for a swgp server service.
 // It may be marshaled as or unmarshaled from JSON.
 type ServerConfig struct {
-	Name              string `json:"name"`
-	ProxyListen       string `json:"proxyListen"`
-	ProxyMode         string `json:"proxyMode"`
-	ProxyPSK          []byte `json:"proxyPSK"`
-	ProxyFwmark       int    `json:"proxyFwmark"`
-	ProxyTrafficClass int    `json:"proxyTrafficClass"`
-	WgEndpoint        string `json:"wgEndpoint"`
-	WgFwmark          int    `json:"wgFwmark"`
-	WgTrafficClass    int    `json:"wgTrafficClass"`
-	MTU               int    `json:"mtu"`
+	Name              string    `json:"name"`
+	ProxyListen       string    `json:"proxyListen"`
+	ProxyMode         string    `json:"proxyMode"`
+	ProxyPSK          []byte    `json:"proxyPSK"`
+	ProxyFwmark       int       `json:"proxyFwmark"`
+	ProxyTrafficClass int       `json:"proxyTrafficClass"`
+	WgEndpoint        conn.Addr `json:"wgEndpoint"`
+	WgFwmark          int       `json:"wgFwmark"`
+	WgTrafficClass    int       `json:"wgTrafficClass"`
+	MTU               int       `json:"mtu"`
 	PerfConfig
 }
 
 type serverNatEntry struct {
+	// state synchronizes session initialization and shutdown.
+	//
+	//  - Swap the wgConn in to signal initialization completion.
+	//  - Swap the proxyConn in to signal shutdown.
+	//
+	// Callers must check the swapped-out value to determine the next action.
+	//
+	//  - During initialization, if the swapped-out value is non-nil,
+	//    initialization must not proceed.
+	//  - During shutdown, if the swapped-out value is nil, preceed to the next entry.
+	state              atomic.Pointer[net.UDPConn]
 	clientPktinfo      atomic.Pointer[[]byte]
 	clientPktinfoCache []byte
-	wgConn             *net.UDPConn
 	wgConnSendCh       chan<- queuedPacket
 }
 
 type serverNatUplinkGeneric struct {
 	clientAddrPort netip.AddrPort
+	wgAddrPort     netip.AddrPort
 	wgConn         *net.UDPConn
 	wgConnSendCh   <-chan queuedPacket
 }
@@ -48,6 +59,7 @@ type serverNatUplinkGeneric struct {
 type serverNatDownlinkGeneric struct {
 	clientAddrPort     netip.AddrPort
 	clientPktinfo      *atomic.Pointer[[]byte]
+	wgAddrPort         netip.AddrPort
 	wgConn             *net.UDPConn
 	proxyConn          *net.UDPConn
 	maxProxyPacketSize int
@@ -63,7 +75,7 @@ type server struct {
 	maxProxyPacketSizev6  int
 	wgTunnelMTUv4         int
 	wgTunnelMTUv6         int
-	wgAddrPort            netip.AddrPort
+	wgAddr                conn.Addr
 	handler               packet.Handler
 	logger                *zap.Logger
 	proxyConn             *net.UDPConn
@@ -96,22 +108,11 @@ func (sc *ServerConfig) Server(logger *zap.Logger, listenConfigCache conn.Listen
 		return nil, err
 	}
 
-	// Resolve endpoint address.
-	wgAddrPort, err := conn.ResolveAddrPort(sc.WgEndpoint)
-	if err != nil {
-		return nil, err
-	}
-
 	// maxProxyPacketSize = MTU - IP header length - UDP header length
 	maxProxyPacketSizev4 := sc.MTU - IPv4HeaderLength - UDPHeaderLength
 	maxProxyPacketSizev6 := sc.MTU - IPv6HeaderLength - UDPHeaderLength
-
-	frontOverhead := handler.FrontOverhead()
-	rearOverhead := handler.RearOverhead()
-	overhead := frontOverhead + rearOverhead
-
-	wgTunnelMTUv4 := (maxProxyPacketSizev4 - overhead - WireGuardDataPacketOverhead) & WireGuardDataPacketLengthMask
-	wgTunnelMTUv6 := (maxProxyPacketSizev6 - overhead - WireGuardDataPacketOverhead) & WireGuardDataPacketLengthMask
+	wgTunnelMTUv4 := getWgTunnelMTUForHandler(handler, maxProxyPacketSizev4)
+	wgTunnelMTUv6 := getWgTunnelMTUForHandler(handler, maxProxyPacketSizev6)
 
 	s := server{
 		name:                 sc.Name,
@@ -123,7 +124,7 @@ func (sc *ServerConfig) Server(logger *zap.Logger, listenConfigCache conn.Listen
 		maxProxyPacketSizev6: maxProxyPacketSizev6,
 		wgTunnelMTUv4:        wgTunnelMTUv4,
 		wgTunnelMTUv6:        wgTunnelMTUv6,
-		wgAddrPort:           wgAddrPort,
+		wgAddr:               sc.WgEndpoint,
 		handler:              handler,
 		logger:               logger,
 		proxyConnListenConfig: listenConfigCache.Get(conn.ListenerSocketOptions{
@@ -176,7 +177,7 @@ func (s *server) startGeneric() error {
 	s.logger.Info("Started service",
 		zap.String("server", s.name),
 		zap.String("listenAddress", s.proxyListen),
-		zap.Stringer("wgAddress", &s.wgAddrPort),
+		zap.Stringer("wgAddress", &s.wgAddr),
 		zap.Int("wgTunnelMTUv4", s.wgTunnelMTUv4),
 		zap.Int("wgTunnelMTUv6", s.wgTunnelMTUv6),
 	)
@@ -279,87 +280,126 @@ func (s *server) recvFromProxyConnGeneric(proxyConn *net.UDPConn) {
 		}
 
 		if !ok {
-			wgConn, err := s.wgConnListenConfig.ListenUDP("udp", "")
-			if err != nil {
-				s.logger.Warn("Failed to create UDP socket for new session",
-					zap.String("server", s.name),
-					zap.String("listenAddress", s.proxyListen),
-					zap.Stringer("clientAddress", clientAddrPort),
-					zap.Error(err),
-				)
-				s.putPacketBuf(packetBuf)
-				s.mu.Unlock()
-				continue
-			}
-
-			err = wgConn.SetReadDeadline(time.Now().Add(RejectAfterTime))
-			if err != nil {
-				s.logger.Warn("Failed to SetReadDeadline on wgConn",
-					zap.String("server", s.name),
-					zap.String("listenAddress", s.proxyListen),
-					zap.Stringer("clientAddress", clientAddrPort),
-					zap.Stringer("wgAddress", &s.wgAddrPort),
-					zap.Error(err),
-				)
-				s.putPacketBuf(packetBuf)
-				s.mu.Unlock()
-				continue
-			}
-
 			wgConnSendCh := make(chan queuedPacket, s.sendChannelCapacity)
-			natEntry.wgConn = wgConn
 			natEntry.wgConnSendCh = wgConnSendCh
 			s.table[clientAddrPort] = natEntry
 
-			var (
-				maxProxyPacketSize int
-				wgTunnelMTU        int
-			)
-
-			if addr := clientAddrPort.Addr(); addr.Is4() || addr.Is4In6() {
-				maxProxyPacketSize = s.maxProxyPacketSizev4
-				wgTunnelMTU = s.wgTunnelMTUv4
-			} else {
-				maxProxyPacketSize = s.maxProxyPacketSizev6
-				wgTunnelMTU = s.wgTunnelMTUv6
-			}
-
-			s.wg.Add(2)
-
 			go func() {
+				var sendChClean bool
+
+				defer func() {
+					s.mu.Lock()
+					close(wgConnSendCh)
+					delete(s.table, clientAddrPort)
+					s.mu.Unlock()
+
+					if !sendChClean {
+						for queuedPacket := range wgConnSendCh {
+							s.putPacketBuf(queuedPacket.buf)
+						}
+					}
+				}()
+
+				wgAddrPort, err := s.wgAddr.ResolveIPPort()
+				if err != nil {
+					s.logger.Warn("Failed to resolve wg address for new session",
+						zap.String("server", s.name),
+						zap.String("listenAddress", s.proxyListen),
+						zap.Stringer("clientAddress", clientAddrPort),
+						zap.Error(err),
+					)
+					return
+				}
+
+				// Only add for the current goroutine here,
+				// since we don't want the name resolution to block exiting.
+				s.wg.Add(1)
+				defer s.wg.Done()
+
+				wgConn, err := s.wgConnListenConfig.ListenUDP("udp", "")
+				if err != nil {
+					s.logger.Warn("Failed to create UDP socket for new session",
+						zap.String("server", s.name),
+						zap.String("listenAddress", s.proxyListen),
+						zap.Stringer("clientAddress", clientAddrPort),
+						zap.Error(err),
+					)
+					return
+				}
+
+				err = wgConn.SetReadDeadline(time.Now().Add(RejectAfterTime))
+				if err != nil {
+					s.logger.Warn("Failed to SetReadDeadline on wgConn",
+						zap.String("server", s.name),
+						zap.String("listenAddress", s.proxyListen),
+						zap.Stringer("clientAddress", clientAddrPort),
+						zap.Error(err),
+					)
+					wgConn.Close()
+					return
+				}
+
+				oldState := natEntry.state.Swap(wgConn)
+				if oldState != nil {
+					wgConn.Close()
+					return
+				}
+
+				// No more early returns!
+				sendChClean = true
+
+				var (
+					maxProxyPacketSize int
+					wgTunnelMTU        int
+				)
+
+				if addr := clientAddrPort.Addr(); addr.Is4() || addr.Is4In6() {
+					maxProxyPacketSize = s.maxProxyPacketSizev4
+					wgTunnelMTU = s.wgTunnelMTUv4
+				} else {
+					maxProxyPacketSize = s.maxProxyPacketSizev6
+					wgTunnelMTU = s.wgTunnelMTUv6
+				}
+
+				s.logger.Info("Server relay started",
+					zap.String("server", s.name),
+					zap.String("listenAddress", s.proxyListen),
+					zap.Stringer("clientAddress", clientAddrPort),
+					zap.Stringer("wgAddress", wgAddrPort),
+					zap.Int("wgTunnelMTU", wgTunnelMTU),
+				)
+
+				s.wg.Add(1)
+
+				go func() {
+					s.relayProxyToWgGeneric(serverNatUplinkGeneric{
+						clientAddrPort: clientAddrPort,
+						wgAddrPort:     wgAddrPort,
+						wgConn:         wgConn,
+						wgConnSendCh:   wgConnSendCh,
+					})
+					wgConn.Close()
+					s.wg.Done()
+				}()
+
 				s.relayWgToProxyGeneric(serverNatDownlinkGeneric{
 					clientAddrPort:     clientAddrPort,
 					clientPktinfo:      &natEntry.clientPktinfo,
+					wgAddrPort:         wgAddrPort,
 					wgConn:             wgConn,
 					proxyConn:          proxyConn,
 					maxProxyPacketSize: maxProxyPacketSize,
 				})
-
-				s.mu.Lock()
-				close(wgConnSendCh)
-				delete(s.table, clientAddrPort)
-				s.mu.Unlock()
-
-				s.wg.Done()
 			}()
 
-			go func() {
-				s.relayProxyToWgGeneric(serverNatUplinkGeneric{
-					clientAddrPort: clientAddrPort,
-					wgConn:         wgConn,
-					wgConnSendCh:   wgConnSendCh,
-				})
-				wgConn.Close()
-				s.wg.Done()
-			}()
-
-			s.logger.Info("New session",
-				zap.String("server", s.name),
-				zap.String("listenAddress", s.proxyListen),
-				zap.Stringer("clientAddress", clientAddrPort),
-				zap.Stringer("wgAddress", &s.wgAddrPort),
-				zap.Int("wgTunnelMTU", wgTunnelMTU),
-			)
+			if ce := s.logger.Check(zap.DebugLevel, "New server session"); ce != nil {
+				ce.Write(
+					zap.String("server", s.name),
+					zap.String("listenAddress", s.proxyListen),
+					zap.Stringer("clientAddress", clientAddrPort),
+					zap.Stringer("wgAddress", &s.wgAddr),
+				)
+			}
 		}
 
 		select {
@@ -370,7 +410,7 @@ func (s *server) recvFromProxyConnGeneric(proxyConn *net.UDPConn) {
 					zap.String("server", s.name),
 					zap.String("listenAddress", s.proxyListen),
 					zap.Stringer("clientAddress", clientAddrPort),
-					zap.Stringer("wgAddress", &s.wgAddrPort),
+					zap.Stringer("wgAddress", &s.wgAddr),
 				)
 			}
 			s.putPacketBuf(packetBuf)
@@ -382,7 +422,7 @@ func (s *server) recvFromProxyConnGeneric(proxyConn *net.UDPConn) {
 	s.logger.Info("Finished receiving from proxyConn",
 		zap.String("server", s.name),
 		zap.String("listenAddress", s.proxyListen),
-		zap.Stringer("wgAddress", &s.wgAddrPort),
+		zap.Stringer("wgAddress", &s.wgAddr),
 		zap.Uint64("packetsReceived", packetsReceived),
 		zap.Uint64("wgBytesReceived", wgBytesReceived),
 	)
@@ -397,12 +437,12 @@ func (s *server) relayProxyToWgGeneric(uplink serverNatUplinkGeneric) {
 	for queuedPacket := range uplink.wgConnSendCh {
 		wgPacket := queuedPacket.buf[queuedPacket.start : queuedPacket.start+queuedPacket.length]
 
-		if _, err := uplink.wgConn.WriteToUDPAddrPort(wgPacket, s.wgAddrPort); err != nil {
+		if _, err := uplink.wgConn.WriteToUDPAddrPort(wgPacket, uplink.wgAddrPort); err != nil {
 			s.logger.Warn("Failed to write wgPacket to wgConn",
 				zap.String("server", s.name),
 				zap.String("listenAddress", s.proxyListen),
 				zap.Stringer("clientAddress", uplink.clientAddrPort),
-				zap.Stringer("wgAddress", &s.wgAddrPort),
+				zap.Stringer("wgAddress", uplink.wgAddrPort),
 				zap.Error(err),
 			)
 		}
@@ -415,7 +455,7 @@ func (s *server) relayProxyToWgGeneric(uplink serverNatUplinkGeneric) {
 					zap.String("server", s.name),
 					zap.String("listenAddress", s.proxyListen),
 					zap.Stringer("clientAddress", uplink.clientAddrPort),
-					zap.Stringer("wgAddress", &s.wgAddrPort),
+					zap.Stringer("wgAddress", uplink.wgAddrPort),
 					zap.Error(err),
 				)
 			}
@@ -430,7 +470,7 @@ func (s *server) relayProxyToWgGeneric(uplink serverNatUplinkGeneric) {
 		zap.String("server", s.name),
 		zap.String("listenAddress", s.proxyListen),
 		zap.Stringer("clientAddress", uplink.clientAddrPort),
-		zap.Stringer("wgAddress", &s.wgAddrPort),
+		zap.Stringer("wgAddress", uplink.wgAddrPort),
 		zap.Uint64("packetsSent", packetsSent),
 		zap.Uint64("wgBytesSent", wgBytesSent),
 	)
@@ -460,7 +500,7 @@ func (s *server) relayWgToProxyGeneric(downlink serverNatDownlinkGeneric) {
 				zap.String("server", s.name),
 				zap.String("listenAddress", s.proxyListen),
 				zap.Stringer("clientAddress", downlink.clientAddrPort),
-				zap.Stringer("wgAddress", &s.wgAddrPort),
+				zap.Stringer("wgAddress", downlink.wgAddrPort),
 				zap.Stringer("packetSourceAddress", packetSourceAddrPort),
 				zap.Int("packetLength", n),
 				zap.Error(err),
@@ -473,19 +513,19 @@ func (s *server) relayWgToProxyGeneric(downlink serverNatDownlinkGeneric) {
 				zap.String("server", s.name),
 				zap.String("listenAddress", s.proxyListen),
 				zap.Stringer("clientAddress", downlink.clientAddrPort),
-				zap.Stringer("wgAddress", &s.wgAddrPort),
+				zap.Stringer("wgAddress", downlink.wgAddrPort),
 				zap.Stringer("packetSourceAddress", packetSourceAddrPort),
 				zap.Int("packetLength", n),
 				zap.Error(err),
 			)
 			continue
 		}
-		if !conn.AddrPortMappedEqual(packetSourceAddrPort, s.wgAddrPort) {
+		if !conn.AddrPortMappedEqual(packetSourceAddrPort, downlink.wgAddrPort) {
 			s.logger.Warn("Ignoring packet from non-wg address",
 				zap.String("server", s.name),
 				zap.String("listenAddress", s.proxyListen),
 				zap.Stringer("clientAddress", downlink.clientAddrPort),
-				zap.Stringer("wgAddress", &s.wgAddrPort),
+				zap.Stringer("wgAddress", downlink.wgAddrPort),
 				zap.Stringer("packetSourceAddress", packetSourceAddrPort),
 				zap.Int("packetLength", n),
 				zap.Error(err),
@@ -499,7 +539,7 @@ func (s *server) relayWgToProxyGeneric(downlink serverNatDownlinkGeneric) {
 				zap.String("server", s.name),
 				zap.String("listenAddress", s.proxyListen),
 				zap.Stringer("clientAddress", downlink.clientAddrPort),
-				zap.Stringer("wgAddress", &s.wgAddrPort),
+				zap.Stringer("wgAddress", downlink.wgAddrPort),
 				zap.Error(err),
 			)
 			continue
@@ -517,7 +557,7 @@ func (s *server) relayWgToProxyGeneric(downlink serverNatDownlinkGeneric) {
 				zap.String("server", s.name),
 				zap.String("listenAddress", s.proxyListen),
 				zap.Stringer("clientAddress", downlink.clientAddrPort),
-				zap.Stringer("wgAddress", &s.wgAddrPort),
+				zap.Stringer("wgAddress", downlink.wgAddrPort),
 				zap.Error(err),
 			)
 		}
@@ -530,7 +570,7 @@ func (s *server) relayWgToProxyGeneric(downlink serverNatDownlinkGeneric) {
 		zap.String("server", s.name),
 		zap.String("listenAddress", s.proxyListen),
 		zap.Stringer("clientAddress", downlink.clientAddrPort),
-		zap.Stringer("wgAddress", &s.wgAddrPort),
+		zap.Stringer("wgAddress", downlink.wgAddrPort),
 		zap.Uint64("packetsSent", packetsSent),
 		zap.Uint64("wgBytesSent", wgBytesSent),
 	)
@@ -558,25 +598,30 @@ func (s *server) Stop() error {
 		return err
 	}
 
-	// Wait for serverConn receive goroutines to exit,
+	// Wait for proxyConn receive goroutines to exit,
 	// so there won't be any new sessions added to the table.
 	s.mwg.Wait()
 
 	s.mu.Lock()
 	for clientAddrPort, entry := range s.table {
-		if err := entry.wgConn.SetReadDeadline(now); err != nil {
+		wgConn := entry.state.Swap(s.proxyConn)
+		if wgConn == nil {
+			continue
+		}
+
+		if err := wgConn.SetReadDeadline(now); err != nil {
 			s.logger.Warn("Failed to SetReadDeadline on wgConn",
 				zap.String("server", s.name),
 				zap.String("listenAddress", s.proxyListen),
 				zap.Stringer("clientAddress", clientAddrPort),
-				zap.Stringer("wgAddress", &s.wgAddrPort),
+				zap.Stringer("wgAddress", &s.wgAddr),
 				zap.Error(err),
 			)
 		}
 	}
 	s.mu.Unlock()
 
-	// Wait for all relay goroutines to exit before closing serverConn,
+	// Wait for all relay goroutines to exit before closing proxyConn,
 	// so in-flight packets can be written out.
 	s.wg.Wait()
 

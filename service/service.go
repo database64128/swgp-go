@@ -194,6 +194,10 @@ func getPacketHandlerForProxyMode(proxyMode string, proxyPSK []byte) (handler pa
 	return
 }
 
+func getWgTunnelMTUForHandler(handler packet.Handler, maxProxyPacketSize int) int {
+	return (maxProxyPacketSize - handler.FrontOverhead() - handler.RearOverhead() - WireGuardDataPacketOverhead) & WireGuardDataPacketLengthMask
+}
+
 // queuedPacket is the structure used by send channels to queue packets for sending.
 type queuedPacket struct {
 	buf    []byte
