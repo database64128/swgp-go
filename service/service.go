@@ -67,9 +67,9 @@ type PerfConfig struct {
 	// BatchMode controls the mode of batch receiving and sending.
 	//
 	// Available values:
-	// - "": Platform default. This is equivalent to "sendmmsg" on Linux and "no" on other platforms.
+	// - "": Platform default.
 	// - "no": Do not receive or send packets in batches.
-	// - "sendmmsg": Use recvmmsg(2) and sendmmsg(2) on Linux.
+	// - "sendmmsg": Use recvmmsg(2) and sendmmsg(2) calls. This is the default on Linux and NetBSD.
 	BatchMode string `json:"batchMode"`
 
 	// RelayBatchSize is the batch size of recvmmsg(2) and sendmmsg(2) calls in relay sessions.
