@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"net"
 	"net/netip"
@@ -23,7 +24,7 @@ func generateTestPSK(t *testing.T) []byte {
 	return psk
 }
 
-func testClientServerHandshake(t *testing.T, serverConfig ServerConfig, clientConfig ClientConfig) {
+func testClientServerHandshake(t *testing.T, ctx context.Context, serverConfig ServerConfig, clientConfig ClientConfig) {
 	sc := Config{
 		Servers: []ServerConfig{serverConfig},
 		Clients: []ClientConfig{clientConfig},
@@ -32,7 +33,7 @@ func testClientServerHandshake(t *testing.T, serverConfig ServerConfig, clientCo
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = m.Start(); err != nil {
+	if err = m.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
 	defer m.Stop()
@@ -61,7 +62,7 @@ func testClientServerHandshake(t *testing.T, serverConfig ServerConfig, clientCo
 	if err != nil {
 		t.Fatal(err)
 	}
-	serverConn, err := conn.DefaultUDPClientListenConfig.ListenUDP("udp", serverConfig.WgEndpoint.String())
+	serverConn, err := conn.DefaultUDPClientListenConfig.ListenUDP(ctx, "udp", serverConfig.WgEndpoint.String())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +123,7 @@ func TestClientServerHandshakeZeroOverhead(t *testing.T) {
 		MTU:           1500,
 	}
 
-	testClientServerHandshake(t, serverConfig, clientConfig)
+	testClientServerHandshake(t, context.Background(), serverConfig, clientConfig)
 }
 
 func TestClientServerHandshakeParanoid(t *testing.T) {
@@ -146,10 +147,10 @@ func TestClientServerHandshakeParanoid(t *testing.T) {
 		MTU:           1500,
 	}
 
-	testClientServerHandshake(t, serverConfig, clientConfig)
+	testClientServerHandshake(t, context.Background(), serverConfig, clientConfig)
 }
 
-func testClientServerDataPackets(t *testing.T, serverConfig ServerConfig, clientConfig ClientConfig) {
+func testClientServerDataPackets(t *testing.T, ctx context.Context, serverConfig ServerConfig, clientConfig ClientConfig) {
 	sc := Config{
 		Servers: []ServerConfig{serverConfig},
 		Clients: []ClientConfig{clientConfig},
@@ -158,7 +159,7 @@ func testClientServerDataPackets(t *testing.T, serverConfig ServerConfig, client
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = m.Start(); err != nil {
+	if err = m.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
 	defer m.Stop()
@@ -184,7 +185,7 @@ func testClientServerDataPackets(t *testing.T, serverConfig ServerConfig, client
 	if err != nil {
 		t.Fatal(err)
 	}
-	serverConn, err := conn.DefaultUDPClientListenConfig.ListenUDP("udp", serverConfig.WgEndpoint.String())
+	serverConn, err := conn.DefaultUDPClientListenConfig.ListenUDP(ctx, "udp", serverConfig.WgEndpoint.String())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +258,7 @@ func TestClientServerDataPacketsZeroOverhead(t *testing.T) {
 		MTU:           1500,
 	}
 
-	testClientServerDataPackets(t, serverConfig, clientConfig)
+	testClientServerDataPackets(t, context.Background(), serverConfig, clientConfig)
 }
 
 func TestClientServerDataPacketsParanoid(t *testing.T) {
@@ -281,7 +282,7 @@ func TestClientServerDataPacketsParanoid(t *testing.T) {
 		MTU:           1500,
 	}
 
-	testClientServerDataPackets(t, serverConfig, clientConfig)
+	testClientServerDataPackets(t, context.Background(), serverConfig, clientConfig)
 }
 
 func TestMain(m *testing.M) {

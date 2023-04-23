@@ -2,6 +2,7 @@ package conn
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"net/netip"
 	"strings"
@@ -143,7 +144,9 @@ func TestAddrIPPort(t *testing.T) {
 }
 
 func TestAddrResolveIP(t *testing.T) {
-	ip, err := addrIP.ResolveIP()
+	ctx := context.Background()
+
+	ip, err := addrIP.ResolveIP(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +154,7 @@ func TestAddrResolveIP(t *testing.T) {
 		t.Errorf("addrIP.ResolveIP() returned %s, expected %s.", ip, addrIPAddr)
 	}
 
-	ip, err = addrDomain.ResolveIP()
+	ip, err = addrDomain.ResolveIP(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,11 +162,13 @@ func TestAddrResolveIP(t *testing.T) {
 		t.Error("addrDomain.ResolveIP() returned invalid IP address.")
 	}
 
-	assertPanic(t, func() { addrZero.ResolveIP() })
+	assertPanic(t, func() { addrZero.ResolveIP(ctx) })
 }
 
 func TestAddrResolveIPPort(t *testing.T) {
-	ipPort, err := addrIP.ResolveIPPort()
+	ctx := context.Background()
+
+	ipPort, err := addrIP.ResolveIPPort(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +176,7 @@ func TestAddrResolveIPPort(t *testing.T) {
 		t.Errorf("addrIP.ResolveIPPort() returned %s, expected %s.", ipPort, addrIPAddrPort)
 	}
 
-	ipPort, err = addrDomain.ResolveIPPort()
+	ipPort, err = addrDomain.ResolveIPPort(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +187,7 @@ func TestAddrResolveIPPort(t *testing.T) {
 		t.Errorf("addrDomain.ResolveIPPort(false) returned %s, expected port %d.", ipPort, addrDomainPort)
 	}
 
-	assertPanic(t, func() { addrZero.ResolveIPPort() })
+	assertPanic(t, func() { addrZero.ResolveIPPort(ctx) })
 }
 
 func TestAddrHost(t *testing.T) {

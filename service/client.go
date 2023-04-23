@@ -2,6 +2,7 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"net"
 	"net/netip"
@@ -86,7 +87,7 @@ type client struct {
 	wg                    sync.WaitGroup
 	mwg                   sync.WaitGroup
 	table                 map[netip.AddrPort]*clientNatEntry
-	startFunc             func() error
+	startFunc             func(context.Context) error
 }
 
 // Client creates a swgp client service from the client config.
@@ -164,12 +165,12 @@ func (c *client) String() string {
 }
 
 // Start implements the Service Start method.
-func (c *client) Start() (err error) {
-	return c.startFunc()
+func (c *client) Start(ctx context.Context) (err error) {
+	return c.startFunc(ctx)
 }
 
-func (c *client) startGeneric() error {
-	wgConn, err := c.wgConnListenConfig.ListenUDP("udp", c.wgListen)
+func (c *client) startGeneric(ctx context.Context) error {
+	wgConn, err := c.wgConnListenConfig.ListenUDP(ctx, "udp", c.wgListen)
 	if err != nil {
 		return err
 	}
@@ -178,7 +179,7 @@ func (c *client) startGeneric() error {
 	c.mwg.Add(1)
 
 	go func() {
-		c.recvFromWgConnGeneric(wgConn)
+		c.recvFromWgConnGeneric(ctx, wgConn)
 		c.mwg.Done()
 	}()
 
@@ -204,7 +205,7 @@ func (c *client) startGeneric() error {
 	return nil
 }
 
-func (c *client) recvFromWgConnGeneric(wgConn *net.UDPConn) {
+func (c *client) recvFromWgConnGeneric(ctx context.Context, wgConn *net.UDPConn) {
 	headroom := c.handler.Headroom()
 
 	cmsgBuf := make([]byte, conn.SocketControlMessageBufferSize)
@@ -293,6 +294,7 @@ func (c *client) recvFromWgConnGeneric(wgConn *net.UDPConn) {
 			proxyConnSendCh := make(chan queuedPacket, c.sendChannelCapacity)
 			natEntry.proxyConnSendCh = proxyConnSendCh
 			c.table[clientAddrPort] = natEntry
+			c.wg.Add(1)
 
 			go func() {
 				var sendChClean bool
@@ -308,9 +310,11 @@ func (c *client) recvFromWgConnGeneric(wgConn *net.UDPConn) {
 							c.putPacketBuf(queuedPacket.buf)
 						}
 					}
+
+					c.wg.Done()
 				}()
 
-				proxyAddrPort, err := c.proxyAddr.ResolveIPPort()
+				proxyAddrPort, err := c.proxyAddr.ResolveIPPort(ctx)
 				if err != nil {
 					c.logger.Warn("Failed to resolve proxy address for new session",
 						zap.String("client", c.name),
@@ -321,12 +325,7 @@ func (c *client) recvFromWgConnGeneric(wgConn *net.UDPConn) {
 					return
 				}
 
-				// Only add for the current goroutine here,
-				// since we don't want the name resolution to block exiting.
-				c.wg.Add(1)
-				defer c.wg.Done()
-
-				proxyConn, err := c.proxyConnListenConfig.ListenUDP("udp", "")
+				proxyConn, err := c.proxyConnListenConfig.ListenUDP(ctx, "udp", "")
 				if err != nil {
 					c.logger.Warn("Failed to create UDP socket for new session",
 						zap.String("client", c.name),

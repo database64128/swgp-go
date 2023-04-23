@@ -132,8 +132,8 @@ func (a Addr) IPPort() netip.AddrPort {
 // availability and preference.
 //
 // String representations of IP addresses are not supported.
-func ResolveIP(host string) (netip.Addr, error) {
-	ips, err := net.DefaultResolver.LookupNetIP(context.Background(), "ip", host)
+func ResolveIP(ctx context.Context, host string) (netip.Addr, error) {
+	ips, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
 	if err != nil {
 		return netip.Addr{}, err
 	}
@@ -143,12 +143,12 @@ func ResolveIP(host string) (netip.Addr, error) {
 // ResolveIP returns the IP address itself or the resolved IP address of the domain name.
 //
 // If the address is zero value, this method panics.
-func (a Addr) ResolveIP() (netip.Addr, error) {
+func (a Addr) ResolveIP(ctx context.Context) (netip.Addr, error) {
 	switch a.af {
 	case addressFamilyNetip:
 		return a.ip(), nil
 	case addressFamilyDomain:
-		return ResolveIP(a.domain())
+		return ResolveIP(ctx, a.domain())
 	default:
 		panic("ResolveIP() called on zero value")
 	}
@@ -158,12 +158,12 @@ func (a Addr) ResolveIP() (netip.Addr, error) {
 // and the port number as a [netip.AddrPort].
 //
 // If the address is zero value, this method panics.
-func (a Addr) ResolveIPPort() (netip.AddrPort, error) {
+func (a Addr) ResolveIPPort(ctx context.Context) (netip.AddrPort, error) {
 	switch a.af {
 	case addressFamilyNetip:
 		return a.ipPort(), nil
 	case addressFamilyDomain:
-		ip, err := ResolveIP(a.domain())
+		ip, err := ResolveIP(ctx, a.domain())
 		if err != nil {
 			return netip.AddrPort{}, err
 		}

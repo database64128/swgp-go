@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -87,17 +88,23 @@ func main() {
 		return
 	}
 
-	if err = m.Start(); err != nil {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	go func() {
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+		sig := <-sigCh
+		logger.Info("Received exit signal", zap.Stringer("signal", sig))
+		cancel()
+	}()
+
+	if err = m.Start(ctx); err != nil {
 		logger.Fatal("Failed to start services",
 			zap.Stringp("confPath", confPath),
 			zap.Error(err),
 		)
 	}
 
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-	sig := <-sigCh
-	logger.Info("Received exit signal", zap.Stringer("signal", sig))
-
+	<-ctx.Done()
 	m.Stop()
 }

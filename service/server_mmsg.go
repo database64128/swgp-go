@@ -4,6 +4,7 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"net/netip"
 	"os"
@@ -43,8 +44,8 @@ func (s *server) setStartFunc(batchMode string) {
 	}
 }
 
-func (s *server) startMmsg() error {
-	proxyConn, err := s.proxyConnListenConfig.ListenUDPRawConn("udp", s.proxyListen)
+func (s *server) startMmsg(ctx context.Context) error {
+	proxyConn, err := s.proxyConnListenConfig.ListenUDPRawConn(ctx, "udp", s.proxyListen)
 	if err != nil {
 		return err
 	}
@@ -53,7 +54,7 @@ func (s *server) startMmsg() error {
 	s.mwg.Add(1)
 
 	go func() {
-		s.recvFromProxyConnRecvmmsg(proxyConn.RConn())
+		s.recvFromProxyConnRecvmmsg(ctx, proxyConn.RConn())
 		s.mwg.Done()
 	}()
 
@@ -67,7 +68,7 @@ func (s *server) startMmsg() error {
 	return nil
 }
 
-func (s *server) recvFromProxyConnRecvmmsg(proxyConn *conn.MmsgRConn) {
+func (s *server) recvFromProxyConnRecvmmsg(ctx context.Context, proxyConn *conn.MmsgRConn) {
 	n := s.mainRecvBatchSize
 	bufvec := make([][]byte, n)
 	namevec := make([]unix.RawSockaddrInet6, n)
@@ -222,6 +223,7 @@ func (s *server) recvFromProxyConnRecvmmsg(proxyConn *conn.MmsgRConn) {
 				wgConnSendCh := make(chan queuedPacket, s.sendChannelCapacity)
 				natEntry.wgConnSendCh = wgConnSendCh
 				s.table[clientAddrPort] = natEntry
+				s.wg.Add(1)
 
 				go func() {
 					var sendChClean bool
@@ -237,9 +239,11 @@ func (s *server) recvFromProxyConnRecvmmsg(proxyConn *conn.MmsgRConn) {
 								s.putPacketBuf(queuedPacket.buf)
 							}
 						}
+
+						s.wg.Done()
 					}()
 
-					wgAddrPort, err := s.wgAddr.ResolveIPPort()
+					wgAddrPort, err := s.wgAddr.ResolveIPPort(ctx)
 					if err != nil {
 						s.logger.Warn("Failed to resolve wgAddr",
 							zap.String("server", s.name),
@@ -250,12 +254,7 @@ func (s *server) recvFromProxyConnRecvmmsg(proxyConn *conn.MmsgRConn) {
 						return
 					}
 
-					// Only add for the current goroutine here,
-					// since we don't want the name resolution to block exiting.
-					s.wg.Add(1)
-					defer s.wg.Done()
-
-					wgConn, err := s.wgConnListenConfig.ListenUDPRawConn("udp", "")
+					wgConn, err := s.wgConnListenConfig.ListenUDPRawConn(ctx, "udp", "")
 					if err != nil {
 						s.logger.Warn("Failed to create UDP socket for new session",
 							zap.String("server", s.name),

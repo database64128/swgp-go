@@ -50,8 +50,8 @@ func (fns setFuncSlice) controlFunc() func(network, address string, c syscall.Ra
 type ListenConfig net.ListenConfig
 
 // ListenUDP wraps [net.ListenConfig.ListenPacket] and returns a [*net.UDPConn] directly.
-func (lc *ListenConfig) ListenUDP(network, address string) (*net.UDPConn, error) {
-	pc, err := (*net.ListenConfig)(lc).ListenPacket(context.Background(), network, address)
+func (lc *ListenConfig) ListenUDP(ctx context.Context, network, address string) (*net.UDPConn, error) {
+	pc, err := (*net.ListenConfig)(lc).ListenPacket(ctx, network, address)
 	if err != nil {
 		return nil, err
 	}
