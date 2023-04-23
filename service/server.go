@@ -586,13 +586,7 @@ func (s *server) putPacketBuf(packetBuf []byte) {
 
 // Stop implements the Service Stop method.
 func (s *server) Stop() error {
-	if s.proxyConn == nil {
-		return nil
-	}
-
-	now := time.Now()
-
-	if err := s.proxyConn.SetReadDeadline(now); err != nil {
+	if err := s.proxyConn.SetReadDeadline(conn.ALongTimeAgo); err != nil {
 		return err
 	}
 
@@ -607,7 +601,7 @@ func (s *server) Stop() error {
 			continue
 		}
 
-		if err := wgConn.SetReadDeadline(now); err != nil {
+		if err := wgConn.SetReadDeadline(conn.ALongTimeAgo); err != nil {
 			s.logger.Warn("Failed to SetReadDeadline on wgConn",
 				zap.String("server", s.name),
 				zap.String("listenAddress", s.proxyListen),
