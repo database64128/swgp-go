@@ -47,7 +47,7 @@ func NewProductionConsoleEncoderConfig(suppressTimestamps bool) zapcore.EncoderC
 		MessageKey:       "M",
 		StacktraceKey:    "S",
 		LineEnding:       zapcore.DefaultLineEnding,
-		EncodeLevel:      zapcore.CapitalLevelEncoder,
+		EncodeLevel:      zapcore.CapitalColorLevelEncoder,
 		EncodeTime:       encodeTime,
 		EncodeDuration:   zapcore.StringDurationEncoder,
 		EncodeCaller:     zapcore.ShortCallerEncoder,
