@@ -20,12 +20,7 @@ const (
 type netipAddrHeader struct {
 	hi uint64
 	lo uint64
-	z  unsafe.Pointer
-}
-
-type stringHeader struct {
-	data unsafe.Pointer
-	len  int
+	z  *byte
 }
 
 // Addr is the base address type used throughout the package.
@@ -52,11 +47,8 @@ func (a Addr) ipPort() netip.AddrPort {
 	return *(*netip.AddrPort)(unsafe.Pointer(&a))
 }
 
-func (a Addr) domain() (domain string) {
-	dp := (*stringHeader)(unsafe.Pointer(&domain))
-	dp.data = a.addr.z
-	dp.len = *(*int)(unsafe.Pointer(&a))
-	return
+func (a Addr) domain() string {
+	return unsafe.String(a.addr.z, a.addr.hi)
 }
 
 // Equals returns whether two addresses are the same.
@@ -249,10 +241,14 @@ func AddrFromDomainPort(domain string, port uint16) (Addr, error) {
 	if len(domain) == 0 || len(domain) > 255 {
 		return Addr{}, fmt.Errorf("length of domain %s out of range [1, 255]", domain)
 	}
-	dp := (*stringHeader)(unsafe.Pointer(&domain))
-	addr := Addr{addr: netipAddrHeader{z: dp.data}, port: port, af: addressFamilyDomain}
-	*(*int)(unsafe.Pointer(&addr)) = dp.len
-	return addr, nil
+	return Addr{
+		addr: netipAddrHeader{
+			hi: uint64(len(domain)),
+			z:  unsafe.StringData(domain),
+		},
+		port: port,
+		af:   addressFamilyDomain,
+	}, nil
 }
 
 // MustAddrFromDomainPort calls [AddrFromDomainPort] and panics on error.
