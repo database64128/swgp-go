@@ -4,7 +4,7 @@ go 1.20
 
 require (
 	go.uber.org/zap v1.25.0
-	golang.org/x/crypto v0.11.0
+	golang.org/x/crypto v0.12.0
 	golang.org/x/sys v0.11.0
 )
 
