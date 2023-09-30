@@ -34,7 +34,9 @@ jobs:
                 package-linux-arm64 \
                 package-windows-x86-64-v2 \
                 package-windows-x86-64-v3 \
-                package-windows-arm64
+                package-windows-arm64 \
+                package-macos-x86-64-v3 \
+                package-macos-arm64 \ 
 
           env GOAMD64=v2 go build -v -trimpath -ldflags '-s -w' -o package-archlinux-x86-64-v2/ ./cmd/swgp-go
           env GOAMD64=v3 go build -v -trimpath -ldflags '-s -w' -o package-archlinux-x86-64-v3/ ./cmd/swgp-go
@@ -44,6 +46,8 @@ jobs:
           env CGO_ENABLED=0 GOAMD64=v2 GOOS=windows go build -v -trimpath -ldflags '-s -w' -o package-windows-x86-64-v2/ ./cmd/swgp-go
           env CGO_ENABLED=0 GOAMD64=v3 GOOS=windows go build -v -trimpath -ldflags '-s -w' -o package-windows-x86-64-v3/ ./cmd/swgp-go
           env CGO_ENABLED=0 GOOS=windows GOARCH=arm64 go build -v -trimpath -ldflags '-s -w' -o package-windows-arm64/ ./cmd/swgp-go
+          env CGO_ENABLED=0 GOAMD64=v3 GOOS=darwin go build -v -trimpath -ldflags '-s -w' -o package-macos-x86-64-v3/ ./cmd/swgp-go
+          env CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -v -trimpath -ldflags '-s -w' -o package-macos-arm64/ ./cmd/swgp-go
 
       - name: Package
         env:
@@ -66,6 +70,10 @@ jobs:
           tar -acf ../swgp-go-${{ github.ref_name }}-windows-x86-64-v3.tar.zst .
           cd ../package-windows-arm64/
           tar -acf ../swgp-go-${{ github.ref_name }}-windows-arm64.tar.zst .
+          cd ../package-macos-x86-64-v3/
+          tar -acf ../swgp-go-${{ github.ref_name }}-macos-x86-64-v3.tar.zst .
+          cd ../package-macos-arm64/
+          tar -acf ../swgp-go-${{ github.ref_name }}-macos-arm64.tar.zst .
 
       - name: Upload release assets
         uses: svenstaro/upload-release-action@v2
