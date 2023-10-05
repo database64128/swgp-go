@@ -135,9 +135,7 @@ func (c *client) recvFromWgConnRecvmmsg(ctx context.Context, wgConn *conn.MmsgRC
 
 		recvmmsgCount++
 		packetsReceived += uint64(n)
-		if burstBatchSize < n {
-			burstBatchSize = n
-		}
+		burstBatchSize = max(burstBatchSize, n)
 
 		c.mu.Lock()
 
@@ -477,9 +475,7 @@ main:
 
 		sendmmsgCount++
 		packetsSent += uint64(count)
-		if burstBatchSize < count {
-			burstBatchSize = count
-		}
+		burstBatchSize = max(burstBatchSize, count)
 
 		bufvecn := bufvec[:count]
 
@@ -649,9 +645,7 @@ func (c *client) relayProxyToWgSendmmsg(downlink clientNatDownlinkMmsg) {
 
 		sendmmsgCount++
 		packetsSent += uint64(ns)
-		if burstBatchSize < ns {
-			burstBatchSize = ns
-		}
+		burstBatchSize = max(burstBatchSize, ns)
 	}
 
 	c.logger.Info("Finished relay proxyConn -> wgConn",
