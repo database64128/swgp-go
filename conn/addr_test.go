@@ -343,7 +343,7 @@ func TestAddrParsing(t *testing.T) {
 
 var (
 	addrPort4    = netip.AddrPortFrom(netip.AddrFrom4([4]byte{127, 0, 0, 1}), 1080)
-	addrPort4in6 = netip.AddrPortFrom(netip.AddrFrom16([16]byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 127, 0, 0, 1}), 1080)
+	addrPort4in6 = netip.AddrPortFrom(netip.AddrFrom16([16]byte{10: 0xff, 11: 0xff, 127, 0, 0, 1}), 1080)
 )
 
 func TestAddrPortMappedEqual(t *testing.T) {
