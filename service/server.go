@@ -142,7 +142,7 @@ func (sc *ServerConfig) Server(logger *zap.Logger, listenConfigCache conn.Listen
 		packetBufPool: sync.Pool{
 			New: func() any {
 				b := make([]byte, maxProxyPacketSizev4)
-				return &b[0]
+				return unsafe.SliceData(b)
 			},
 		},
 		table: make(map[netip.AddrPort]*serverNatEntry),
@@ -581,7 +581,7 @@ func (s *server) getPacketBuf() []byte {
 
 // putPacketBuf puts the packet buffer back into the pool.
 func (s *server) putPacketBuf(packetBuf []byte) {
-	s.packetBufPool.Put(&packetBuf[0])
+	s.packetBufPool.Put(unsafe.SliceData(packetBuf))
 }
 
 // Stop implements the Service Stop method.

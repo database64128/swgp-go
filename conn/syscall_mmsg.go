@@ -10,7 +10,7 @@ import (
 )
 
 func mmsgSyscall(trap uintptr, fd int, msgvec []Mmsghdr, flags int) (int, syscall.Errno) {
-	r0, _, e1 := unix.Syscall6(trap, uintptr(fd), uintptr(unsafe.Pointer(&msgvec[0])), uintptr(len(msgvec)), uintptr(flags), 0, 0)
+	r0, _, e1 := unix.Syscall6(trap, uintptr(fd), uintptr(unsafe.Pointer(unsafe.SliceData(msgvec))), uintptr(len(msgvec)), uintptr(flags), 0, 0)
 	if e1 != 0 {
 		return 0, e1
 	}

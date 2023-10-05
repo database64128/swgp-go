@@ -98,7 +98,7 @@ func (c *client) recvFromWgConnRecvmmsg(ctx context.Context, wgConn *conn.MmsgRC
 		msgvec[i].Msghdr.Namelen = unix.SizeofSockaddrInet6
 		msgvec[i].Msghdr.Iov = &iovec[i]
 		msgvec[i].Msghdr.SetIovlen(1)
-		msgvec[i].Msghdr.Control = &cmsgBuf[0]
+		msgvec[i].Msghdr.Control = unsafe.SliceData(cmsgBuf)
 	}
 
 	var (
@@ -520,9 +520,10 @@ func (c *client) relayProxyToWgSendmmsg(downlink clientNatDownlinkMmsg) {
 	smsgvec := make([]conn.Mmsghdr, c.relayBatchSize)
 
 	for i := 0; i < c.relayBatchSize; i++ {
-		bufvec[i] = make([]byte, c.maxProxyPacketSize)
+		packetBuf := make([]byte, c.maxProxyPacketSize)
+		bufvec[i] = packetBuf
 
-		riovec[i].Base = &bufvec[i][0]
+		riovec[i].Base = unsafe.SliceData(packetBuf)
 		riovec[i].SetLen(c.maxProxyPacketSize)
 
 		rmsgvec[i].Msghdr.Name = (*byte)(unsafe.Pointer(&savec[i]))
@@ -534,7 +535,7 @@ func (c *client) relayProxyToWgSendmmsg(downlink clientNatDownlinkMmsg) {
 		smsgvec[i].Msghdr.Namelen = namelen
 		smsgvec[i].Msghdr.Iov = &siovec[i]
 		smsgvec[i].Msghdr.SetIovlen(1)
-		smsgvec[i].Msghdr.Control = &clientPktinfo[0]
+		smsgvec[i].Msghdr.Control = unsafe.SliceData(clientPktinfo)
 		smsgvec[i].Msghdr.SetControllen(len(clientPktinfo))
 	}
 
@@ -627,7 +628,7 @@ func (c *client) relayProxyToWgSendmmsg(downlink clientNatDownlinkMmsg) {
 			clientPktinfop = cpp
 
 			for i := range smsgvec {
-				smsgvec[i].Msghdr.Control = &clientPktinfo[0]
+				smsgvec[i].Msghdr.Control = unsafe.SliceData(clientPktinfo)
 				smsgvec[i].Msghdr.SetControllen(len(clientPktinfo))
 			}
 		}

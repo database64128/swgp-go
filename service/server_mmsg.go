@@ -83,7 +83,7 @@ func (s *server) recvFromProxyConnRecvmmsg(ctx context.Context, proxyConn *conn.
 		msgvec[i].Msghdr.Namelen = unix.SizeofSockaddrInet6
 		msgvec[i].Msghdr.Iov = &iovec[i]
 		msgvec[i].Msghdr.SetIovlen(1)
-		msgvec[i].Msghdr.Control = &cmsgBuf[0]
+		msgvec[i].Msghdr.Control = unsafe.SliceData(cmsgBuf)
 	}
 
 	var (
@@ -98,7 +98,7 @@ func (s *server) recvFromProxyConnRecvmmsg(ctx context.Context, proxyConn *conn.
 		for i := range iovec[:n] {
 			packetBuf := s.getPacketBuf()
 			bufvec[i] = packetBuf
-			iovec[i].Base = &packetBuf[0]
+			iovec[i].Base = unsafe.SliceData(packetBuf)
 			iovec[i].SetLen(len(packetBuf))
 			msgvec[i].Msghdr.SetControllen(conn.SocketControlMessageBufferSize)
 		}
@@ -504,9 +504,10 @@ func (s *server) relayWgToProxySendmmsg(downlink serverNatDownlinkMmsg) {
 	smsgvec := make([]conn.Mmsghdr, s.relayBatchSize)
 
 	for i := 0; i < s.relayBatchSize; i++ {
-		bufvec[i] = make([]byte, downlink.maxProxyPacketSize)
+		packetBuf := make([]byte, downlink.maxProxyPacketSize)
+		bufvec[i] = packetBuf
 
-		riovec[i].Base = &bufvec[i][headroom.Front]
+		riovec[i].Base = &packetBuf[headroom.Front]
 		riovec[i].SetLen(plaintextLen)
 
 		rmsgvec[i].Msghdr.Name = (*byte)(unsafe.Pointer(&savec[i]))
@@ -518,7 +519,7 @@ func (s *server) relayWgToProxySendmmsg(downlink serverNatDownlinkMmsg) {
 		smsgvec[i].Msghdr.Namelen = namelen
 		smsgvec[i].Msghdr.Iov = &siovec[i]
 		smsgvec[i].Msghdr.SetIovlen(1)
-		smsgvec[i].Msghdr.Control = &clientPktinfo[0]
+		smsgvec[i].Msghdr.Control = unsafe.SliceData(clientPktinfo)
 		smsgvec[i].Msghdr.SetControllen(len(clientPktinfo))
 	}
 
@@ -609,7 +610,7 @@ func (s *server) relayWgToProxySendmmsg(downlink serverNatDownlinkMmsg) {
 			clientPktinfop = cpp
 
 			for i := range smsgvec {
-				smsgvec[i].Msghdr.Control = &clientPktinfo[0]
+				smsgvec[i].Msghdr.Control = unsafe.SliceData(clientPktinfo)
 				smsgvec[i].Msghdr.SetControllen(len(clientPktinfo))
 			}
 		}
