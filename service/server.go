@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/netip"
 	"os"
@@ -20,16 +21,18 @@ import (
 // ServerConfig stores configurations for a swgp server service.
 // It may be marshaled as or unmarshaled from JSON.
 type ServerConfig struct {
-	Name              string    `json:"name"`
-	ProxyListen       string    `json:"proxyListen"`
-	ProxyMode         string    `json:"proxyMode"`
-	ProxyPSK          []byte    `json:"proxyPSK"`
-	ProxyFwmark       int       `json:"proxyFwmark"`
-	ProxyTrafficClass int       `json:"proxyTrafficClass"`
-	WgEndpoint        conn.Addr `json:"wgEndpoint"`
-	WgFwmark          int       `json:"wgFwmark"`
-	WgTrafficClass    int       `json:"wgTrafficClass"`
-	MTU               int       `json:"mtu"`
+	Name                string    `json:"name"`
+	ProxyListen         string    `json:"proxyListen"`
+	ProxyMode           string    `json:"proxyMode"`
+	ProxyPSK            []byte    `json:"proxyPSK"`
+	ProxyFwmark         int       `json:"proxyFwmark"`
+	ProxyTrafficClass   int       `json:"proxyTrafficClass"`
+	WgEndpoint          conn.Addr `json:"wgEndpoint"`
+	WgConnListenNetwork string    `json:"wgConnListenNetwork"`
+	WgConnListenAddress string    `json:"wgConnListenAddress"`
+	WgFwmark            int       `json:"wgFwmark"`
+	WgTrafficClass      int       `json:"wgTrafficClass"`
+	MTU                 int       `json:"mtu"`
 	PerfConfig
 }
 
@@ -69,6 +72,8 @@ type serverNatDownlinkGeneric struct {
 type server struct {
 	name                  string
 	proxyListen           string
+	wgConnListenNetwork   string
+	wgConnListenAddress   string
 	relayBatchSize        int
 	mainRecvBatchSize     int
 	sendChannelCapacity   int
@@ -98,6 +103,15 @@ func (sc *ServerConfig) Server(logger *zap.Logger, listenConfigCache conn.Listen
 		return nil, ErrMTUTooSmall
 	}
 
+	// Check WgConnListenNetwork.
+	switch sc.WgConnListenNetwork {
+	case "":
+		sc.WgConnListenNetwork = "udp"
+	case "udp", "udp4", "udp6":
+	default:
+		return nil, fmt.Errorf("invalid wgConnListenNetwork: %s", sc.WgConnListenNetwork)
+	}
+
 	// Check and apply PerfConfig defaults.
 	if err := sc.CheckAndApplyDefaults(); err != nil {
 		return nil, err
@@ -118,6 +132,8 @@ func (sc *ServerConfig) Server(logger *zap.Logger, listenConfigCache conn.Listen
 	s := server{
 		name:                 sc.Name,
 		proxyListen:          sc.ProxyListen,
+		wgConnListenNetwork:  sc.WgConnListenNetwork,
+		wgConnListenAddress:  sc.WgConnListenAddress,
 		relayBatchSize:       sc.RelayBatchSize,
 		mainRecvBatchSize:    sc.MainRecvBatchSize,
 		sendChannelCapacity:  sc.SendChannelCapacity,
@@ -315,7 +331,7 @@ func (s *server) recvFromProxyConnGeneric(ctx context.Context, proxyConn *net.UD
 					return
 				}
 
-				wgConn, err := s.wgConnListenConfig.ListenUDP(ctx, "udp", "")
+				wgConn, err := s.wgConnListenConfig.ListenUDP(ctx, s.wgConnListenNetwork, s.wgConnListenAddress)
 				if err != nil {
 					s.logger.Warn("Failed to create UDP socket for new session",
 						zap.String("server", s.name),

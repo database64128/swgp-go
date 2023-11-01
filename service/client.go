@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/netip"
 	"os"
@@ -20,16 +21,18 @@ import (
 // ClientConfig stores configurations for a swgp client service.
 // It may be marshaled as or unmarshaled from JSON.
 type ClientConfig struct {
-	Name              string    `json:"name"`
-	WgListen          string    `json:"wgListen"`
-	WgFwmark          int       `json:"wgFwmark"`
-	WgTrafficClass    int       `json:"wgTrafficClass"`
-	ProxyEndpoint     conn.Addr `json:"proxyEndpoint"`
-	ProxyMode         string    `json:"proxyMode"`
-	ProxyPSK          []byte    `json:"proxyPSK"`
-	ProxyFwmark       int       `json:"proxyFwmark"`
-	ProxyTrafficClass int       `json:"proxyTrafficClass"`
-	MTU               int       `json:"mtu"`
+	Name                   string    `json:"name"`
+	WgListen               string    `json:"wgListen"`
+	WgFwmark               int       `json:"wgFwmark"`
+	WgTrafficClass         int       `json:"wgTrafficClass"`
+	ProxyEndpoint          conn.Addr `json:"proxyEndpoint"`
+	ProxyConnListenNetwork string    `json:"proxyConnListenNetwork"`
+	ProxyConnListenAddress string    `json:"proxyConnListenAddress"`
+	ProxyMode              string    `json:"proxyMode"`
+	ProxyPSK               []byte    `json:"proxyPSK"`
+	ProxyFwmark            int       `json:"proxyFwmark"`
+	ProxyTrafficClass      int       `json:"proxyTrafficClass"`
+	MTU                    int       `json:"mtu"`
 	PerfConfig
 }
 
@@ -67,27 +70,29 @@ type clientNatDownlinkGeneric struct {
 }
 
 type client struct {
-	name                  string
-	wgListen              string
-	relayBatchSize        int
-	mainRecvBatchSize     int
-	sendChannelCapacity   int
-	maxProxyPacketSize    int
-	maxProxyPacketSizev6  int
-	wgTunnelMTU           int
-	wgTunnelMTUv6         int
-	proxyAddr             conn.Addr
-	handler               packet.Handler
-	logger                *zap.Logger
-	wgConn                *net.UDPConn
-	wgConnListenConfig    conn.ListenConfig
-	proxyConnListenConfig conn.ListenConfig
-	packetBufPool         sync.Pool
-	mu                    sync.Mutex
-	wg                    sync.WaitGroup
-	mwg                   sync.WaitGroup
-	table                 map[netip.AddrPort]*clientNatEntry
-	startFunc             func(context.Context) error
+	name                   string
+	wgListen               string
+	proxyConnListenNetwork string
+	proxyConnListenAddress string
+	relayBatchSize         int
+	mainRecvBatchSize      int
+	sendChannelCapacity    int
+	maxProxyPacketSize     int
+	maxProxyPacketSizev6   int
+	wgTunnelMTU            int
+	wgTunnelMTUv6          int
+	proxyAddr              conn.Addr
+	handler                packet.Handler
+	logger                 *zap.Logger
+	wgConn                 *net.UDPConn
+	wgConnListenConfig     conn.ListenConfig
+	proxyConnListenConfig  conn.ListenConfig
+	packetBufPool          sync.Pool
+	mu                     sync.Mutex
+	wg                     sync.WaitGroup
+	mwg                    sync.WaitGroup
+	table                  map[netip.AddrPort]*clientNatEntry
+	startFunc              func(context.Context) error
 }
 
 // Client creates a swgp client service from the client config.
@@ -96,6 +101,15 @@ func (cc *ClientConfig) Client(logger *zap.Logger, listenConfigCache conn.Listen
 	// Require MTU to be at least 1280.
 	if cc.MTU < minimumMTU {
 		return nil, ErrMTUTooSmall
+	}
+
+	// Check ProxyConnListenNetwork.
+	switch cc.ProxyConnListenNetwork {
+	case "":
+		cc.ProxyConnListenNetwork = "udp"
+	case "udp", "udp4", "udp6":
+	default:
+		return nil, fmt.Errorf("invalid proxyConnListenNetwork: %s", cc.ProxyConnListenNetwork)
 	}
 
 	// Check and apply PerfConfig defaults.
@@ -124,18 +138,20 @@ func (cc *ClientConfig) Client(logger *zap.Logger, listenConfigCache conn.Listen
 	}
 
 	c := client{
-		name:                 cc.Name,
-		wgListen:             cc.WgListen,
-		relayBatchSize:       cc.RelayBatchSize,
-		mainRecvBatchSize:    cc.MainRecvBatchSize,
-		sendChannelCapacity:  cc.SendChannelCapacity,
-		maxProxyPacketSize:   maxProxyPacketSize,
-		maxProxyPacketSizev6: maxProxyPacketSizev6,
-		wgTunnelMTU:          wgTunnelMTU,
-		wgTunnelMTUv6:        wgTunnelMTUv6,
-		proxyAddr:            cc.ProxyEndpoint,
-		handler:              handler,
-		logger:               logger,
+		name:                   cc.Name,
+		wgListen:               cc.WgListen,
+		proxyConnListenNetwork: cc.ProxyConnListenNetwork,
+		proxyConnListenAddress: cc.ProxyConnListenAddress,
+		relayBatchSize:         cc.RelayBatchSize,
+		mainRecvBatchSize:      cc.MainRecvBatchSize,
+		sendChannelCapacity:    cc.SendChannelCapacity,
+		maxProxyPacketSize:     maxProxyPacketSize,
+		maxProxyPacketSizev6:   maxProxyPacketSizev6,
+		wgTunnelMTU:            wgTunnelMTU,
+		wgTunnelMTUv6:          wgTunnelMTUv6,
+		proxyAddr:              cc.ProxyEndpoint,
+		handler:                handler,
+		logger:                 logger,
 		wgConnListenConfig: listenConfigCache.Get(conn.ListenerSocketOptions{
 			Fwmark:            cc.WgFwmark,
 			TrafficClass:      cc.WgTrafficClass,
@@ -325,7 +341,7 @@ func (c *client) recvFromWgConnGeneric(ctx context.Context, wgConn *net.UDPConn)
 					return
 				}
 
-				proxyConn, err := c.proxyConnListenConfig.ListenUDP(ctx, "udp", "")
+				proxyConn, err := c.proxyConnListenConfig.ListenUDP(ctx, c.proxyConnListenNetwork, c.proxyConnListenAddress)
 				if err != nil {
 					c.logger.Warn("Failed to create UDP socket for new session",
 						zap.String("client", c.name),

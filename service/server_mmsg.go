@@ -252,7 +252,7 @@ func (s *server) recvFromProxyConnRecvmmsg(ctx context.Context, proxyConn *conn.
 						return
 					}
 
-					wgConn, err := s.wgConnListenConfig.ListenUDPRawConn(ctx, "udp", "")
+					wgConn, err := s.wgConnListenConfig.ListenUDPRawConn(ctx, s.wgConnListenNetwork, s.wgConnListenAddress)
 					if err != nil {
 						s.logger.Warn("Failed to create UDP socket for new session",
 							zap.String("server", s.name),
