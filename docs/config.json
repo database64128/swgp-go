@@ -2,6 +2,7 @@
     "servers": [
         {
             "name": "server",
+            "proxyListenNetwork": "",
             "proxyListen": ":20220",
             "proxyMode": "zero-overhead",
             "proxyPSK": "sAe5RvzLJ3Q0Ll88QRM1N01dYk83Q4y0rXMP1i4rDmI=",
@@ -22,6 +23,7 @@
     "clients": [
         {
             "name": "client",
+            "wgListenNetwork": "",
             "wgListen": ":20222",
             "wgFwmark": 0,
             "wgTrafficClass": 0,

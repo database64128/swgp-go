@@ -58,7 +58,7 @@ func testClientServerHandshake(t *testing.T, ctx context.Context, serverConfig S
 	receivedHandshakeResponsePacket := make([]byte, packet.WireGuardMessageLengthHandshakeResponse+1)
 
 	// Start client and server conns.
-	clientConn, err := net.Dial("udp", clientConfig.WgListen)
+	clientConn, err := net.Dial("udp", clientConfig.WgListenAddress)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,21 +106,21 @@ func TestClientServerHandshakeZeroOverhead(t *testing.T) {
 	psk := generateTestPSK(t)
 
 	serverConfig := ServerConfig{
-		Name:        "wg0",
-		ProxyListen: ":20220",
-		ProxyMode:   "zero-overhead",
-		ProxyPSK:    psk,
-		WgEndpoint:  conn.AddrFromIPPort(netip.AddrPortFrom(netip.IPv6Loopback(), 20221)),
-		MTU:         1500,
+		Name:               "wg0",
+		ProxyListenAddress: ":20220",
+		ProxyMode:          "zero-overhead",
+		ProxyPSK:           psk,
+		WgEndpoint:         conn.AddrFromIPPort(netip.AddrPortFrom(netip.IPv6Loopback(), 20221)),
+		MTU:                1500,
 	}
 
 	clientConfig := ClientConfig{
-		Name:          "wg0",
-		WgListen:      ":20222",
-		ProxyEndpoint: conn.AddrFromIPPort(netip.AddrPortFrom(netip.IPv6Loopback(), 20220)),
-		ProxyMode:     "zero-overhead",
-		ProxyPSK:      psk,
-		MTU:           1500,
+		Name:            "wg0",
+		WgListenAddress: ":20222",
+		ProxyEndpoint:   conn.AddrFromIPPort(netip.AddrPortFrom(netip.IPv6Loopback(), 20220)),
+		ProxyMode:       "zero-overhead",
+		ProxyPSK:        psk,
+		MTU:             1500,
 	}
 
 	testClientServerHandshake(t, context.Background(), serverConfig, clientConfig)
@@ -130,21 +130,21 @@ func TestClientServerHandshakeParanoid(t *testing.T) {
 	psk := generateTestPSK(t)
 
 	serverConfig := ServerConfig{
-		Name:        "wg0",
-		ProxyListen: ":20223",
-		ProxyMode:   "paranoid",
-		ProxyPSK:    psk,
-		WgEndpoint:  conn.AddrFromIPPort(netip.AddrPortFrom(netip.IPv6Loopback(), 20224)),
-		MTU:         1500,
+		Name:               "wg0",
+		ProxyListenAddress: ":20223",
+		ProxyMode:          "paranoid",
+		ProxyPSK:           psk,
+		WgEndpoint:         conn.AddrFromIPPort(netip.AddrPortFrom(netip.IPv6Loopback(), 20224)),
+		MTU:                1500,
 	}
 
 	clientConfig := ClientConfig{
-		Name:          "wg0",
-		WgListen:      ":20225",
-		ProxyEndpoint: conn.AddrFromIPPort(netip.AddrPortFrom(netip.IPv6Loopback(), 20223)),
-		ProxyMode:     "paranoid",
-		ProxyPSK:      psk,
-		MTU:           1500,
+		Name:            "wg0",
+		WgListenAddress: ":20225",
+		ProxyEndpoint:   conn.AddrFromIPPort(netip.AddrPortFrom(netip.IPv6Loopback(), 20223)),
+		ProxyMode:       "paranoid",
+		ProxyPSK:        psk,
+		MTU:             1500,
 	}
 
 	testClientServerHandshake(t, context.Background(), serverConfig, clientConfig)
@@ -181,7 +181,7 @@ func testClientServerDataPackets(t *testing.T, ctx context.Context, serverConfig
 	}
 
 	// Start client and server conns.
-	clientConn, err := net.Dial("udp", clientConfig.WgListen)
+	clientConn, err := net.Dial("udp", clientConfig.WgListenAddress)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,21 +241,21 @@ func TestClientServerDataPacketsZeroOverhead(t *testing.T) {
 	psk := generateTestPSK(t)
 
 	serverConfig := ServerConfig{
-		Name:        "wg0",
-		ProxyListen: ":20230",
-		ProxyMode:   "zero-overhead",
-		ProxyPSK:    psk,
-		WgEndpoint:  conn.AddrFromIPPort(netip.AddrPortFrom(netip.IPv6Loopback(), 20231)),
-		MTU:         1500,
+		Name:               "wg0",
+		ProxyListenAddress: ":20230",
+		ProxyMode:          "zero-overhead",
+		ProxyPSK:           psk,
+		WgEndpoint:         conn.AddrFromIPPort(netip.AddrPortFrom(netip.IPv6Loopback(), 20231)),
+		MTU:                1500,
 	}
 
 	clientConfig := ClientConfig{
-		Name:          "wg0",
-		WgListen:      ":20232",
-		ProxyEndpoint: conn.AddrFromIPPort(netip.AddrPortFrom(netip.IPv6Loopback(), 20230)),
-		ProxyMode:     "zero-overhead",
-		ProxyPSK:      psk,
-		MTU:           1500,
+		Name:            "wg0",
+		WgListenAddress: ":20232",
+		ProxyEndpoint:   conn.AddrFromIPPort(netip.AddrPortFrom(netip.IPv6Loopback(), 20230)),
+		ProxyMode:       "zero-overhead",
+		ProxyPSK:        psk,
+		MTU:             1500,
 	}
 
 	testClientServerDataPackets(t, context.Background(), serverConfig, clientConfig)
@@ -265,21 +265,21 @@ func TestClientServerDataPacketsParanoid(t *testing.T) {
 	psk := generateTestPSK(t)
 
 	serverConfig := ServerConfig{
-		Name:        "wg0",
-		ProxyListen: ":20233",
-		ProxyMode:   "paranoid",
-		ProxyPSK:    psk,
-		WgEndpoint:  conn.AddrFromIPPort(netip.AddrPortFrom(netip.IPv6Loopback(), 20234)),
-		MTU:         1500,
+		Name:               "wg0",
+		ProxyListenAddress: ":20233",
+		ProxyMode:          "paranoid",
+		ProxyPSK:           psk,
+		WgEndpoint:         conn.AddrFromIPPort(netip.AddrPortFrom(netip.IPv6Loopback(), 20234)),
+		MTU:                1500,
 	}
 
 	clientConfig := ClientConfig{
-		Name:          "wg0",
-		WgListen:      ":20235",
-		ProxyEndpoint: conn.AddrFromIPPort(netip.AddrPortFrom(netip.IPv6Loopback(), 20233)),
-		ProxyMode:     "paranoid",
-		ProxyPSK:      psk,
-		MTU:           1500,
+		Name:            "wg0",
+		WgListenAddress: ":20235",
+		ProxyEndpoint:   conn.AddrFromIPPort(netip.AddrPortFrom(netip.IPv6Loopback(), 20233)),
+		ProxyMode:       "paranoid",
+		ProxyPSK:        psk,
+		MTU:             1500,
 	}
 
 	testClientServerDataPackets(t, context.Background(), serverConfig, clientConfig)
