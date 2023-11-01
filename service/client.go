@@ -477,6 +477,7 @@ func (c *client) relayWgToProxyGeneric(uplink clientNatUplinkGeneric) {
 				zap.String("listenAddress", c.wgListen),
 				zap.Stringer("clientAddress", uplink.clientAddrPort),
 				zap.Stringer("proxyAddress", uplink.proxyAddrPort),
+				zap.Int("swgpPacketLength", swgpPacketLength),
 				zap.Error(err),
 			)
 		}
@@ -575,6 +576,7 @@ func (c *client) relayProxyToWgGeneric(downlink clientNatDownlinkGeneric) {
 				zap.String("listenAddress", c.wgListen),
 				zap.Stringer("clientAddress", downlink.clientAddrPort),
 				zap.Stringer("proxyAddress", downlink.proxyAddrPort),
+				zap.Int("wgPacketLength", wgPacketLength),
 				zap.Error(err),
 			)
 		}
