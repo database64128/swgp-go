@@ -196,7 +196,6 @@ func (s *server) recvFromProxyConnRecvmmsg(ctx context.Context, proxyConn *conn.
 						zap.Error(err),
 					)
 					s.putPacketBuf(packetBuf)
-					s.mu.Unlock()
 					continue
 				}
 

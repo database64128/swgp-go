@@ -198,7 +198,6 @@ func (c *client) recvFromWgConnRecvmmsg(ctx context.Context, wgConn *conn.MmsgRC
 						zap.Error(err),
 					)
 					c.putPacketBuf(packetBuf)
-					c.mu.Unlock()
 					continue
 				}
 
