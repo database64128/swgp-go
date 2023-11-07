@@ -10,6 +10,7 @@ import (
 
 	"github.com/database64128/swgp-go/conn"
 	"github.com/database64128/swgp-go/packet"
+	"github.com/database64128/swgp-go/pprof"
 	"go.uber.org/zap"
 )
 
@@ -121,13 +122,17 @@ func (pc *PerfConfig) CheckAndApplyDefaults() error {
 // Config stores configurations for a typical swgp service.
 // It may be marshaled as or unmarshaled from JSON.
 type Config struct {
-	Servers []ServerConfig `json:"servers"`
-	Clients []ClientConfig `json:"clients"`
+	Servers []ServerConfig    `json:"servers"`
+	Clients []ClientConfig    `json:"clients"`
+	Pprof   pprof.PprofConfig `json:"pprof"`
 }
 
 // Manager initializes the service manager.
 func (sc *Config) Manager(logger *zap.Logger) (*Manager, error) {
 	serviceCount := len(sc.Servers) + len(sc.Clients)
+	if sc.Pprof.Enabled {
+		serviceCount++
+	}
 	if serviceCount == 0 {
 		return nil, errors.New("no services to start")
 	}
@@ -149,6 +154,10 @@ func (sc *Config) Manager(logger *zap.Logger) (*Manager, error) {
 			return nil, fmt.Errorf("failed to create client service %s: %w", sc.Clients[i].Name, err)
 		}
 		services = append(services, c)
+	}
+
+	if sc.Pprof.Enabled {
+		services = append(services, sc.Pprof.NewService(logger))
 	}
 
 	return &Manager{services, logger}, nil

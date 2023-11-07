@@ -40,5 +40,9 @@
             "mainRecvBatchSize": 0,
             "sendChannelCapacity": 0
         }
-    ]
+    ],
+    "pprof": {
+        "enabled": false,
+        "listenAddress": ":8080"
+    }
 }
