@@ -43,7 +43,7 @@ jobs:
         run: go test -v -benchmem -bench . ./...
 
       - name: Upload Binaries
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: swgp-go-${{ github.sha }}-${{ matrix.os }}-x86-64-v3
           path: swgp-go*
