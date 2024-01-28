@@ -119,13 +119,14 @@ func (a Addr) IPPort() netip.AddrPort {
 
 // ResolveIP resolves a domain name string into an IP address.
 //
+// The network must be one of "ip", "ip4" or "ip6".
+// String representations of IP addresses are not supported.
+//
 // This function always returns the first IP address returned by the resolver,
 // because the resolver takes care of sorting the IP addresses by address family
 // availability and preference.
-//
-// String representations of IP addresses are not supported.
-func ResolveIP(ctx context.Context, host string) (netip.Addr, error) {
-	ips, err := net.DefaultResolver.LookupNetIP(ctx, "ip", host)
+func ResolveIP(ctx context.Context, network, host string) (netip.Addr, error) {
+	ips, err := net.DefaultResolver.LookupNetIP(ctx, network, host)
 	if err != nil {
 		return netip.Addr{}, err
 	}
@@ -134,13 +135,15 @@ func ResolveIP(ctx context.Context, host string) (netip.Addr, error) {
 
 // ResolveIP returns the IP address itself or the resolved IP address of the domain name.
 //
+// The network is only used for domain name resolution and must be one of "ip", "ip4" or "ip6".
+//
 // If the address is zero value, this method panics.
-func (a Addr) ResolveIP(ctx context.Context) (netip.Addr, error) {
+func (a Addr) ResolveIP(ctx context.Context, network string) (netip.Addr, error) {
 	switch a.af {
 	case addressFamilyNetip:
 		return a.ip(), nil
 	case addressFamilyDomain:
-		return ResolveIP(ctx, a.domain())
+		return ResolveIP(ctx, network, a.domain())
 	default:
 		panic("ResolveIP() called on zero value")
 	}
@@ -149,13 +152,15 @@ func (a Addr) ResolveIP(ctx context.Context) (netip.Addr, error) {
 // ResolveIPPort returns the IP address itself or the resolved IP address of the domain name
 // and the port number as a [netip.AddrPort].
 //
+// The network is only used for domain name resolution and must be one of "ip", "ip4" or "ip6".
+//
 // If the address is zero value, this method panics.
-func (a Addr) ResolveIPPort(ctx context.Context) (netip.AddrPort, error) {
+func (a Addr) ResolveIPPort(ctx context.Context, network string) (netip.AddrPort, error) {
 	switch a.af {
 	case addressFamilyNetip:
 		return a.ipPort(), nil
 	case addressFamilyDomain:
-		ip, err := ResolveIP(ctx, a.domain())
+		ip, err := ResolveIP(ctx, network, a.domain())
 		if err != nil {
 			return netip.AddrPort{}, err
 		}

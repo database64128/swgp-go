@@ -26,7 +26,8 @@ type ClientConfig struct {
 	WgListenAddress        string    `json:"wgListen"`
 	WgFwmark               int       `json:"wgFwmark"`
 	WgTrafficClass         int       `json:"wgTrafficClass"`
-	ProxyEndpoint          conn.Addr `json:"proxyEndpoint"`
+	ProxyEndpointNetwork   string    `json:"proxyEndpointNetwork"`
+	ProxyEndpointAddress   conn.Addr `json:"proxyEndpoint"`
 	ProxyConnListenNetwork string    `json:"proxyConnListenNetwork"`
 	ProxyConnListenAddress string    `json:"proxyConnListenAddress"`
 	ProxyMode              string    `json:"proxyMode"`
@@ -83,6 +84,7 @@ type client struct {
 	maxProxyPacketSizev6   int
 	wgTunnelMTU            int
 	wgTunnelMTUv6          int
+	proxyNetwork           string
 	proxyAddr              conn.Addr
 	handler                packet.Handler
 	logger                 *zap.Logger
@@ -114,6 +116,15 @@ func (cc *ClientConfig) Client(logger *zap.Logger, listenConfigCache conn.Listen
 		return nil, fmt.Errorf("invalid wgListenNetwork: %s", cc.WgListenNetwork)
 	}
 
+	// Check ProxyEndpointNetwork.
+	switch cc.ProxyEndpointNetwork {
+	case "":
+		cc.ProxyEndpointNetwork = "ip"
+	case "ip", "ip4", "ip6":
+	default:
+		return nil, fmt.Errorf("invalid proxyEndpointNetwork: %s", cc.ProxyEndpointNetwork)
+	}
+
 	// Check ProxyConnListenNetwork.
 	switch cc.ProxyConnListenNetwork {
 	case "":
@@ -141,8 +152,8 @@ func (cc *ClientConfig) Client(logger *zap.Logger, listenConfigCache conn.Listen
 	wgTunnelMTUv6 := getWgTunnelMTUForHandler(handler, maxProxyPacketSizev6)
 
 	// Use IPv6 values if the proxy endpoint is an IPv6 address.
-	if cc.ProxyEndpoint.IsIP() {
-		if ip := cc.ProxyEndpoint.IP(); !ip.Is4() && !ip.Is4In6() {
+	if cc.ProxyEndpointAddress.IsIP() {
+		if ip := cc.ProxyEndpointAddress.IP(); !ip.Is4() && !ip.Is4In6() {
 			maxProxyPacketSize = maxProxyPacketSizev6
 			wgTunnelMTU = wgTunnelMTUv6
 		}
@@ -161,7 +172,8 @@ func (cc *ClientConfig) Client(logger *zap.Logger, listenConfigCache conn.Listen
 		maxProxyPacketSizev6:   maxProxyPacketSizev6,
 		wgTunnelMTU:            wgTunnelMTU,
 		wgTunnelMTUv6:          wgTunnelMTUv6,
-		proxyAddr:              cc.ProxyEndpoint,
+		proxyNetwork:           cc.ProxyEndpointNetwork,
+		proxyAddr:              cc.ProxyEndpointAddress,
 		handler:                handler,
 		logger:                 logger,
 		wgConnListenConfig: listenConfigCache.Get(conn.ListenerSocketOptions{
@@ -342,7 +354,7 @@ func (c *client) recvFromWgConnGeneric(ctx context.Context, wgConn *net.UDPConn)
 					c.wg.Done()
 				}()
 
-				proxyAddrPort, err := c.proxyAddr.ResolveIPPort(ctx)
+				proxyAddrPort, err := c.proxyAddr.ResolveIPPort(ctx, c.proxyNetwork)
 				if err != nil {
 					c.logger.Warn("Failed to resolve proxy address for new session",
 						zap.String("client", c.name),

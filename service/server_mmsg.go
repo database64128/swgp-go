@@ -240,7 +240,7 @@ func (s *server) recvFromProxyConnRecvmmsg(ctx context.Context, proxyConn *conn.
 						s.wg.Done()
 					}()
 
-					wgAddrPort, err := s.wgAddr.ResolveIPPort(ctx)
+					wgAddrPort, err := s.wgAddr.ResolveIPPort(ctx, s.wgNetwork)
 					if err != nil {
 						s.logger.Warn("Failed to resolve wgAddr",
 							zap.String("server", s.name),

@@ -28,7 +28,8 @@ type ServerConfig struct {
 	ProxyPSK            []byte    `json:"proxyPSK"`
 	ProxyFwmark         int       `json:"proxyFwmark"`
 	ProxyTrafficClass   int       `json:"proxyTrafficClass"`
-	WgEndpoint          conn.Addr `json:"wgEndpoint"`
+	WgEndpointNetwork   string    `json:"wgEndpointNetwork"`
+	WgEndpointAddress   conn.Addr `json:"wgEndpoint"`
 	WgConnListenNetwork string    `json:"wgConnListenNetwork"`
 	WgConnListenAddress string    `json:"wgConnListenAddress"`
 	WgFwmark            int       `json:"wgFwmark"`
@@ -83,6 +84,7 @@ type server struct {
 	maxProxyPacketSizev6  int
 	wgTunnelMTUv4         int
 	wgTunnelMTUv6         int
+	wgNetwork             string
 	wgAddr                conn.Addr
 	handler               packet.Handler
 	logger                *zap.Logger
@@ -112,6 +114,15 @@ func (sc *ServerConfig) Server(logger *zap.Logger, listenConfigCache conn.Listen
 	case "udp", "udp4", "udp6":
 	default:
 		return nil, fmt.Errorf("invalid proxyListenNetwork: %s", sc.ProxyListenNetwork)
+	}
+
+	// Check WgEndpointNetwork.
+	switch sc.WgEndpointNetwork {
+	case "":
+		sc.WgEndpointNetwork = "ip"
+	case "ip", "ip4", "ip6":
+	default:
+		return nil, fmt.Errorf("invalid wgEndpointNetwork: %s", sc.WgEndpointNetwork)
 	}
 
 	// Check WgConnListenNetwork.
@@ -153,7 +164,8 @@ func (sc *ServerConfig) Server(logger *zap.Logger, listenConfigCache conn.Listen
 		maxProxyPacketSizev6: maxProxyPacketSizev6,
 		wgTunnelMTUv4:        wgTunnelMTUv4,
 		wgTunnelMTUv6:        wgTunnelMTUv6,
-		wgAddr:               sc.WgEndpoint,
+		wgNetwork:            sc.WgEndpointNetwork,
+		wgAddr:               sc.WgEndpointAddress,
 		handler:              handler,
 		logger:               logger,
 		proxyConnListenConfig: listenConfigCache.Get(conn.ListenerSocketOptions{
@@ -332,7 +344,7 @@ func (s *server) recvFromProxyConnGeneric(ctx context.Context, proxyConn *net.UD
 					s.wg.Done()
 				}()
 
-				wgAddrPort, err := s.wgAddr.ResolveIPPort(ctx)
+				wgAddrPort, err := s.wgAddr.ResolveIPPort(ctx, s.wgNetwork)
 				if err != nil {
 					s.logger.Warn("Failed to resolve wg address for new session",
 						zap.String("server", s.name),

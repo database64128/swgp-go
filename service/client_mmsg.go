@@ -242,7 +242,7 @@ func (c *client) recvFromWgConnRecvmmsg(ctx context.Context, wgConn *conn.MmsgRC
 						c.wg.Done()
 					}()
 
-					proxyAddrPort, err := c.proxyAddr.ResolveIPPort(ctx)
+					proxyAddrPort, err := c.proxyAddr.ResolveIPPort(ctx, c.proxyNetwork)
 					if err != nil {
 						c.logger.Warn("Failed to resolve proxy address for new session",
 							zap.String("client", c.name),

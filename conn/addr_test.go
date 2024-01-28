@@ -146,7 +146,7 @@ func TestAddrIPPort(t *testing.T) {
 func TestAddrResolveIP(t *testing.T) {
 	ctx := context.Background()
 
-	ip, err := addrIP.ResolveIP(ctx)
+	ip, err := addrIP.ResolveIP(ctx, "ip")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -154,7 +154,7 @@ func TestAddrResolveIP(t *testing.T) {
 		t.Errorf("addrIP.ResolveIP() returned %s, expected %s.", ip, addrIPAddr)
 	}
 
-	ip, err = addrDomain.ResolveIP(ctx)
+	ip, err = addrDomain.ResolveIP(ctx, "ip")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,13 +162,13 @@ func TestAddrResolveIP(t *testing.T) {
 		t.Error("addrDomain.ResolveIP() returned invalid IP address.")
 	}
 
-	assertPanic(t, func() { addrZero.ResolveIP(ctx) })
+	assertPanic(t, func() { addrZero.ResolveIP(ctx, "ip") })
 }
 
 func TestAddrResolveIPPort(t *testing.T) {
 	ctx := context.Background()
 
-	ipPort, err := addrIP.ResolveIPPort(ctx)
+	ipPort, err := addrIP.ResolveIPPort(ctx, "ip")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +176,7 @@ func TestAddrResolveIPPort(t *testing.T) {
 		t.Errorf("addrIP.ResolveIPPort() returned %s, expected %s.", ipPort, addrIPAddrPort)
 	}
 
-	ipPort, err = addrDomain.ResolveIPPort(ctx)
+	ipPort, err = addrDomain.ResolveIPPort(ctx, "ip")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +187,7 @@ func TestAddrResolveIPPort(t *testing.T) {
 		t.Errorf("addrDomain.ResolveIPPort(false) returned %s, expected port %d.", ipPort, addrDomainPort)
 	}
 
-	assertPanic(t, func() { addrZero.ResolveIPPort(ctx) })
+	assertPanic(t, func() { addrZero.ResolveIPPort(ctx, "ip") })
 }
 
 func TestAddrHost(t *testing.T) {
