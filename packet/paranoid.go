@@ -6,8 +6,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	"math"
+	mrand "math/rand/v2"
 
-	"github.com/database64128/swgp-go/fastrand"
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
@@ -55,7 +55,7 @@ func (h *paranoidHandler) EncryptZeroCopy(buf []byte, wgPacketStart, wgPacketLen
 	paddingHeadroom := rearHeadroom - chacha20poly1305.Overhead
 	var paddingLen int
 	if paddingHeadroom > 0 {
-		paddingLen = 1 + int(fastrand.Uint32n(uint32(paddingHeadroom)))
+		paddingLen = 1 + mrand.IntN(paddingHeadroom)
 	}
 
 	// Calculate offsets.

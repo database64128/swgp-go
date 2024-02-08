@@ -518,7 +518,7 @@ func (c *client) relayProxyToWgSendmmsg(downlink clientNatDownlinkMmsg) {
 	rmsgvec := make([]conn.Mmsghdr, c.relayBatchSize)
 	smsgvec := make([]conn.Mmsghdr, c.relayBatchSize)
 
-	for i := 0; i < c.relayBatchSize; i++ {
+	for i := range c.relayBatchSize {
 		packetBuf := make([]byte, c.maxProxyPacketSize)
 		bufvec[i] = packetBuf
 

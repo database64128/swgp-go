@@ -61,7 +61,7 @@ func testZeroOverheadVerifyDataPacket(t *testing.T, wgPacket, swgpPacket, decryp
 func TestZeroOverheadHandleLessThan16Bytes(t *testing.T) {
 	h := testNewZeroOverheadHandler(t)
 
-	for i := 0; i < 16; i++ {
+	for i := range 16 {
 		testHandler(t, WireGuardMessageTypeHandshakeInitiation, i, 1, 1, h, nil, nil, testZeroOverheadVerifyUnchangedPacket)
 		testHandler(t, WireGuardMessageTypeHandshakeResponse, i, 1, 1, h, nil, nil, testZeroOverheadVerifyUnchangedPacket)
 		testHandler(t, WireGuardMessageTypeHandshakeCookieReply, i, 1, 1, h, nil, nil, testZeroOverheadVerifyUnchangedPacket)
@@ -72,7 +72,7 @@ func TestZeroOverheadHandleLessThan16Bytes(t *testing.T) {
 func TestZeroOverheadHandleEncryptErrPacketSize(t *testing.T) {
 	h := testNewZeroOverheadHandler(t)
 
-	for i := 0; i < zeroOverheadHandshakePacketMinimumOverhead; i++ {
+	for i := range zeroOverheadHandshakePacketMinimumOverhead {
 		testHandler(t, WireGuardMessageTypeHandshakeInitiation, WireGuardMessageLengthHandshakeInitiation, 1, i, h, ErrPacketSize, nil, testZeroOverheadVerifyUnchangedPacket)
 		testHandler(t, WireGuardMessageTypeHandshakeResponse, WireGuardMessageLengthHandshakeResponse, 1, i, h, ErrPacketSize, nil, testZeroOverheadVerifyUnchangedPacket)
 		testHandler(t, WireGuardMessageTypeHandshakeCookieReply, WireGuardMessageLengthHandshakeCookieReply, 1, i, h, ErrPacketSize, nil, testZeroOverheadVerifyUnchangedPacket)

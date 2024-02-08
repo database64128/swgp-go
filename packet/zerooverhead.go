@@ -6,8 +6,8 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"fmt"
+	mrand "math/rand/v2"
 
-	"github.com/database64128/swgp-go/fastrand"
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
@@ -85,7 +85,7 @@ func (h *zeroOverheadHandler) EncryptZeroCopy(buf []byte, wgPacketStart, wgPacke
 
 	var paddingLen int
 	if paddingHeadroom > 0 {
-		paddingLen = 1 + int(fastrand.Uint32n(uint32(paddingHeadroom)))
+		paddingLen = 1 + mrand.IntN(paddingHeadroom)
 	}
 
 	swgpPacketLength += paddingLen + zeroOverheadHandshakePacketMinimumOverhead
