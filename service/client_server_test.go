@@ -11,20 +11,68 @@ import (
 	"github.com/database64128/swgp-go/conn"
 	"github.com/database64128/swgp-go/packet"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest"
 )
 
-var logger *zap.Logger
+var cases = []struct {
+	name         string
+	serverConfig ServerConfig
+	clientConfig ClientConfig
+}{
+	{
+		name: "ZeroOverhead",
+		serverConfig: ServerConfig{
+			Name:               "wg0",
+			ProxyListenAddress: ":20200",
+			ProxyMode:          "zero-overhead",
+			WgEndpointAddress:  conn.AddrFromIPPort(netip.AddrPortFrom(netip.IPv6Loopback(), 20201)),
+			MTU:                1500,
+		},
+		clientConfig: ClientConfig{
+			Name:                 "wg0",
+			WgListenAddress:      ":20202",
+			ProxyEndpointAddress: conn.AddrFromIPPort(netip.AddrPortFrom(netip.IPv6Loopback(), 20200)),
+			ProxyMode:            "zero-overhead",
+			MTU:                  1500,
+		},
+	},
+	{
+		name: "Paranoid",
+		serverConfig: ServerConfig{
+			Name:               "wg0",
+			ProxyListenAddress: ":20200",
+			ProxyMode:          "paranoid",
+			WgEndpointAddress:  conn.AddrFromIPPort(netip.AddrPortFrom(netip.IPv6Loopback(), 20201)),
+			MTU:                1500,
+		},
+		clientConfig: ClientConfig{
+			Name:                 "wg0",
+			WgListenAddress:      ":20202",
+			ProxyEndpointAddress: conn.AddrFromIPPort(netip.AddrPortFrom(netip.IPv6Loopback(), 20200)),
+			ProxyMode:            "paranoid",
+			MTU:                  1500,
+		},
+	},
+}
 
-func generateTestPSK(t *testing.T) []byte {
+func init() {
+	for i := range cases {
+		psk := generateTestPSK()
+		cases[i].serverConfig.ProxyPSK = psk
+		cases[i].clientConfig.ProxyPSK = psk
+	}
+}
+
+func generateTestPSK() []byte {
 	psk := make([]byte, 32)
 	_, err := rand.Read(psk)
 	if err != nil {
-		t.Fatal(err)
+		panic(err)
 	}
 	return psk
 }
 
-func testClientServerHandshake(t *testing.T, ctx context.Context, serverConfig ServerConfig, clientConfig ClientConfig) {
+func testClientServerHandshake(t *testing.T, ctx context.Context, logger *zap.Logger, serverConfig ServerConfig, clientConfig ClientConfig) {
 	sc := Config{
 		Servers: []ServerConfig{serverConfig},
 		Clients: []ClientConfig{clientConfig},
@@ -62,10 +110,13 @@ func testClientServerHandshake(t *testing.T, ctx context.Context, serverConfig S
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer clientConn.Close()
+
 	serverConn, err := conn.DefaultUDPClientListenConfig.ListenUDP(ctx, "udp", serverConfig.WgEndpointAddress.String())
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer serverConn.Close()
 
 	// Client sends handshake initiation.
 	_, err = clientConn.Write(handshakeInitiationPacket)
@@ -102,55 +153,19 @@ func testClientServerHandshake(t *testing.T, ctx context.Context, serverConfig S
 	}
 }
 
-func TestClientServerHandshakeZeroOverhead(t *testing.T) {
-	psk := generateTestPSK(t)
+func TestClientServerHandshake(t *testing.T) {
+	ctx := context.Background()
+	logger := zaptest.NewLogger(t)
+	defer logger.Sync()
 
-	serverConfig := ServerConfig{
-		Name:               "wg0",
-		ProxyListenAddress: ":20220",
-		ProxyMode:          "zero-overhead",
-		ProxyPSK:           psk,
-		WgEndpointAddress:  conn.AddrFromIPPort(netip.AddrPortFrom(netip.IPv6Loopback(), 20221)),
-		MTU:                1500,
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			testClientServerHandshake(t, ctx, logger, c.serverConfig, c.clientConfig)
+		})
 	}
-
-	clientConfig := ClientConfig{
-		Name:                 "wg0",
-		WgListenAddress:      ":20222",
-		ProxyEndpointAddress: conn.AddrFromIPPort(netip.AddrPortFrom(netip.IPv6Loopback(), 20220)),
-		ProxyMode:            "zero-overhead",
-		ProxyPSK:             psk,
-		MTU:                  1500,
-	}
-
-	testClientServerHandshake(t, context.Background(), serverConfig, clientConfig)
 }
 
-func TestClientServerHandshakeParanoid(t *testing.T) {
-	psk := generateTestPSK(t)
-
-	serverConfig := ServerConfig{
-		Name:               "wg0",
-		ProxyListenAddress: ":20223",
-		ProxyMode:          "paranoid",
-		ProxyPSK:           psk,
-		WgEndpointAddress:  conn.AddrFromIPPort(netip.AddrPortFrom(netip.IPv6Loopback(), 20224)),
-		MTU:                1500,
-	}
-
-	clientConfig := ClientConfig{
-		Name:                 "wg0",
-		WgListenAddress:      ":20225",
-		ProxyEndpointAddress: conn.AddrFromIPPort(netip.AddrPortFrom(netip.IPv6Loopback(), 20223)),
-		ProxyMode:            "paranoid",
-		ProxyPSK:             psk,
-		MTU:                  1500,
-	}
-
-	testClientServerHandshake(t, context.Background(), serverConfig, clientConfig)
-}
-
-func testClientServerDataPackets(t *testing.T, ctx context.Context, serverConfig ServerConfig, clientConfig ClientConfig) {
+func testClientServerDataPackets(t *testing.T, ctx context.Context, logger *zap.Logger, serverConfig ServerConfig, clientConfig ClientConfig) {
 	sc := Config{
 		Servers: []ServerConfig{serverConfig},
 		Clients: []ClientConfig{clientConfig},
@@ -185,10 +200,13 @@ func testClientServerDataPackets(t *testing.T, ctx context.Context, serverConfig
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer clientConn.Close()
+
 	serverConn, err := conn.DefaultUDPClientListenConfig.ListenUDP(ctx, "udp", serverConfig.WgEndpointAddress.String())
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer serverConn.Close()
 
 	// Client sends big data packet.
 	_, err = clientConn.Write(bigDataPacket)
@@ -237,61 +255,14 @@ func testClientServerDataPackets(t *testing.T, ctx context.Context, serverConfig
 	}
 }
 
-func TestClientServerDataPacketsZeroOverhead(t *testing.T) {
-	psk := generateTestPSK(t)
-
-	serverConfig := ServerConfig{
-		Name:               "wg0",
-		ProxyListenAddress: ":20230",
-		ProxyMode:          "zero-overhead",
-		ProxyPSK:           psk,
-		WgEndpointAddress:  conn.AddrFromIPPort(netip.AddrPortFrom(netip.IPv6Loopback(), 20231)),
-		MTU:                1500,
-	}
-
-	clientConfig := ClientConfig{
-		Name:                 "wg0",
-		WgListenAddress:      ":20232",
-		ProxyEndpointAddress: conn.AddrFromIPPort(netip.AddrPortFrom(netip.IPv6Loopback(), 20230)),
-		ProxyMode:            "zero-overhead",
-		ProxyPSK:             psk,
-		MTU:                  1500,
-	}
-
-	testClientServerDataPackets(t, context.Background(), serverConfig, clientConfig)
-}
-
-func TestClientServerDataPacketsParanoid(t *testing.T) {
-	psk := generateTestPSK(t)
-
-	serverConfig := ServerConfig{
-		Name:               "wg0",
-		ProxyListenAddress: ":20233",
-		ProxyMode:          "paranoid",
-		ProxyPSK:           psk,
-		WgEndpointAddress:  conn.AddrFromIPPort(netip.AddrPortFrom(netip.IPv6Loopback(), 20234)),
-		MTU:                1500,
-	}
-
-	clientConfig := ClientConfig{
-		Name:                 "wg0",
-		WgListenAddress:      ":20235",
-		ProxyEndpointAddress: conn.AddrFromIPPort(netip.AddrPortFrom(netip.IPv6Loopback(), 20233)),
-		ProxyMode:            "paranoid",
-		ProxyPSK:             psk,
-		MTU:                  1500,
-	}
-
-	testClientServerDataPackets(t, context.Background(), serverConfig, clientConfig)
-}
-
-func TestMain(m *testing.M) {
-	var err error
-	logger, err = zap.NewDevelopment()
-	if err != nil {
-		panic(err)
-	}
+func TestClientServerDataPackets(t *testing.T) {
+	ctx := context.Background()
+	logger := zaptest.NewLogger(t)
 	defer logger.Sync()
 
-	m.Run()
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			testClientServerDataPackets(t, ctx, logger, c.serverConfig, c.clientConfig)
+		})
+	}
 }
