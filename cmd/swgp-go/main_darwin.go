@@ -4,6 +4,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"github.com/database64128/swgp-go/service"
 	"go.uber.org/zap"
 	"golang.org/x/net/route"
@@ -13,33 +14,31 @@ import (
 	"time"
 )
 
-func discoverGateway() (ip net.IP, err error) {
+func discoverGateway() (net.IP, error) {
 	rib, err := route.FetchRIB(syscall.AF_INET, syscall.NET_RT_DUMP, 0)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to fetch RIB: %v", err)
 	}
 
 	msgs, err := route.ParseRIB(syscall.NET_RT_DUMP, rib)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to parse RIB: %v", err)
 	}
 
 	for _, m := range msgs {
-		switch m := m.(type) {
-		case *route.RouteMessage:
-			var ip net.IP
-			switch sa := m.Addrs[syscall.RTAX_GATEWAY].(type) {
+		if rm, ok := m.(*route.RouteMessage); ok {
+			addr := rm.Addrs[syscall.RTAX_GATEWAY]
+			switch sa := addr.(type) {
 			case *route.Inet4Addr:
-				ip = net.IPv4(sa.IP[0], sa.IP[1], sa.IP[2], sa.IP[3])
-				return ip, nil
+				return net.IPv4(sa.IP[0], sa.IP[1], sa.IP[2], sa.IP[3]), nil
 			case *route.Inet6Addr:
-				ip = make(net.IP, net.IPv6len)
+				ip := make(net.IP, net.IPv6len)
 				copy(ip, sa.IP[:])
 				return ip, nil
 			}
 		}
 	}
-	return nil, errors.New("no ip found")
+	return nil, errors.New("no default gateway found")
 }
 
 func executeCommands(logger *zap.Logger, commands []string) error {
@@ -55,17 +54,29 @@ func executeCommands(logger *zap.Logger, commands []string) error {
 	return nil
 }
 
-func addGatewayRoute(cfg *service.Config, logger *zap.Logger, gatewayIp net.IP, err error) {
+func addGatewayRoute(cfg *service.Config, logger *zap.Logger, gatewayIP net.IP) error {
+	logger.Info("Current gateway route:" + gatewayIP.String())
 	for _, client := range cfg.Clients {
-		commands := []string{
-			"sudo route delete " + client.ProxyEndpointAddress.IP().String(),
-			"sudo route add " + client.ProxyEndpointAddress.IP().String() + "/32 " + gatewayIp.String(),
+		var commands []string
+		if gatewayIP.To4() != nil {
+			// IPv4 gateway
+			commands = []string{
+				"sudo route delete " + client.ProxyEndpointAddress.IP().String(),
+				"sudo route add " + client.ProxyEndpointAddress.IP().String() + "/32 " + gatewayIP.String(),
+			}
+		} else {
+			// IPv6 gateway
+			commands = []string{
+				"sudo route delete -inet6 " + client.ProxyEndpointAddress.IP().String(),
+				"sudo route add -inet6 " + client.ProxyEndpointAddress.IP().String() + "/128 " + gatewayIP.String(),
+			}
 		}
-		err = executeCommands(logger, commands)
+		err := executeCommands(logger, commands)
 		if err != nil {
-			logger.Error("Failed to recreate route:", zap.Error(err))
+			return fmt.Errorf("failed to recreate route for client %s: %v", client.ProxyEndpointAddress.IP().String(), err)
 		}
 	}
+	return nil
 }
 
 func deleteGatewayRoute(cfg *service.Config, logger *zap.Logger) {
@@ -99,16 +110,16 @@ func (g *gatewayMonitor) watch() {
 			if !g.ip.Equal(ip) {
 				g.logger.Info("Gateway address changed, reconfiguring routes")
 				deleteGatewayRoute(g.cfg, g.logger)
-				addGatewayRoute(g.cfg, g.logger, ip, err)
+				err = addGatewayRoute(g.cfg, g.logger, ip)
+				if err != nil {
+					g.logger.Error("Failed to reconfigure routes:", zap.Error(err))
+				}
 
 				// update ip
 				g.ip = ip
 			}
 			// sleep for 10 seconds
 			time.Sleep(10 * time.Second)
-
-			// show current gateway route
-			g.logger.Info("Current gateway route:" + ip.String())
 		}
 	}
 }
@@ -119,12 +130,15 @@ func initHook(cfg *service.Config, logger *zap.Logger) {
 	if err != nil {
 		logger.Fatal("Failed to get Gateway address:", zap.Error(err))
 	}
-	addGatewayRoute(cfg, logger, gatewayIp, err)
+	err = addGatewayRoute(cfg, logger, gatewayIp)
+	if err != nil {
+		logger.Fatal("Falied to add gateway route:", zap.Error(err))
+	}
 	macGateway.ip = gatewayIp
 	macGateway.logger = logger
 	macGateway.cfg = cfg
 	macGateway.cancelled = make(chan struct{})
-	go macGateway.watch()
+	//go macGateway.watch()
 }
 
 func cleanupHook(cfg *service.Config, logger *zap.Logger) {
