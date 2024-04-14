@@ -99,10 +99,13 @@ func main() {
 		sig := <-sigCh
 		logger.Info("Received exit signal", slog.Any("signal", sig))
 		signal.Stop(sigCh)
+		cleanupHook(&sc, logger)
 		cancel()
 	}()
 
+	initHook(&sc, logger)
 	if err = m.Run(ctx); err != nil {
+		logger.Error("Failed to start services", tslog.Err(err))
 		os.Exit(1)
 	}
 }
