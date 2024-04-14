@@ -68,14 +68,14 @@ func addGatewayRoute(cfg *service.Config, logger *zap.Logger, gatewayIP net.IP) 
 		if gatewayIP.To4() != nil {
 			// IPv4 gateway
 			commands = []string{
-				"sudo route delete " + client.ProxyEndpointAddress.IP().String(),
-				"sudo route add " + client.ProxyEndpointAddress.IP().String() + "/32 " + gatewayIP.String(),
+				"sudo route -n delete -net " + client.ProxyEndpointAddress.IP().String(),
+				"sudo route -n add -net " + client.ProxyEndpointAddress.IP().String() + "/32 -gateway " + gatewayIP.String(),
 			}
 		} else {
 			// IPv6 gateway
 			commands = []string{
-				"sudo route delete -inet6 " + client.ProxyEndpointAddress.IP().String(),
-				"sudo route add -inet6 " + client.ProxyEndpointAddress.IP().String() + "/128 " + gatewayIP.String(),
+				"sudo route -n delete -inet6 -net " + client.ProxyEndpointAddress.IP().String(),
+				"sudo route -n add -inet6 -net " + client.ProxyEndpointAddress.IP().String() + "/128 -gateway " + gatewayIP.String(),
 			}
 		}
 		err := executeCommands(logger, commands)
@@ -88,7 +88,7 @@ func addGatewayRoute(cfg *service.Config, logger *zap.Logger, gatewayIP net.IP) 
 
 func deleteGatewayRoute(cfg *service.Config, logger *zap.Logger) {
 	for _, client := range cfg.Clients {
-		err := executeCommands(logger, []string{"sudo route delete " + client.ProxyEndpointAddress.IP().String()})
+		err := executeCommands(logger, []string{"sudo route -n delete -net " + client.ProxyEndpointAddress.IP().String()})
 		if err != nil {
 			logger.Error("Failed to delete route:", zap.Error(err))
 		}
@@ -116,7 +116,6 @@ func (g *gatewayMonitor) watch() {
 			}
 			if !g.ip.Equal(ip) {
 				g.logger.Info("Gateway address changed, reconfiguring routes")
-				deleteGatewayRoute(g.cfg, g.logger)
 				err = addGatewayRoute(g.cfg, g.logger, ip)
 				if err != nil {
 					g.logger.Error("Failed to reconfigure routes:", zap.Error(err))
