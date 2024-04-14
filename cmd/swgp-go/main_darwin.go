@@ -25,18 +25,25 @@ func discoverGateway() (net.IP, error) {
 		return nil, fmt.Errorf("failed to parse RIB: %v", err)
 	}
 
+	var ips []net.IP
+
 	for _, m := range msgs {
 		if rm, ok := m.(*route.RouteMessage); ok {
-			addr := rm.Addrs[syscall.RTAX_GATEWAY]
-			switch sa := addr.(type) {
-			case *route.Inet4Addr:
-				return net.IPv4(sa.IP[0], sa.IP[1], sa.IP[2], sa.IP[3]), nil
-			case *route.Inet6Addr:
-				ip := make(net.IP, net.IPv6len)
-				copy(ip, sa.IP[:])
-				return ip, nil
+			if rm.Flags&syscall.RTF_GATEWAY != 0 && rm.Flags&syscall.RTF_UP != 0 {
+				addr := rm.Addrs[syscall.RTAX_GATEWAY]
+				switch sa := addr.(type) {
+				case *route.Inet4Addr:
+					ips = append(ips, net.IPv4(sa.IP[0], sa.IP[1], sa.IP[2], sa.IP[3]))
+				case *route.Inet6Addr:
+					ip := make(net.IP, net.IPv6len)
+					copy(ip, sa.IP[:])
+					ips = append(ips, ip)
+				}
 			}
 		}
+	}
+	if len(ips) > 0 {
+		return ips[0], nil
 	}
 	return nil, errors.New("no default gateway found")
 }
@@ -118,6 +125,7 @@ func (g *gatewayMonitor) watch() {
 				// update ip
 				g.ip = ip
 			}
+
 			// sleep for 10 seconds
 			time.Sleep(10 * time.Second)
 		}
@@ -138,7 +146,7 @@ func initHook(cfg *service.Config, logger *zap.Logger) {
 	macGateway.logger = logger
 	macGateway.cfg = cfg
 	macGateway.cancelled = make(chan struct{})
-	//go macGateway.watch()
+	go macGateway.watch()
 }
 
 func cleanupHook(cfg *service.Config, logger *zap.Logger) {
