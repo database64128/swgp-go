@@ -97,9 +97,11 @@ func main() {
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 		sig := <-sigCh
 		logger.Info("Received exit signal", zap.Stringer("signal", sig))
+		cleanupHook(&sc, logger)
 		cancel()
 	}()
 
+	initHook(&sc, logger)
 	if err = m.Start(ctx); err != nil {
 		logger.Fatal("Failed to start services",
 			zap.String("confPath", confPath),
