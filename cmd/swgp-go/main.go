@@ -33,7 +33,7 @@ func main() {
 	flag.Parse()
 
 	if confPath == "" {
-		fmt.Println("Missing -confPath <path>.")
+		fmt.Fprintln(os.Stderr, "Missing -confPath <path>.")
 		flag.Usage()
 		os.Exit(1)
 	}
@@ -54,7 +54,7 @@ func main() {
 		zc = zap.NewDevelopmentConfig()
 	default:
 		if err := jsonhelper.LoadAndDecodeDisallowUnknownFields(zapConf, &zc); err != nil {
-			fmt.Println(err)
+			fmt.Fprintln(os.Stderr, "Failed to load zap logger config:", err)
 			os.Exit(1)
 		}
 	}
@@ -65,7 +65,7 @@ func main() {
 
 	logger, err := zc.Build()
 	if err != nil {
-		fmt.Println(err)
+		fmt.Fprintln(os.Stderr, "Failed to build logger:", err)
 		os.Exit(1)
 	}
 	defer logger.Sync()
