@@ -22,9 +22,6 @@ jobs:
         os: [ubuntu-latest, windows-latest, macos-latest]
       fail-fast: false
     runs-on: ${{ matrix.os }}
-    defaults:
-      run:
-        shell: bash
 
     steps:
       - uses: actions/checkout@v4
@@ -35,15 +32,13 @@ jobs:
           go-version-file: go.mod
 
       - name: Build
-        run: |
-          export GOAMD64=v3
-          go build -v -trimpath -ldflags '-s -w' ./cmd/swgp-go
+        run: go build -v -trimpath -ldflags '-s -w' ./cmd/swgp-go
 
       - name: Test
-        run: go test -v -benchmem -bench . ./...
+        run: go test -v ./...
 
       - name: Upload Binaries
         uses: actions/upload-artifact@v4
         with:
-          name: swgp-go-${{ github.sha }}-${{ matrix.os }}-x86-64-v3
+          name: swgp-go-${{ github.sha }}-${{ matrix.os }}-x86-64
           path: swgp-go*
