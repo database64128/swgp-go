@@ -82,4 +82,4 @@ jobs:
           file: swgp-go-*.tar.zst
           tag: ${{ github.ref }}
           file_glob: true
-          prerelease: true
+          draft: true
