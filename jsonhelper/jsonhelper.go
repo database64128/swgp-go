@@ -5,7 +5,8 @@ import (
 	"os"
 )
 
-func LoadAndDecodeDisallowUnknownFields(path string, v any) error {
+// OpenAndDecodeDisallowUnknownFields opens the file at path and decodes it into v, disallowing unknown fields.
+func OpenAndDecodeDisallowUnknownFields(path string, v any) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return err

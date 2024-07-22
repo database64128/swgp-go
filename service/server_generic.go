@@ -2,6 +2,6 @@
 
 package service
 
-func (s *server) setStartFunc(batchMode string) {
+func (s *server) setStartFunc(_ string) {
 	s.startFunc = s.startGeneric
 }

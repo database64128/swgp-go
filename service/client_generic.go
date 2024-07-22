@@ -2,6 +2,6 @@
 
 package service
 
-func (c *client) setStartFunc(batchMode string) {
+func (c *client) setStartFunc(_ string) {
 	c.startFunc = c.startGeneric
 }
