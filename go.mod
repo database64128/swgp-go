@@ -1,6 +1,6 @@
 module github.com/database64128/swgp-go
 
-go 1.22.2
+go 1.23.0
 
 require (
 	go.uber.org/zap v1.27.0
