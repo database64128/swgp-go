@@ -5,6 +5,7 @@ import (
 	"net/netip"
 	"unsafe"
 
+	"github.com/database64128/netx-go"
 	"golang.org/x/sys/windows"
 )
 
@@ -43,8 +44,9 @@ func AddrPortToSockaddrInet6(addrPort netip.AddrPort) windows.RawSockaddrInet6 {
 	addr := addrPort.Addr()
 	port := addrPort.Port()
 	rsa6 := windows.RawSockaddrInet6{
-		Family: windows.AF_INET6,
-		Addr:   addr.As16(),
+		Family:   windows.AF_INET6,
+		Addr:     addr.As16(),
+		Scope_id: uint32(netx.ZoneCache.Index(addr.Zone())),
 	}
 	p := (*[2]byte)(unsafe.Pointer(&rsa6.Port))
 	p[0] = byte(port >> 8)
@@ -77,6 +79,6 @@ func SockaddrInet4ToAddrPort(sa *windows.RawSockaddrInet4) netip.AddrPort {
 func SockaddrInet6ToAddrPort(sa *windows.RawSockaddrInet6) netip.AddrPort {
 	portp := (*[2]byte)(unsafe.Pointer(&sa.Port))
 	port := uint16(portp[0])<<8 + uint16(portp[1])
-	ip := netip.AddrFrom16(sa.Addr)
+	ip := netip.AddrFrom16(sa.Addr).WithZone(netx.ZoneCache.Name(int(sa.Scope_id)))
 	return netip.AddrPortFrom(ip, port)
 }

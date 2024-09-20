@@ -6,6 +6,7 @@ import (
 	"net/netip"
 	"unsafe"
 
+	"github.com/database64128/netx-go"
 	"golang.org/x/sys/unix"
 )
 
@@ -27,9 +28,10 @@ func AddrPortToSockaddrInet6(addrPort netip.AddrPort) unix.RawSockaddrInet6 {
 	addr := addrPort.Addr()
 	port := addrPort.Port()
 	rsa6 := unix.RawSockaddrInet6{
-		Len:    unix.SizeofSockaddrInet6,
-		Family: unix.AF_INET6,
-		Addr:   addr.As16(),
+		Len:      unix.SizeofSockaddrInet6,
+		Family:   unix.AF_INET6,
+		Addr:     addr.As16(),
+		Scope_id: uint32(netx.ZoneCache.Index(addr.Zone())),
 	}
 	p := (*[2]byte)(unsafe.Pointer(&rsa6.Port))
 	p[0] = byte(port >> 8)

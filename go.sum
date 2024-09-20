@@ -1,3 +1,5 @@
+github.com/database64128/netx-go v0.0.0-20240905055117-62795b8b054a h1:t4SDi0pmNkryzKdM4QF3o5vqSP4GRjeZD/6j3nyxNP0=
+github.com/database64128/netx-go v0.0.0-20240905055117-62795b8b054a/go.mod h1:7K2NQKbabB5mBl41vF6YayYl5g7YpDwc4dQ5iMpP3Lg=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
