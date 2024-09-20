@@ -10,24 +10,6 @@ type setFunc = func(fd int, network string) error
 
 type setFuncSlice []setFunc
 
-func (fns setFuncSlice) controlContextFunc() func(ctx context.Context, network, address string, c syscall.RawConn) error {
-	if len(fns) == 0 {
-		return nil
-	}
-	return func(ctx context.Context, network, address string, c syscall.RawConn) (err error) {
-		if cerr := c.Control(func(fd uintptr) {
-			for _, fn := range fns {
-				if err = fn(int(fd), network); err != nil {
-					return
-				}
-			}
-		}); cerr != nil {
-			return cerr
-		}
-		return
-	}
-}
-
 func (fns setFuncSlice) controlFunc() func(network, address string, c syscall.RawConn) error {
 	if len(fns) == 0 {
 		return nil
