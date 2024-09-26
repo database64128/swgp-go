@@ -189,7 +189,7 @@ func (c *client) recvFromWgConnRecvmmsg(ctx context.Context, wgConn *conn.MmsgRC
 			cmsg := cmsgvec[i][:msg.Msghdr.Controllen]
 
 			if !bytes.Equal(natEntry.clientPktinfoCache, cmsg) {
-				clientPktinfoAddr, clientPktinfoIfindex, err := conn.ParsePktinfoCmsg(cmsg)
+				m, err := conn.ParseSocketControlMessage(cmsg)
 				if err != nil {
 					c.logger.Warn("Failed to parse pktinfo control message from wgConn",
 						zap.String("client", c.name),
@@ -212,8 +212,8 @@ func (c *client) recvFromWgConnRecvmmsg(ctx context.Context, wgConn *conn.MmsgRC
 						zap.String("client", c.name),
 						zap.String("listenAddress", c.wgListenAddress),
 						zap.Stringer("clientAddress", clientAddrPort),
-						zap.Stringer("clientPktinfoAddr", clientPktinfoAddr),
-						zap.Uint32("clientPktinfoIfindex", clientPktinfoIfindex),
+						zap.Stringer("clientPktinfoAddr", m.PktinfoAddr),
+						zap.Uint32("clientPktinfoIfindex", m.PktinfoIfindex),
 					)
 				}
 			}
