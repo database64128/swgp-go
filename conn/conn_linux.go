@@ -51,6 +51,10 @@ func setPMTUD(fd int, network string) error {
 	return nil
 }
 
+func setUDPGenericReceiveOffload(fd int) {
+	_ = unix.SetsockoptInt(fd, unix.IPPROTO_UDP, unix.UDP_GRO, 1)
+}
+
 func setRecvPktinfo(fd int, network string) error {
 	switch network {
 	case "udp4":
@@ -72,5 +76,6 @@ func (lso ListenerSocketOptions) buildSetFns() setFuncSlice {
 		appendSetFwmarkFunc(lso.Fwmark).
 		appendSetTrafficClassFunc(lso.TrafficClass).
 		appendSetPMTUDFunc(lso.PathMTUDiscovery).
+		appendSetUDPGenericReceiveOffloadFunc(lso.UDPGenericReceiveOffload).
 		appendSetRecvPktinfoFunc(lso.ReceivePacketInfo)
 }

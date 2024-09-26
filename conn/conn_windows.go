@@ -41,6 +41,11 @@ func setPMTUD(fd int, network string) error {
 	return nil
 }
 
+func setUDPGenericReceiveOffload(fd int) {
+	// Both quinn and msquic set this to 65535.
+	_ = windows.SetsockoptInt(windows.Handle(fd), windows.IPPROTO_UDP, windows.UDP_RECV_MAX_COALESCED_SIZE, 65535)
+}
+
 func setRecvPktinfo(fd int, network string) error {
 	// Set IP_PKTINFO for both v4 and v6.
 	if err := windows.SetsockoptInt(windows.Handle(fd), windows.IPPROTO_IP, windows.IP_PKTINFO, 1); err != nil {
@@ -63,6 +68,7 @@ func setRecvPktinfo(fd int, network string) error {
 func (lso ListenerSocketOptions) buildSetFns() setFuncSlice {
 	return setFuncSlice{}.
 		appendSetPMTUDFunc(lso.PathMTUDiscovery).
+		appendSetUDPGenericReceiveOffloadFunc(lso.UDPGenericReceiveOffload).
 		appendSetRecvPktinfoFunc(lso.ReceivePacketInfo)
 }
 
