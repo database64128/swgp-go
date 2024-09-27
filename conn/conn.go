@@ -42,6 +42,16 @@ func (lc *ListenConfig) ListenUDP(ctx context.Context, network, address string) 
 
 // ListenerSocketOptions contains listener-specific socket options.
 type ListenerSocketOptions struct {
+	// SendBufferSize sets the send buffer size of the listener.
+	//
+	// Available on POSIX systems.
+	SendBufferSize int
+
+	// ReceiveBufferSize sets the receive buffer size of the listener.
+	//
+	// Available on POSIX systems.
+	ReceiveBufferSize int
+
 	// Fwmark sets the listener's fwmark on Linux, or user cookie on FreeBSD.
 	//
 	// Available on Linux and FreeBSD.
@@ -75,9 +85,17 @@ func (lso ListenerSocketOptions) ListenConfig() ListenConfig {
 	}
 }
 
+// DefaultUDPSocketBufferSize is the default send and receive buffer size of UDP sockets.
+//
+// We use the same value of 7 MiB as wireguard-go:
+// https://github.com/WireGuard/wireguard-go/blob/12269c2761734b15625017d8565745096325392f/conn/controlfns.go#L13-L18
+const DefaultUDPSocketBufferSize = 7 << 20
+
 var (
 	// DefaultUDPServerSocketOptions is the default [ListenerSocketOptions] for UDP servers.
 	DefaultUDPServerSocketOptions = ListenerSocketOptions{
+		SendBufferSize:    DefaultUDPSocketBufferSize,
+		ReceiveBufferSize: DefaultUDPSocketBufferSize,
 		PathMTUDiscovery:  true,
 		ReceivePacketInfo: true,
 	}
@@ -87,7 +105,9 @@ var (
 
 	// DefaultUDPClientSocketOptions is the default [ListenerSocketOptions] for UDP clients.
 	DefaultUDPClientSocketOptions = ListenerSocketOptions{
-		PathMTUDiscovery: true,
+		SendBufferSize:    DefaultUDPSocketBufferSize,
+		ReceiveBufferSize: DefaultUDPSocketBufferSize,
+		PathMTUDiscovery:  true,
 	}
 
 	// DefaultUDPClientListenConfig is the default [ListenConfig] for UDP clients.

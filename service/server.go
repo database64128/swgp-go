@@ -169,15 +169,19 @@ func (sc *ServerConfig) Server(logger *zap.Logger, listenConfigCache conn.Listen
 		handler:              handler,
 		logger:               logger,
 		proxyConnListenConfig: listenConfigCache.Get(conn.ListenerSocketOptions{
+			SendBufferSize:    conn.DefaultUDPSocketBufferSize,
+			ReceiveBufferSize: conn.DefaultUDPSocketBufferSize,
 			Fwmark:            sc.ProxyFwmark,
 			TrafficClass:      sc.ProxyTrafficClass,
 			PathMTUDiscovery:  true,
 			ReceivePacketInfo: true,
 		}),
 		wgConnListenConfig: listenConfigCache.Get(conn.ListenerSocketOptions{
-			Fwmark:           sc.WgFwmark,
-			TrafficClass:     sc.WgTrafficClass,
-			PathMTUDiscovery: true,
+			SendBufferSize:    conn.DefaultUDPSocketBufferSize,
+			ReceiveBufferSize: conn.DefaultUDPSocketBufferSize,
+			Fwmark:            sc.WgFwmark,
+			TrafficClass:      sc.WgTrafficClass,
+			PathMTUDiscovery:  true,
 		}),
 		packetBufPool: sync.Pool{
 			New: func() any {

@@ -6,6 +6,20 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+func setSendBufferSize(fd, size int) error {
+	if err := windows.SetsockoptInt(windows.Handle(fd), windows.SOL_SOCKET, windows.SO_SNDBUF, size); err != nil {
+		return fmt.Errorf("failed to set socket option SO_SNDBUF: %w", err)
+	}
+	return nil
+}
+
+func setRecvBufferSize(fd, size int) error {
+	if err := windows.SetsockoptInt(windows.Handle(fd), windows.SOL_SOCKET, windows.SO_RCVBUF, size); err != nil {
+		return fmt.Errorf("failed to set socket option SO_RCVBUF: %w", err)
+	}
+	return nil
+}
+
 const (
 	IP_MTU_DISCOVER   = 71
 	IPV6_MTU_DISCOVER = 71
@@ -65,6 +79,8 @@ func setRecvPktinfo(fd int, network string) error {
 
 func (lso ListenerSocketOptions) buildSetFns() setFuncSlice {
 	return setFuncSlice{}.
+		appendSetSendBufferSize(lso.SendBufferSize).
+		appendSetRecvBufferSize(lso.ReceiveBufferSize).
 		appendSetPMTUDFunc(lso.PathMTUDiscovery).
 		appendSetUDPGenericReceiveOffloadFunc(lso.UDPGenericReceiveOffload).
 		appendSetRecvPktinfoFunc(lso.ReceivePacketInfo)

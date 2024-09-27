@@ -15,6 +15,8 @@ func setFwmark(fd, fwmark int) error {
 
 func (lso ListenerSocketOptions) buildSetFns() setFuncSlice {
 	return setFuncSlice{}.
+		appendSetSendBufferSize(lso.SendBufferSize).
+		appendSetRecvBufferSize(lso.ReceiveBufferSize).
 		appendSetFwmarkFunc(lso.Fwmark).
 		appendSetTrafficClassFunc(lso.TrafficClass).
 		appendSetPMTUDFunc(lso.PathMTUDiscovery)

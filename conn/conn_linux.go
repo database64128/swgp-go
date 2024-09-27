@@ -6,6 +6,22 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+func setSendBufferSize(fd, size int) error {
+	if err := unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_SNDBUF, size); err != nil {
+		return fmt.Errorf("failed to set socket option SO_SNDBUF: %w", err)
+	}
+	_ = unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_SNDBUFFORCE, size)
+	return nil
+}
+
+func setRecvBufferSize(fd, size int) error {
+	if err := unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_RCVBUF, size); err != nil {
+		return fmt.Errorf("failed to set socket option SO_RCVBUF: %w", err)
+	}
+	_ = unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_RCVBUFFORCE, size)
+	return nil
+}
+
 func setFwmark(fd, fwmark int) error {
 	if err := unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_MARK, fwmark); err != nil {
 		return fmt.Errorf("failed to set socket option SO_MARK: %w", err)
@@ -73,6 +89,8 @@ func setRecvPktinfo(fd int, network string) error {
 
 func (lso ListenerSocketOptions) buildSetFns() setFuncSlice {
 	return setFuncSlice{}.
+		appendSetSendBufferSize(lso.SendBufferSize).
+		appendSetRecvBufferSize(lso.ReceiveBufferSize).
 		appendSetFwmarkFunc(lso.Fwmark).
 		appendSetTrafficClassFunc(lso.TrafficClass).
 		appendSetPMTUDFunc(lso.PathMTUDiscovery).
