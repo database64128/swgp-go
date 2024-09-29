@@ -112,7 +112,7 @@ func testClientServerHandshake(t *testing.T, ctx context.Context, logger *zap.Lo
 	}
 	defer clientConn.Close()
 
-	serverConn, err := conn.DefaultUDPClientListenConfig.ListenUDP(ctx, "udp", serverConfig.WgEndpointAddress.String())
+	serverConn, _, err := conn.DefaultUDPClientListenConfig.ListenUDP(ctx, "udp", serverConfig.WgEndpointAddress.String())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,7 +202,7 @@ func testClientServerDataPackets(t *testing.T, ctx context.Context, logger *zap.
 	}
 	defer clientConn.Close()
 
-	serverConn, err := conn.DefaultUDPClientListenConfig.ListenUDP(ctx, "udp", serverConfig.WgEndpointAddress.String())
+	serverConn, _, err := conn.DefaultUDPClientListenConfig.ListenUDP(ctx, "udp", serverConfig.WgEndpointAddress.String())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -45,7 +45,7 @@ func (s *server) setStartFunc(batchMode string) {
 }
 
 func (s *server) startMmsg(ctx context.Context) error {
-	proxyConn, err := s.proxyConnListenConfig.ListenUDPRawConn(ctx, s.proxyListenNetwork, s.proxyListenAddress)
+	proxyConn, _, err := s.proxyConnListenConfig.ListenUDPRawConn(ctx, s.proxyListenNetwork, s.proxyListenAddress)
 	if err != nil {
 		return err
 	}
@@ -251,7 +251,7 @@ func (s *server) recvFromProxyConnRecvmmsg(ctx context.Context, proxyConn *conn.
 						return
 					}
 
-					wgConn, err := s.wgConnListenConfig.ListenUDPRawConn(ctx, s.wgConnListenNetwork, s.wgConnListenAddress)
+					wgConn, _, err := s.wgConnListenConfig.ListenUDPRawConn(ctx, s.wgConnListenNetwork, s.wgConnListenAddress)
 					if err != nil {
 						s.logger.Warn("Failed to create UDP socket for new session",
 							zap.String("server", s.name),

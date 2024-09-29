@@ -53,9 +53,11 @@ func setPMTUD(fd int, network string) error {
 	return nil
 }
 
-func setUDPGenericReceiveOffload(fd int) {
+func setUDPGenericReceiveOffload(fd int, info *SocketInfo) {
 	// Both quinn and msquic set this to 65535.
-	_ = windows.SetsockoptInt(windows.Handle(fd), windows.IPPROTO_UDP, windows.UDP_RECV_MAX_COALESCED_SIZE, 65535)
+	if err := windows.SetsockoptInt(windows.Handle(fd), windows.IPPROTO_UDP, windows.UDP_RECV_MAX_COALESCED_SIZE, 65535); err == nil {
+		info.UDPGenericReceiveOffload = true
+	}
 }
 
 func setRecvPktinfo(fd int, network string) error {

@@ -6,18 +6,31 @@ import (
 	"syscall"
 )
 
-type setFunc = func(fd int, network string) error
+// SocketInfo contains information about a socket.
+type SocketInfo struct {
+	// MaxUDPGSOSegments is the maximum number of UDP GSO segments supported by the socket.
+	//
+	// If UDP GSO is not enabled on the socket, or the system does not support UDP GSO, the value is 1.
+	//
+	// The value is 0 if the socket is not a UDP socket.
+	MaxUDPGSOSegments int
+
+	// UDPGenericReceiveOffload indicates whether UDP GRO is enabled on the socket.
+	UDPGenericReceiveOffload bool
+}
+
+type setFunc = func(fd int, network string, info *SocketInfo) error
 
 type setFuncSlice []setFunc
 
-func (fns setFuncSlice) controlFunc() func(network, address string, c syscall.RawConn) error {
+func (fns setFuncSlice) controlFunc(info *SocketInfo) func(network, address string, c syscall.RawConn) error {
 	if len(fns) == 0 {
 		return nil
 	}
 	return func(network, address string, c syscall.RawConn) (err error) {
 		if cerr := c.Control(func(fd uintptr) {
 			for _, fn := range fns {
-				if err = fn(int(fd), network); err != nil {
+				if err = fn(int(fd), network, info); err != nil {
 					return
 				}
 			}
@@ -28,16 +41,21 @@ func (fns setFuncSlice) controlFunc() func(network, address string, c syscall.Ra
 	}
 }
 
-// ListenConfig is [net.ListenConfig] but provides a subjectively nicer API.
-type ListenConfig net.ListenConfig
+// ListenConfig is like [net.ListenConfig] but provides a subjectively nicer API.
+type ListenConfig struct {
+	fns setFuncSlice
+}
 
 // ListenUDP wraps [net.ListenConfig.ListenPacket] and returns a [*net.UDPConn] directly.
-func (lc *ListenConfig) ListenUDP(ctx context.Context, network, address string) (*net.UDPConn, error) {
-	pc, err := (*net.ListenConfig)(lc).ListenPacket(ctx, network, address)
-	if err != nil {
-		return nil, err
+func (lc *ListenConfig) ListenUDP(ctx context.Context, network, address string) (uc *net.UDPConn, info SocketInfo, err error) {
+	nlc := net.ListenConfig{
+		Control: lc.fns.controlFunc(&info),
 	}
-	return pc.(*net.UDPConn), nil
+	pc, err := nlc.ListenPacket(ctx, network, address)
+	if err != nil {
+		return nil, info, err
+	}
+	return pc.(*net.UDPConn), info, nil
 }
 
 // ListenerSocketOptions contains listener-specific socket options.
@@ -78,10 +96,10 @@ type ListenerSocketOptions struct {
 	ReceivePacketInfo bool
 }
 
-// ListenConfig returns a [ListenConfig] with a control function that sets the socket options.
+// ListenConfig returns a [ListenConfig] that sets the socket options.
 func (lso ListenerSocketOptions) ListenConfig() ListenConfig {
 	return ListenConfig{
-		Control: lso.buildSetFns().controlFunc(),
+		fns: lso.buildSetFns(),
 	}
 }
 

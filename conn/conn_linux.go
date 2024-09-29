@@ -67,8 +67,10 @@ func setPMTUD(fd int, network string) error {
 	return nil
 }
 
-func setUDPGenericReceiveOffload(fd int) {
-	_ = unix.SetsockoptInt(fd, unix.IPPROTO_UDP, unix.UDP_GRO, 1)
+func setUDPGenericReceiveOffload(fd int, info *SocketInfo) {
+	if err := unix.SetsockoptInt(fd, unix.IPPROTO_UDP, unix.UDP_GRO, 1); err == nil {
+		info.UDPGenericReceiveOffload = true
+	}
 }
 
 func setRecvPktinfo(fd int, network string) error {

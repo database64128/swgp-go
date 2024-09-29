@@ -206,7 +206,7 @@ func (s *server) Start(ctx context.Context) (err error) {
 }
 
 func (s *server) startGeneric(ctx context.Context) error {
-	proxyConn, err := s.proxyConnListenConfig.ListenUDP(ctx, s.proxyListenNetwork, s.proxyListenAddress)
+	proxyConn, _, err := s.proxyConnListenConfig.ListenUDP(ctx, s.proxyListenNetwork, s.proxyListenAddress)
 	if err != nil {
 		return err
 	}
@@ -359,7 +359,7 @@ func (s *server) recvFromProxyConnGeneric(ctx context.Context, proxyConn *net.UD
 					return
 				}
 
-				wgConn, err := s.wgConnListenConfig.ListenUDP(ctx, s.wgConnListenNetwork, s.wgConnListenAddress)
+				wgConn, _, err := s.wgConnListenConfig.ListenUDP(ctx, s.wgConnListenNetwork, s.wgConnListenAddress)
 				if err != nil {
 					s.logger.Warn("Failed to create UDP socket for new session",
 						zap.String("server", s.name),

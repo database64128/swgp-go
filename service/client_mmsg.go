@@ -45,7 +45,7 @@ func (c *client) setStartFunc(batchMode string) {
 }
 
 func (c *client) startMmsg(ctx context.Context) error {
-	wgConn, err := c.wgConnListenConfig.ListenUDPRawConn(ctx, c.wgListenNetwork, c.wgListenAddress)
+	wgConn, _, err := c.wgConnListenConfig.ListenUDPRawConn(ctx, c.wgListenNetwork, c.wgListenAddress)
 	if err != nil {
 		return err
 	}
@@ -253,7 +253,7 @@ func (c *client) recvFromWgConnRecvmmsg(ctx context.Context, wgConn *conn.MmsgRC
 						return
 					}
 
-					proxyConn, err := c.proxyConnListenConfig.ListenUDPRawConn(ctx, c.proxyConnListenNetwork, c.proxyConnListenAddress)
+					proxyConn, _, err := c.proxyConnListenConfig.ListenUDPRawConn(ctx, c.proxyConnListenNetwork, c.proxyConnListenAddress)
 					if err != nil {
 						c.logger.Warn("Failed to create UDP socket for new session",
 							zap.String("client", c.name),

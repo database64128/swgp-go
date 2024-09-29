@@ -4,7 +4,7 @@ package conn
 
 func (fns setFuncSlice) appendSetSendBufferSize(size int) setFuncSlice {
 	if size > 0 {
-		return append(fns, func(fd int, _ string) error {
+		return append(fns, func(fd int, _ string, _ *SocketInfo) error {
 			return setSendBufferSize(fd, size)
 		})
 	}
@@ -13,7 +13,7 @@ func (fns setFuncSlice) appendSetSendBufferSize(size int) setFuncSlice {
 
 func (fns setFuncSlice) appendSetRecvBufferSize(size int) setFuncSlice {
 	if size > 0 {
-		return append(fns, func(fd int, _ string) error {
+		return append(fns, func(fd int, _ string, _ *SocketInfo) error {
 			return setRecvBufferSize(fd, size)
 		})
 	}
