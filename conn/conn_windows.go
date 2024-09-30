@@ -53,6 +53,16 @@ func setPMTUD(fd int, network string) error {
 	return nil
 }
 
+// Implementation inspired by:
+// https://github.com/quinn-rs/quinn/blob/main/quinn-udp/src/windows.rs
+
+func probeUDPGSOSupport(fd int, info *SocketInfo) {
+	if err := windows.SetsockoptInt(windows.Handle(fd), windows.IPPROTO_UDP, windows.UDP_SEND_MSG_SIZE, 0); err == nil {
+		// As "empirically found on Windows 11 x64" by quinn.
+		info.MaxUDPGSOSegments = 512
+	}
+}
+
 func setUDPGenericReceiveOffload(fd int, info *SocketInfo) {
 	// Both quinn and msquic set this to 65535.
 	if err := windows.SetsockoptInt(windows.Handle(fd), windows.IPPROTO_UDP, windows.UDP_RECV_MAX_COALESCED_SIZE, 65535); err == nil {
@@ -84,6 +94,7 @@ func (lso ListenerSocketOptions) buildSetFns() setFuncSlice {
 		appendSetSendBufferSize(lso.SendBufferSize).
 		appendSetRecvBufferSize(lso.ReceiveBufferSize).
 		appendSetPMTUDFunc(lso.PathMTUDiscovery).
+		appendProbeUDPGSOSupportFunc(lso.ProbeUDPGSOSupport).
 		appendSetUDPGenericReceiveOffloadFunc(lso.UDPGenericReceiveOffload).
 		appendSetRecvPktinfoFunc(lso.ReceivePacketInfo)
 }

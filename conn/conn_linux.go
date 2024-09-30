@@ -67,6 +67,15 @@ func setPMTUD(fd int, network string) error {
 	return nil
 }
 
+func probeUDPGSOSupport(fd int, info *SocketInfo) {
+	if err := unix.SetsockoptInt(fd, unix.IPPROTO_UDP, unix.UDP_SEGMENT, 0); err == nil {
+		// UDP_MAX_SEGMENTS as defined in linux/udp.h was originally 64.
+		// It got bumped to 128 in Linux 6.9: https://github.com/torvalds/linux/commit/1382e3b6a3500c245e5278c66d210c02926f804f
+		// The receive path still only supports 64 segments, so 64 it is.
+		info.MaxUDPGSOSegments = 64
+	}
+}
+
 func setUDPGenericReceiveOffload(fd int, info *SocketInfo) {
 	if err := unix.SetsockoptInt(fd, unix.IPPROTO_UDP, unix.UDP_GRO, 1); err == nil {
 		info.UDPGenericReceiveOffload = true
@@ -96,6 +105,7 @@ func (lso ListenerSocketOptions) buildSetFns() setFuncSlice {
 		appendSetFwmarkFunc(lso.Fwmark).
 		appendSetTrafficClassFunc(lso.TrafficClass).
 		appendSetPMTUDFunc(lso.PathMTUDiscovery).
+		appendProbeUDPGSOSupportFunc(lso.ProbeUDPGSOSupport).
 		appendSetUDPGenericReceiveOffloadFunc(lso.UDPGenericReceiveOffload).
 		appendSetRecvPktinfoFunc(lso.ReceivePacketInfo)
 }
