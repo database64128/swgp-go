@@ -3,7 +3,6 @@
 package service
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"net/netip"
@@ -22,16 +21,19 @@ type serverNatUplinkMmsg struct {
 	clientAddrPort netip.AddrPort
 	wgAddrPort     netip.AddrPort
 	wgConn         *conn.MmsgWConn
+	wgConnInfo     conn.SocketInfo
 	wgConnSendCh   <-chan queuedPacket
 }
 
 type serverNatDownlinkMmsg struct {
 	clientAddrPort     netip.AddrPort
-	clientPktinfop     *[]byte
-	clientPktinfo      *atomic.Pointer[[]byte]
+	clientPktinfop     *pktinfo
+	clientPktinfo      *atomic.Pointer[pktinfo]
 	wgAddrPort         netip.AddrPort
 	wgConn             *conn.MmsgRConn
 	proxyConn          *conn.MmsgWConn
+	proxyConnInfo      conn.SocketInfo
+	handler            packet.Handler
 	maxProxyPacketSize int
 }
 
@@ -45,16 +47,22 @@ func (s *server) setStartFunc(batchMode string) {
 }
 
 func (s *server) startMmsg(ctx context.Context) error {
-	proxyConn, _, err := s.proxyConnListenConfig.ListenUDPRawConn(ctx, s.proxyListenNetwork, s.proxyListenAddress)
+	proxyConn, proxyConnInfo, err := s.proxyConnListenConfig.ListenUDPRawConn(ctx, s.proxyListenNetwork, s.proxyListenAddress)
 	if err != nil {
 		return err
 	}
 	s.proxyConn = proxyConn.UDPConn
 
+	if proxyConnInfo.UDPGenericReceiveOffload {
+		s.packetBufSize = 65535
+	} else {
+		s.packetBufSize = s.maxProxyPacketSizev4
+	}
+
 	s.mwg.Add(1)
 
 	go func() {
-		s.recvFromProxyConnRecvmmsg(ctx, proxyConn.RConn())
+		s.recvFromProxyConnRecvmmsg(ctx, proxyConn.RConn(), proxyConnInfo)
 		s.mwg.Done()
 	}()
 
@@ -64,46 +72,55 @@ func (s *server) startMmsg(ctx context.Context) error {
 		zap.Stringer("wgAddress", &s.wgAddr),
 		zap.Int("wgTunnelMTUv4", s.wgTunnelMTUv4),
 		zap.Int("wgTunnelMTUv6", s.wgTunnelMTUv6),
+		zap.Uint32("maxUDPGSOSegments", proxyConnInfo.MaxUDPGSOSegments),
+		zap.Bool("udpGRO", proxyConnInfo.UDPGenericReceiveOffload),
 	)
 	return nil
 }
 
-func (s *server) recvFromProxyConnRecvmmsg(ctx context.Context, proxyConn *conn.MmsgRConn) {
-	n := s.mainRecvBatchSize
-	bufvec := make([][]byte, n)
-	namevec := make([]unix.RawSockaddrInet6, n)
-	iovec := make([]unix.Iovec, n)
-	cmsgvec := make([][]byte, n)
-	msgvec := make([]conn.Mmsghdr, n)
+func (s *server) recvFromProxyConnRecvmmsg(ctx context.Context, proxyConn *conn.MmsgRConn, proxyConnInfo conn.SocketInfo) {
+	packetBuf := make([]byte, s.mainRecvBatchSize*s.packetBufSize)
+	cmsgBuf := make([]byte, s.mainRecvBatchSize*conn.SocketControlMessageBufferSize)
+	bufvec := make([][]byte, s.mainRecvBatchSize)
+	cmsgvec := make([][]byte, s.mainRecvBatchSize)
+	namevec := make([]unix.RawSockaddrInet6, s.mainRecvBatchSize)
+	iovec := make([]unix.Iovec, s.mainRecvBatchSize)
+	msgvec := make([]conn.Mmsghdr, s.mainRecvBatchSize)
 
-	for i := range msgvec {
-		cmsgBuf := make([]byte, conn.SocketControlMessageBufferSize)
-		cmsgvec[i] = cmsgBuf
+	for i := range s.mainRecvBatchSize {
+		bufvec[i] = packetBuf[:s.packetBufSize:s.packetBufSize]
+		packetBuf = packetBuf[s.packetBufSize:]
+
+		cmsgvec[i] = cmsgBuf[:conn.SocketControlMessageBufferSize:conn.SocketControlMessageBufferSize]
+		cmsgBuf = cmsgBuf[conn.SocketControlMessageBufferSize:]
+
+		iovec[i].Base = unsafe.SliceData(bufvec[i])
+		iovec[i].SetLen(s.packetBufSize)
+
 		msgvec[i].Msghdr.Name = (*byte)(unsafe.Pointer(&namevec[i]))
 		msgvec[i].Msghdr.Namelen = unix.SizeofSockaddrInet6
 		msgvec[i].Msghdr.Iov = &iovec[i]
 		msgvec[i].Msghdr.SetIovlen(1)
-		msgvec[i].Msghdr.Control = unsafe.SliceData(cmsgBuf)
+		msgvec[i].Msghdr.Control = unsafe.SliceData(cmsgvec[i])
+		msgvec[i].Msghdr.SetControllen(conn.SocketControlMessageBufferSize)
+	}
+
+	qp := queuedPacket{
+		buf: s.getPacketBuf(),
 	}
 
 	var (
-		err             error
-		recvmmsgCount   uint64
-		packetsReceived uint64
-		wgBytesReceived uint64
-		burstBatchSize  int
+		queuedPackets     []queuedPacket
+		recvmmsgCount     uint64
+		msgsReceived      uint64
+		packetsReceived   uint64
+		swgpBytesReceived uint64
+		burstBatchSize    int
+		burstSegmentCount uint32
 	)
 
 	for {
-		for i := range iovec[:n] {
-			packetBuf := s.getPacketBuf()
-			bufvec[i] = packetBuf
-			iovec[i].Base = unsafe.SliceData(packetBuf)
-			iovec[i].SetLen(len(packetBuf))
-			msgvec[i].Msghdr.SetControllen(conn.SocketControlMessageBufferSize)
-		}
-
-		n, err = proxyConn.ReadMsgs(msgvec, 0)
+		n, err := proxyConn.ReadMsgs(msgvec, 0)
 		if err != nil {
 			if errors.Is(err, os.ErrDeadlineExceeded) {
 				break
@@ -113,13 +130,11 @@ func (s *server) recvFromProxyConnRecvmmsg(ctx context.Context, proxyConn *conn.
 				zap.String("listenAddress", s.proxyListenAddress),
 				zap.Error(err),
 			)
-			n = 1
-			s.putPacketBuf(bufvec[0])
 			continue
 		}
 
 		recvmmsgCount++
-		packetsReceived += uint64(n)
+		msgsReceived += uint64(n)
 		burstBatchSize = max(burstBatchSize, n)
 
 		s.mu.Lock()
@@ -128,16 +143,8 @@ func (s *server) recvFromProxyConnRecvmmsg(ctx context.Context, proxyConn *conn.
 
 		for i := range msgvecn {
 			msg := &msgvecn[i]
-			packetBuf := bufvec[i]
-
-			if msg.Msghdr.Controllen == 0 {
-				s.logger.Warn("Skipping packet with no control message from proxyConn",
-					zap.String("server", s.name),
-					zap.String("listenAddress", s.proxyListenAddress),
-				)
-				s.putPacketBuf(packetBuf)
-				continue
-			}
+			cmsg := cmsgvec[i][:msg.Msghdr.Controllen]
+			msg.Msghdr.SetControllen(conn.SocketControlMessageBufferSize)
 
 			clientAddrPort, err := conn.SockaddrToAddrPort(msg.Msghdr.Name, msg.Msghdr.Namelen)
 			if err != nil {
@@ -146,61 +153,139 @@ func (s *server) recvFromProxyConnRecvmmsg(ctx context.Context, proxyConn *conn.
 					zap.String("listenAddress", s.proxyListenAddress),
 					zap.Error(err),
 				)
-				s.putPacketBuf(packetBuf)
 				continue
 			}
 
-			err = conn.ParseFlagsForError(int(msg.Msghdr.Flags))
-			if err != nil {
-				s.logger.Warn("Failed to read from proxyConn",
+			if err = conn.ParseFlagsForError(int(msg.Msghdr.Flags)); err != nil {
+				s.logger.Warn("Discarded packet from proxyConn",
 					zap.String("server", s.name),
 					zap.String("listenAddress", s.proxyListenAddress),
 					zap.Stringer("clientAddress", clientAddrPort),
 					zap.Uint32("packetLength", msg.Msglen),
+					zap.Int("cmsgLength", len(cmsg)),
 					zap.Error(err),
 				)
-				s.putPacketBuf(packetBuf)
 				continue
 			}
 
-			wgPacketStart, wgPacketLength, err := s.handler.DecryptZeroCopy(packetBuf, 0, int(msg.Msglen))
+			rscm, err := conn.ParseSocketControlMessage(cmsg)
 			if err != nil {
-				s.logger.Warn("Failed to decrypt swgpPacket",
+				s.logger.Warn("Failed to parse socket control message from proxyConn",
 					zap.String("server", s.name),
 					zap.String("listenAddress", s.proxyListenAddress),
 					zap.Stringer("clientAddress", clientAddrPort),
-					zap.Uint32("packetLength", msg.Msglen),
+					zap.Int("cmsgLength", len(cmsg)),
 					zap.Error(err),
 				)
-				s.putPacketBuf(packetBuf)
 				continue
 			}
 
-			wgBytesReceived += uint64(wgPacketLength)
+			swgpBytesReceived += uint64(msg.Msglen)
+
+			swgpPacketBuf := bufvec[i][:msg.Msglen]
+
+			recvSegmentSize := int(rscm.SegmentSize)
+			if recvSegmentSize == 0 {
+				recvSegmentSize = len(swgpPacketBuf)
+			}
+
+			var (
+				segmentCount uint32
+				handler      packet.Handler
+			)
+
+			clientAddr := clientAddrPort.Addr()
+			isClientAddr4 := clientAddr.Is4() || clientAddr.Is4In6()
+			if isClientAddr4 {
+				handler = s.handler4
+			} else {
+				handler = s.handler6
+			}
+
+			for len(swgpPacketBuf) > 0 {
+				swgpPacketLength := min(len(swgpPacketBuf), recvSegmentSize)
+				swgpPacket := swgpPacketBuf[:swgpPacketLength]
+				swgpPacketBuf = swgpPacketBuf[swgpPacketLength:]
+				segmentCount++
+
+				dst, err := handler.Decrypt(qp.buf, swgpPacket)
+				if err != nil {
+					s.logger.Warn("Failed to decrypt swgpPacket",
+						zap.String("server", s.name),
+						zap.String("listenAddress", s.proxyListenAddress),
+						zap.Stringer("clientAddress", clientAddrPort),
+						zap.Int("packetLength", swgpPacketLength),
+						zap.Error(err),
+					)
+					continue
+				}
+
+				segmentSize := uint32(len(dst) - len(qp.buf))
+
+				switch {
+				case qp.segmentSize == 0:
+					qp = queuedPacket{
+						buf:          dst,
+						segmentSize:  segmentSize,
+						segmentCount: 1,
+					}
+				case qp.segmentSize < segmentSize:
+					// Move segment to a new wgPacket.
+					segment := dst[len(qp.buf):]
+					queuedPackets = append(queuedPackets, qp)
+					qp = queuedPacket{
+						buf:          append(s.getPacketBuf(), segment...),
+						segmentSize:  segmentSize,
+						segmentCount: 1,
+					}
+				case qp.segmentSize == segmentSize:
+					// Keep segment.
+					qp.buf = dst
+					qp.segmentCount++
+				case qp.segmentSize > segmentSize:
+					// Segment is the last short segment.
+					qp.buf = dst
+					qp.segmentCount++
+					queuedPackets = append(queuedPackets, qp)
+					qp = queuedPacket{
+						buf: s.getPacketBuf(),
+					}
+				default:
+					panic("unreachable")
+				}
+			}
+
+			packetsReceived += uint64(segmentCount)
+			burstSegmentCount = max(burstSegmentCount, segmentCount)
+
+			if len(qp.buf) > 0 {
+				queuedPackets = append(queuedPackets, qp)
+				qp = queuedPacket{
+					buf: s.getPacketBuf(),
+				}
+			}
+
+			if len(queuedPackets) == 0 {
+				continue
+			}
+
+			// Another possible approach is to process all received packets
+			// before looking up the NAT table and sending them away.
 
 			natEntry, ok := s.table[clientAddrPort]
 			if !ok {
 				natEntry = &serverNatEntry{}
 			}
 
-			var clientPktinfop *[]byte
-			cmsg := cmsgvec[i][:msg.Msghdr.Controllen]
+			clientPktinfo := pktinfo{
+				addr:    rscm.PktinfoAddr,
+				ifindex: rscm.PktinfoIfindex,
+			}
 
-			if !bytes.Equal(natEntry.clientPktinfoCache, cmsg) {
-				m, err := conn.ParseSocketControlMessage(cmsg)
-				if err != nil {
-					s.logger.Warn("Failed to parse pktinfo control message from proxyConn",
-						zap.String("server", s.name),
-						zap.String("listenAddress", s.proxyListenAddress),
-						zap.Stringer("clientAddress", clientAddrPort),
-						zap.Error(err),
-					)
-					s.putPacketBuf(packetBuf)
-					continue
-				}
+			var clientPktinfop *pktinfo
 
-				clientPktinfoCache := make([]byte, len(cmsg))
-				copy(clientPktinfoCache, cmsg)
+			if clientPktinfo != natEntry.clientPktinfoCache {
+				clientPktinfoCache := clientPktinfo
 				clientPktinfop = &clientPktinfoCache
 				natEntry.clientPktinfo.Store(clientPktinfop)
 				natEntry.clientPktinfoCache = clientPktinfoCache
@@ -210,8 +295,8 @@ func (s *server) recvFromProxyConnRecvmmsg(ctx context.Context, proxyConn *conn.
 						zap.String("server", s.name),
 						zap.String("listenAddress", s.proxyListenAddress),
 						zap.Stringer("clientAddress", clientAddrPort),
-						zap.Stringer("clientPktinfoAddr", m.PktinfoAddr),
-						zap.Uint32("clientPktinfoIfindex", m.PktinfoIfindex),
+						zap.Stringer("clientPktinfoAddr", &clientPktinfop.addr),
+						zap.Uint32("clientPktinfoIfindex", clientPktinfoCache.ifindex),
 					)
 				}
 			}
@@ -251,7 +336,7 @@ func (s *server) recvFromProxyConnRecvmmsg(ctx context.Context, proxyConn *conn.
 						return
 					}
 
-					wgConn, _, err := s.wgConnListenConfig.ListenUDPRawConn(ctx, s.wgConnListenNetwork, s.wgConnListenAddress)
+					wgConn, wgConnInfo, err := s.wgConnListenConfig.ListenUDPRawConn(ctx, s.wgConnListenNetwork, s.wgConnListenAddress)
 					if err != nil {
 						s.logger.Warn("Failed to create UDP socket for new session",
 							zap.String("server", s.name),
@@ -288,12 +373,16 @@ func (s *server) recvFromProxyConnRecvmmsg(ctx context.Context, proxyConn *conn.
 						wgTunnelMTU        int
 					)
 
-					if addr := clientAddrPort.Addr(); addr.Is4() || addr.Is4In6() {
+					if isClientAddr4 {
 						maxProxyPacketSize = s.maxProxyPacketSizev4
 						wgTunnelMTU = s.wgTunnelMTUv4
 					} else {
 						maxProxyPacketSize = s.maxProxyPacketSizev6
 						wgTunnelMTU = s.wgTunnelMTUv6
+					}
+
+					if wgConnInfo.UDPGenericReceiveOffload {
+						maxProxyPacketSize = 65535
 					}
 
 					s.logger.Info("Server relay started",
@@ -302,6 +391,8 @@ func (s *server) recvFromProxyConnRecvmmsg(ctx context.Context, proxyConn *conn.
 						zap.Stringer("clientAddress", clientAddrPort),
 						zap.Stringer("wgAddress", wgAddrPort),
 						zap.Int("wgTunnelMTU", wgTunnelMTU),
+						zap.Uint32("maxUDPGSOSegments", wgConnInfo.MaxUDPGSOSegments),
+						zap.Bool("udpGRO", wgConnInfo.UDPGenericReceiveOffload),
 					)
 
 					s.wg.Add(1)
@@ -311,6 +402,7 @@ func (s *server) recvFromProxyConnRecvmmsg(ctx context.Context, proxyConn *conn.
 							clientAddrPort: clientAddrPort,
 							wgAddrPort:     wgAddrPort,
 							wgConn:         wgConn.WConn(),
+							wgConnInfo:     wgConnInfo,
 							wgConnSendCh:   wgConnSendCh,
 						})
 						wgConn.Close()
@@ -324,6 +416,8 @@ func (s *server) recvFromProxyConnRecvmmsg(ctx context.Context, proxyConn *conn.
 						wgAddrPort:         wgAddrPort,
 						wgConn:             wgConn.RConn(),
 						proxyConn:          proxyConn.WConn(),
+						proxyConnInfo:      proxyConnInfo,
+						handler:            handler,
 						maxProxyPacketSize: maxProxyPacketSize,
 					})
 				}()
@@ -338,91 +432,127 @@ func (s *server) recvFromProxyConnRecvmmsg(ctx context.Context, proxyConn *conn.
 				}
 			}
 
-			select {
-			case natEntry.wgConnSendCh <- queuedPacket{packetBuf, wgPacketStart, wgPacketLength}:
-			default:
-				if ce := s.logger.Check(zap.DebugLevel, "wgPacket dropped due to full send channel"); ce != nil {
-					ce.Write(
-						zap.String("server", s.name),
-						zap.String("listenAddress", s.proxyListenAddress),
-						zap.Stringer("clientAddress", clientAddrPort),
-						zap.Stringer("wgAddress", &s.wgAddr),
-					)
+			for _, qp := range queuedPackets {
+				select {
+				case natEntry.wgConnSendCh <- qp:
+				default:
+					if ce := s.logger.Check(zap.DebugLevel, "wgPacket dropped due to full send channel"); ce != nil {
+						ce.Write(
+							zap.String("server", s.name),
+							zap.String("listenAddress", s.proxyListenAddress),
+							zap.Stringer("clientAddress", clientAddrPort),
+							zap.Stringer("wgAddress", &s.wgAddr),
+						)
+					}
+					s.putPacketBuf(qp.buf)
 				}
-				s.putPacketBuf(packetBuf)
 			}
+
+			queuedPackets = queuedPackets[:0]
 		}
 
 		s.mu.Unlock()
 	}
 
-	for i := range bufvec {
-		s.putPacketBuf(bufvec[i])
-	}
+	s.putPacketBuf(qp.buf)
 
 	s.logger.Info("Finished receiving from proxyConn",
 		zap.String("server", s.name),
 		zap.String("listenAddress", s.proxyListenAddress),
 		zap.Stringer("wgAddress", &s.wgAddr),
 		zap.Uint64("recvmmsgCount", recvmmsgCount),
+		zap.Uint64("msgsReceived", msgsReceived),
 		zap.Uint64("packetsReceived", packetsReceived),
-		zap.Uint64("wgBytesReceived", wgBytesReceived),
+		zap.Uint64("swgpBytesReceived", swgpBytesReceived),
 		zap.Int("burstBatchSize", burstBatchSize),
+		zap.Uint32("burstSegmentCount", burstSegmentCount),
 	)
 }
 
 func (s *server) relayProxyToWgSendmmsg(uplink serverNatUplinkMmsg) {
 	var (
-		sendmmsgCount  uint64
-		packetsSent    uint64
-		wgBytesSent    uint64
-		burstBatchSize int
+		sendmmsgCount     uint64
+		msgsSent          uint64
+		packetsSent       uint64
+		wgBytesSent       uint64
+		burstBatchSize    int
+		burstSegmentCount uint32
 	)
 
+	// TODO: use wgConn's listen address to determine the address family
 	rsa6 := conn.AddrPortToSockaddrInet6(uplink.wgAddrPort)
-	bufvec := make([][]byte, s.relayBatchSize)
-	iovec := make([]unix.Iovec, s.relayBatchSize)
-	msgvec := make([]conn.Mmsghdr, s.relayBatchSize)
-
-	for i := range msgvec {
-		msgvec[i].Msghdr.Name = (*byte)(unsafe.Pointer(&rsa6))
-		msgvec[i].Msghdr.Namelen = unix.SizeofSockaddrInet6
-		msgvec[i].Msghdr.Iov = &iovec[i]
-		msgvec[i].Msghdr.SetIovlen(1)
-	}
+	cmsgBuf := make([]byte, 0, s.relayBatchSize*conn.SocketControlMessageBufferSize)
+	bufvec := make([][]byte, 0, s.relayBatchSize)
+	iovec := make([]unix.Iovec, 0, s.relayBatchSize)
+	msgvec := make([]conn.Mmsghdr, 0, s.relayBatchSize)
 
 	for {
-		var (
-			count       int
-			isHandshake bool
-		)
+		var isHandshake bool
 
 		// Block on first dequeue op.
-		dequeuedPacket, ok := <-uplink.wgConnSendCh
+		qp, ok := <-uplink.wgConnSendCh
 		if !ok {
 			break
 		}
 
 	dequeue:
 		for {
-			// Update wgConn read deadline when a handshake initiation/response message is received.
-			switch dequeuedPacket.buf[dequeuedPacket.start] {
-			case packet.WireGuardMessageTypeHandshakeInitiation, packet.WireGuardMessageTypeHandshakeResponse:
+			bufvec = append(bufvec, qp.buf)
+
+			// Update wgConn read deadline when qp contains a WireGuard handshake initiation message.
+			if qp.isWireGuardHandshakeInitiationMessage() { // TODO: merge into the loop below as an optimization
 				isHandshake = true
 			}
 
-			bufvec[count] = dequeuedPacket.buf
-			iovec[count].Base = &dequeuedPacket.buf[dequeuedPacket.start]
-			iovec[count].SetLen(dequeuedPacket.length)
-			count++
-			wgBytesSent += uint64(dequeuedPacket.length)
+			b := qp.buf
+			segmentsRemaining := qp.segmentCount
 
-			if count == s.relayBatchSize {
+			for segmentsRemaining > 0 {
+				sendSegmentCount := min(segmentsRemaining, uplink.wgConnInfo.MaxUDPGSOSegments)
+				segmentsRemaining -= sendSegmentCount
+
+				sendBufSize := min(len(b), int(qp.segmentSize*sendSegmentCount))
+				sendBuf := b[:sendBufSize]
+				b = b[sendBufSize:]
+
+				var cmsg []byte
+				if sendSegmentCount > 1 {
+					scm := conn.SocketControlMessage{
+						SegmentSize: qp.segmentSize,
+					}
+					dst := scm.AppendTo(cmsgBuf)
+					cmsg = dst[len(cmsgBuf):]
+					cmsgBuf = dst
+				}
+
+				iovec = append(iovec, unix.Iovec{
+					Base: unsafe.SliceData(sendBuf),
+					Len:  uint64(len(sendBuf)),
+				})
+
+				msgvec = append(msgvec, conn.Mmsghdr{
+					Msghdr: unix.Msghdr{
+						Name:       (*byte)(unsafe.Pointer(&rsa6)),
+						Namelen:    unix.SizeofSockaddrInet6,
+						Iov:        &iovec[len(iovec)-1],
+						Iovlen:     1,
+						Control:    unsafe.SliceData(cmsg),
+						Controllen: uint64(len(cmsg)),
+					},
+				})
+
+				packetsSent += uint64(sendSegmentCount)
+				burstSegmentCount = max(burstSegmentCount, sendSegmentCount)
+			}
+
+			wgBytesSent += uint64(len(qp.buf))
+
+			if len(msgvec) >= s.relayBatchSize {
 				break
 			}
 
 			select {
-			case dequeuedPacket, ok = <-uplink.wgConnSendCh:
+			case qp, ok = <-uplink.wgConnSendCh:
 				if !ok {
 					break dequeue
 				}
@@ -431,7 +561,7 @@ func (s *server) relayProxyToWgSendmmsg(uplink serverNatUplinkMmsg) {
 			}
 		}
 
-		if err := uplink.wgConn.WriteMsgs(msgvec[:count], 0); err != nil {
+		if err := uplink.wgConn.WriteMsgs(msgvec, 0); err != nil {
 			s.logger.Warn("Failed to write wgPacket to wgConn",
 				zap.String("server", s.name),
 				zap.String("listenAddress", s.proxyListenAddress),
@@ -454,14 +584,16 @@ func (s *server) relayProxyToWgSendmmsg(uplink serverNatUplinkMmsg) {
 		}
 
 		sendmmsgCount++
-		packetsSent += uint64(count)
-		burstBatchSize = max(burstBatchSize, count)
+		msgsSent += uint64(len(msgvec))
+		burstBatchSize = max(burstBatchSize, len(msgvec))
 
-		bufvecn := bufvec[:count]
-
-		for i := range bufvecn {
-			s.putPacketBuf(bufvecn[i])
+		cmsgBuf = cmsgBuf[:0]
+		for _, buf := range bufvec {
+			s.putPacketBuf(buf)
 		}
+		bufvec = bufvec[:0]
+		iovec = iovec[:0]
+		msgvec = msgvec[:0]
 
 		if !ok {
 			break
@@ -474,52 +606,65 @@ func (s *server) relayProxyToWgSendmmsg(uplink serverNatUplinkMmsg) {
 		zap.Stringer("clientAddress", uplink.clientAddrPort),
 		zap.Stringer("wgAddress", uplink.wgAddrPort),
 		zap.Uint64("sendmmsgCount", sendmmsgCount),
+		zap.Uint64("msgsSent", msgsSent),
 		zap.Uint64("packetsSent", packetsSent),
 		zap.Uint64("wgBytesSent", wgBytesSent),
 		zap.Int("burstBatchSize", burstBatchSize),
+		zap.Uint32("burstSegmentCount", burstSegmentCount),
 	)
 }
 
 func (s *server) relayWgToProxySendmmsg(downlink serverNatDownlinkMmsg) {
 	var (
-		sendmmsgCount  uint64
-		packetsSent    uint64
-		wgBytesSent    uint64
-		burstBatchSize int
+		clientPktinfo         pktinfo
+		queuedPackets         []queuedPacket
+		recvmmmsgCount        uint64
+		msgsReceived          uint64
+		packetsReceived       uint64
+		wgBytesReceived       uint64
+		sendmmsgCount         uint64
+		msgsSent              uint64
+		packetsSent           uint64
+		swgpBytesSent         uint64
+		burstRecvBatchSize    int
+		burstSendBatchSize    int
+		burstRecvSegmentCount uint32
+		burstSendSegmentCount uint32
 	)
 
-	clientPktinfop := downlink.clientPktinfop
-	clientPktinfo := *clientPktinfop
+	if downlink.clientPktinfop != nil {
+		clientPktinfo = *downlink.clientPktinfop
+	}
 
 	name, namelen := conn.AddrPortToSockaddr(downlink.clientAddrPort)
-	headroom := s.handler.Headroom()
-	plaintextLen := downlink.maxProxyPacketSize - headroom.Front - headroom.Rear
-
 	savec := make([]unix.RawSockaddrInet6, s.relayBatchSize)
-	bufvec := make([][]byte, s.relayBatchSize)
+	recvPacketBuf := make([]byte, s.relayBatchSize*downlink.maxProxyPacketSize)
+	recvCmsgBuf := make([]byte, s.relayBatchSize*conn.SocketControlMessageBufferSize)
+	sendPacketBuf := make([]byte, 0, s.relayBatchSize*downlink.maxProxyPacketSize)
+	sendCmsgBuf := make([]byte, 0, s.relayBatchSize*conn.SocketControlMessageBufferSize)
+	rbufvec := make([][]byte, s.relayBatchSize)
+	rcmsgvec := make([][]byte, s.relayBatchSize)
 	riovec := make([]unix.Iovec, s.relayBatchSize)
-	siovec := make([]unix.Iovec, s.relayBatchSize)
+	siovec := make([]unix.Iovec, 0, s.relayBatchSize)
 	rmsgvec := make([]conn.Mmsghdr, s.relayBatchSize)
-	smsgvec := make([]conn.Mmsghdr, s.relayBatchSize)
+	smsgvec := make([]conn.Mmsghdr, 0, s.relayBatchSize)
 
 	for i := range s.relayBatchSize {
-		packetBuf := make([]byte, downlink.maxProxyPacketSize)
-		bufvec[i] = packetBuf
+		rbufvec[i] = recvPacketBuf[:downlink.maxProxyPacketSize:downlink.maxProxyPacketSize]
+		recvPacketBuf = recvPacketBuf[downlink.maxProxyPacketSize:]
 
-		riovec[i].Base = &packetBuf[headroom.Front]
-		riovec[i].SetLen(plaintextLen)
+		rcmsgvec[i] = recvCmsgBuf[:conn.SocketControlMessageBufferSize:conn.SocketControlMessageBufferSize]
+		recvCmsgBuf = recvCmsgBuf[conn.SocketControlMessageBufferSize:]
+
+		riovec[i].Base = unsafe.SliceData(rbufvec[i])
+		riovec[i].SetLen(downlink.maxProxyPacketSize)
 
 		rmsgvec[i].Msghdr.Name = (*byte)(unsafe.Pointer(&savec[i]))
 		rmsgvec[i].Msghdr.Namelen = unix.SizeofSockaddrInet6
 		rmsgvec[i].Msghdr.Iov = &riovec[i]
 		rmsgvec[i].Msghdr.SetIovlen(1)
-
-		smsgvec[i].Msghdr.Name = name
-		smsgvec[i].Msghdr.Namelen = namelen
-		smsgvec[i].Msghdr.Iov = &siovec[i]
-		smsgvec[i].Msghdr.SetIovlen(1)
-		smsgvec[i].Msghdr.Control = unsafe.SliceData(clientPktinfo)
-		smsgvec[i].Msghdr.SetControllen(len(clientPktinfo))
+		rmsgvec[i].Msghdr.Control = unsafe.SliceData(rcmsgvec[i])
+		rmsgvec[i].Msghdr.SetControllen(conn.SocketControlMessageBufferSize)
 	}
 
 	for {
@@ -538,11 +683,16 @@ func (s *server) relayWgToProxySendmmsg(downlink serverNatDownlinkMmsg) {
 			continue
 		}
 
-		var ns int
+		recvmmmsgCount++
+		msgsReceived += uint64(nr)
+		burstRecvBatchSize = max(burstRecvBatchSize, nr)
+
 		rmsgvecn := rmsgvec[:nr]
 
 		for i := range rmsgvecn {
 			msg := &rmsgvecn[i]
+			cmsg := rcmsgvec[i][:msg.Msghdr.Controllen]
+			msg.Msghdr.SetControllen(conn.SocketControlMessageBufferSize)
 
 			packetSourceAddrPort, err := conn.SockaddrToAddrPort(msg.Msghdr.Name, msg.Msghdr.Namelen)
 			if err != nil {
@@ -568,54 +718,173 @@ func (s *server) relayWgToProxySendmmsg(downlink serverNatDownlinkMmsg) {
 				continue
 			}
 
-			err = conn.ParseFlagsForError(int(msg.Msghdr.Flags))
-			if err != nil {
-				s.logger.Warn("Packet from wgConn discarded",
+			if err = conn.ParseFlagsForError(int(msg.Msghdr.Flags)); err != nil {
+				s.logger.Warn("Discarded packet from wgConn",
 					zap.String("server", s.name),
 					zap.String("listenAddress", s.proxyListenAddress),
 					zap.Stringer("clientAddress", downlink.clientAddrPort),
 					zap.Stringer("wgAddress", downlink.wgAddrPort),
 					zap.Uint32("packetLength", msg.Msglen),
+					zap.Int("cmsgLength", len(cmsg)),
 					zap.Error(err),
 				)
 				continue
 			}
 
-			packetBuf := bufvec[i]
-			swgpPacketStart, swgpPacketLength, err := s.handler.EncryptZeroCopy(packetBuf, headroom.Front, int(msg.Msglen))
+			rscm, err := conn.ParseSocketControlMessage(cmsg)
 			if err != nil {
-				s.logger.Warn("Failed to encrypt WireGuard packet",
+				s.logger.Warn("Failed to parse socket control message from wgConn",
 					zap.String("server", s.name),
 					zap.String("listenAddress", s.proxyListenAddress),
 					zap.Stringer("clientAddress", downlink.clientAddrPort),
 					zap.Stringer("wgAddress", downlink.wgAddrPort),
+					zap.Stringer("packetSourceAddress", packetSourceAddrPort),
+					zap.Int("cmsgLength", len(cmsg)),
 					zap.Error(err),
 				)
 				continue
 			}
 
-			siovec[ns].Base = &packetBuf[swgpPacketStart]
-			siovec[ns].SetLen(swgpPacketLength)
-			ns++
-			wgBytesSent += uint64(msg.Msglen)
-		}
+			wgBytesReceived += uint64(msg.Msglen)
 
-		if ns == 0 {
-			continue
-		}
+			wgPacketBuf := rbufvec[i][:msg.Msglen]
 
-		if cpp := downlink.clientPktinfo.Load(); cpp != clientPktinfop {
-			clientPktinfo = *cpp
-			clientPktinfop = cpp
+			recvSegmentSize := int(rscm.SegmentSize)
+			if recvSegmentSize == 0 {
+				recvSegmentSize = len(wgPacketBuf)
+			}
 
-			for i := range smsgvec {
-				smsgvec[i].Msghdr.Control = unsafe.SliceData(clientPktinfo)
-				smsgvec[i].Msghdr.SetControllen(len(clientPktinfo))
+			var (
+				recvSegmentCount uint32
+				qpLength         uint32
+				qpSegmentSize    uint32
+				qpSegmentCount   uint32
+			)
+
+			for len(wgPacketBuf) > 0 {
+				wgPacketLength := min(len(wgPacketBuf), recvSegmentSize)
+				wgPacket := wgPacketBuf[:wgPacketLength]
+				wgPacketBuf = wgPacketBuf[wgPacketLength:]
+				recvSegmentCount++
+
+				dst, err := downlink.handler.Encrypt(sendPacketBuf, wgPacket)
+				if err != nil {
+					s.logger.Warn("Failed to encrypt wgPacket",
+						zap.String("server", s.name),
+						zap.String("listenAddress", s.proxyListenAddress),
+						zap.Stringer("clientAddress", downlink.clientAddrPort),
+						zap.Stringer("wgAddress", downlink.wgAddrPort),
+						zap.Int("packetLength", wgPacketLength),
+						zap.Error(err),
+					)
+					continue
+				}
+
+				segmentSize := uint32(len(dst) - len(sendPacketBuf))
+
+				switch {
+				case qpLength == 0:
+					qpLength = segmentSize
+					qpSegmentSize = segmentSize
+					qpSegmentCount = 1
+				case qpSegmentSize < segmentSize:
+					// Save existing qp and start a new one with the current segment.
+					queuedPackets = append(queuedPackets, queuedPacket{
+						buf:          sendPacketBuf[len(sendPacketBuf)-int(qpLength):],
+						segmentSize:  qpSegmentSize,
+						segmentCount: qpSegmentCount,
+					})
+					qpLength = segmentSize
+					qpSegmentSize = segmentSize
+					qpSegmentCount = 1
+				case qpSegmentSize == segmentSize:
+					// Keep segment.
+					qpLength += segmentSize
+					qpSegmentCount++
+				case qpSegmentSize > segmentSize:
+					// Segment is the last short segment.
+					queuedPackets = append(queuedPackets, queuedPacket{
+						buf:          dst[len(sendPacketBuf)-int(qpLength):],
+						segmentSize:  qpSegmentSize,
+						segmentCount: qpSegmentCount + 1,
+					})
+					qpLength = 0
+				default:
+					panic("unreachable")
+				}
+
+				sendPacketBuf = dst
+			}
+
+			packetsReceived += uint64(recvSegmentCount)
+			burstRecvSegmentCount = max(burstRecvSegmentCount, recvSegmentCount)
+
+			if qpLength > 0 {
+				queuedPackets = append(queuedPackets, queuedPacket{
+					buf:          sendPacketBuf[len(sendPacketBuf)-int(qpLength):],
+					segmentSize:  qpSegmentSize,
+					segmentCount: qpSegmentCount,
+				})
 			}
 		}
 
-		err = downlink.proxyConn.WriteMsgs(smsgvec[:ns], 0)
-		if err != nil {
+		if len(queuedPackets) == 0 {
+			continue
+		}
+
+		if cpp := downlink.clientPktinfo.Load(); cpp != downlink.clientPktinfop {
+			clientPktinfo = *cpp
+			downlink.clientPktinfop = cpp
+		}
+
+		for _, qp := range queuedPackets {
+			b := qp.buf
+			segmentsRemaining := qp.segmentCount
+
+			for segmentsRemaining > 0 {
+				sendSegmentCount := min(segmentsRemaining, downlink.proxyConnInfo.MaxUDPGSOSegments)
+				segmentsRemaining -= sendSegmentCount
+
+				sendBufSize := min(len(b), int(qp.segmentSize*sendSegmentCount))
+				sendBuf := b[:sendBufSize]
+				b = b[sendBufSize:]
+
+				sscm := conn.SocketControlMessage{
+					PktinfoAddr:    clientPktinfo.addr,
+					PktinfoIfindex: clientPktinfo.ifindex,
+				}
+				if sendSegmentCount > 1 {
+					sscm.SegmentSize = qp.segmentSize
+				}
+				dst := sscm.AppendTo(sendCmsgBuf)
+				cmsg := dst[len(sendCmsgBuf):]
+				sendCmsgBuf = dst
+
+				siovec = append(siovec, unix.Iovec{
+					Base: unsafe.SliceData(sendBuf),
+					Len:  uint64(len(sendBuf)),
+				})
+
+				smsgvec = append(smsgvec, conn.Mmsghdr{
+					Msghdr: unix.Msghdr{
+						Name:       name,
+						Namelen:    namelen,
+						Iov:        &siovec[len(siovec)-1],
+						Iovlen:     1,
+						Control:    unsafe.SliceData(cmsg),
+						Controllen: uint64(len(cmsg)),
+					},
+				})
+
+				packetsSent += uint64(sendSegmentCount)
+				swgpBytesSent += uint64(len(sendBuf))
+				burstSendSegmentCount = max(burstSendSegmentCount, sendSegmentCount)
+			}
+		}
+
+		queuedPackets = queuedPackets[:0]
+
+		if err = downlink.proxyConn.WriteMsgs(smsgvec, 0); err != nil {
 			s.logger.Warn("Failed to write swgpPacket to proxyConn",
 				zap.String("server", s.name),
 				zap.String("listenAddress", s.proxyListenAddress),
@@ -626,8 +895,13 @@ func (s *server) relayWgToProxySendmmsg(downlink serverNatDownlinkMmsg) {
 		}
 
 		sendmmsgCount++
-		packetsSent += uint64(ns)
-		burstBatchSize = max(burstBatchSize, ns)
+		msgsSent += uint64(len(smsgvec))
+		burstSendBatchSize = max(burstSendBatchSize, len(smsgvec))
+
+		sendPacketBuf = sendPacketBuf[:0]
+		sendCmsgBuf = sendCmsgBuf[:0]
+		siovec = siovec[:0]
+		smsgvec = smsgvec[:0]
 	}
 
 	s.logger.Info("Finished relay wgConn -> proxyConn",
@@ -635,9 +909,17 @@ func (s *server) relayWgToProxySendmmsg(downlink serverNatDownlinkMmsg) {
 		zap.String("listenAddress", s.proxyListenAddress),
 		zap.Stringer("clientAddress", downlink.clientAddrPort),
 		zap.Stringer("wgAddress", downlink.wgAddrPort),
+		zap.Uint64("recvmmmsgCount", recvmmmsgCount),
+		zap.Uint64("msgsReceived", msgsReceived),
+		zap.Uint64("packetsReceived", packetsReceived),
+		zap.Uint64("wgBytesReceived", wgBytesReceived),
 		zap.Uint64("sendmmsgCount", sendmmsgCount),
+		zap.Uint64("msgsSent", msgsSent),
 		zap.Uint64("packetsSent", packetsSent),
-		zap.Uint64("wgBytesSent", wgBytesSent),
-		zap.Int("burstBatchSize", burstBatchSize),
+		zap.Uint64("swgpBytesSent", swgpBytesSent),
+		zap.Int("burstRecvBatchSize", burstRecvBatchSize),
+		zap.Int("burstSendBatchSize", burstSendBatchSize),
+		zap.Uint32("burstRecvSegmentCount", burstRecvSegmentCount),
+		zap.Uint32("burstSendSegmentCount", burstSendSegmentCount),
 	)
 }

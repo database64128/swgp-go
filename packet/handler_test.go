@@ -1,57 +1,60 @@
 package packet
 
 import (
+	"bytes"
 	"crypto/rand"
 	"errors"
+	mrand "math/rand/v2"
 	"testing"
 )
+
+var rng *mrand.ChaCha8
+
+func init() {
+	var seed [32]byte
+	if _, err := rand.Read(seed[:]); err != nil {
+		panic(err)
+	}
+	rng = mrand.NewChaCha8(seed)
+}
 
 func testHandler(
 	t *testing.T,
 	msgType byte,
-	length, extraFrontHeadroom, extraRearHeadroom int,
+	length int,
 	h Handler,
 	expectedEncryptErr, expectedDecryptErr error,
 	verifyFunc func(t *testing.T, wgPacket, swgpPacket, decryptedWgPacket []byte),
 ) {
-	headroom := h.Headroom()
-	headroom.Front += extraFrontHeadroom
-	headroom.Rear += extraRearHeadroom
+	t.Helper()
 
-	// Prepare buffer.
-	buf := make([]byte, headroom.Front+length+headroom.Rear)
-	_, err := rand.Read(buf)
-	if err != nil {
-		t.Fatal(err)
+	wgPacket := make([]byte, length)
+	if length > 0 {
+		wgPacket[0] = msgType
+		_, _ = rng.Read(wgPacket[1:])
 	}
-	buf[headroom.Front] = msgType
 
-	var wgPacket, swgpPacket, decryptedWgPacket []byte
-
-	// Save original packet.
-	wgPacket = append(wgPacket, buf[headroom.Front:headroom.Front+length]...)
-
-	// Encrypt.
-	swgpPacketStart, swgpPacketLength, err := h.EncryptZeroCopy(buf, headroom.Front, length)
+	swgpPacket, err := h.Encrypt(nil, wgPacket)
 	if !errors.Is(err, expectedEncryptErr) {
-		t.Fatalf("Expected encryption error: %s\nGot: %s", expectedEncryptErr, err)
+		t.Fatalf("h.Encrypt got %v, want %v", err, expectedEncryptErr)
 	}
 	if err != nil {
 		return
 	}
 
-	// Save encrypted packet.
-	swgpPacket = append(swgpPacket, buf[swgpPacketStart:swgpPacketStart+swgpPacketLength]...)
-
-	// Decrypt.
-	wgPacketStart, wgPacketLength, err := h.DecryptZeroCopy(buf, swgpPacketStart, swgpPacketLength)
+	decryptedWgPacket, err := h.Decrypt(nil, swgpPacket)
 	if !errors.Is(err, expectedDecryptErr) {
-		t.Fatalf("Expected decryption error: %s\nGot: %s", expectedDecryptErr, err)
+		t.Fatalf("h.Decrypt got %v, want %v", err, expectedDecryptErr)
 	}
 	if err != nil {
 		return
 	}
-	decryptedWgPacket = buf[wgPacketStart : wgPacketStart+wgPacketLength]
 
-	verifyFunc(t, wgPacket, swgpPacket, decryptedWgPacket)
+	if !bytes.Equal(decryptedWgPacket, wgPacket) {
+		t.Errorf("decryptedWgPacket = %v, want %v", decryptedWgPacket, wgPacket)
+	}
+
+	if verifyFunc != nil {
+		verifyFunc(t, wgPacket, swgpPacket, decryptedWgPacket)
+	}
 }

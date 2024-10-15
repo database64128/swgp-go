@@ -18,7 +18,9 @@
             "batchMode": "",
             "relayBatchSize": 0,
             "mainRecvBatchSize": 0,
-            "sendChannelCapacity": 0
+            "sendChannelCapacity": 0,
+            "disableUDPGSO": false,
+            "disableUDPGRO": false
         }
     ],
     "clients": [
@@ -40,7 +42,9 @@
             "batchMode": "",
             "relayBatchSize": 0,
             "mainRecvBatchSize": 0,
-            "sendChannelCapacity": 0
+            "sendChannelCapacity": 0,
+            "disableUDPGSO": false,
+            "disableUDPGRO": false
         }
     ],
     "pprof": {

@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/netip"
 	"testing"
+	"time"
 
 	"github.com/database64128/swgp-go/conn"
 	"github.com/database64128/swgp-go/packet"
@@ -23,14 +24,14 @@ var cases = []struct {
 		name: "ZeroOverhead",
 		serverConfig: ServerConfig{
 			Name:               "wg0",
-			ProxyListenAddress: ":20200",
+			ProxyListenAddress: "[::1]:20200",
 			ProxyMode:          "zero-overhead",
 			WgEndpointAddress:  conn.AddrFromIPPort(netip.AddrPortFrom(netip.IPv6Loopback(), 20201)),
 			MTU:                1500,
 		},
 		clientConfig: ClientConfig{
 			Name:                 "wg0",
-			WgListenAddress:      ":20202",
+			WgListenAddress:      "[::1]:20202",
 			ProxyEndpointAddress: conn.AddrFromIPPort(netip.AddrPortFrom(netip.IPv6Loopback(), 20200)),
 			ProxyMode:            "zero-overhead",
 			MTU:                  1500,
@@ -40,14 +41,14 @@ var cases = []struct {
 		name: "Paranoid",
 		serverConfig: ServerConfig{
 			Name:               "wg0",
-			ProxyListenAddress: ":20200",
+			ProxyListenAddress: "[::1]:20200",
 			ProxyMode:          "paranoid",
 			WgEndpointAddress:  conn.AddrFromIPPort(netip.AddrPortFrom(netip.IPv6Loopback(), 20201)),
 			MTU:                1500,
 		},
 		clientConfig: ClientConfig{
 			Name:                 "wg0",
-			WgListenAddress:      ":20202",
+			WgListenAddress:      "[::1]:20202",
 			ProxyEndpointAddress: conn.AddrFromIPPort(netip.AddrPortFrom(netip.IPv6Loopback(), 20200)),
 			ProxyMode:            "paranoid",
 			MTU:                  1500,
@@ -117,6 +118,15 @@ func testClientServerHandshake(t *testing.T, ctx context.Context, logger *zap.Lo
 		t.Fatal(err)
 	}
 	defer serverConn.Close()
+
+	// Set read/write deadlines to make the test fail fast.
+	deadline := time.Now().Add(3 * time.Second)
+	if err = clientConn.SetDeadline(deadline); err != nil {
+		t.Fatal(err)
+	}
+	if err = serverConn.SetDeadline(deadline); err != nil {
+		t.Fatal(err)
+	}
 
 	// Client sends handshake initiation.
 	_, err = clientConn.Write(handshakeInitiationPacket)
@@ -189,12 +199,6 @@ func testClientServerDataPackets(t *testing.T, ctx context.Context, logger *zap.
 	copy(expectedSmallDataPacket, smallDataPacket)
 	receivedSmallDataPacket := make([]byte, 1024+1)
 
-	bigDataPacket := make([]byte, 2048)
-	bigDataPacket[0] = packet.WireGuardMessageTypeData
-	if _, err = rand.Read(bigDataPacket[1:]); err != nil {
-		t.Fatal(err)
-	}
-
 	// Start client and server conns.
 	clientConn, err := net.Dial("udp", clientConfig.WgListenAddress)
 	if err != nil {
@@ -208,9 +212,12 @@ func testClientServerDataPackets(t *testing.T, ctx context.Context, logger *zap.
 	}
 	defer serverConn.Close()
 
-	// Client sends big data packet.
-	_, err = clientConn.Write(bigDataPacket)
-	if err != nil {
+	// Set read/write deadlines to make the test fail fast.
+	deadline := time.Now().Add(3 * time.Second)
+	if err = clientConn.SetDeadline(deadline); err != nil {
+		t.Fatal(err)
+	}
+	if err = serverConn.SetDeadline(deadline); err != nil {
 		t.Fatal(err)
 	}
 
@@ -229,12 +236,6 @@ func testClientServerDataPackets(t *testing.T, ctx context.Context, logger *zap.
 	// Server verifies small data packet.
 	if !bytes.Equal(receivedSmallDataPacket[:n], expectedSmallDataPacket) {
 		t.Error("Received small data packet does not match expectation.")
-	}
-
-	// Server sends big data packet.
-	_, err = serverConn.WriteToUDPAddrPort(bigDataPacket, addr)
-	if err != nil {
-		t.Fatal(err)
 	}
 
 	// Server sends small data packet.

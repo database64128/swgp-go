@@ -1,44 +1,44 @@
 package packet
 
 import (
-	"bytes"
 	"crypto/rand"
+	"strconv"
 	"testing"
-
-	"golang.org/x/crypto/chacha20poly1305"
 )
 
-func testNewParanoidHandler(t *testing.T) Handler {
+func newParanoidHandler(t *testing.T) Handler {
+	t.Helper()
+
 	psk := make([]byte, 32)
-	_, err := rand.Read(psk)
-	if err != nil {
+	if _, err := rand.Read(psk); err != nil {
 		t.Fatal(err)
 	}
 
-	h, err := NewParanoidHandler(psk)
+	h, err := NewParanoidHandler(psk, 1452)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return h
 }
 
-func testParanoidVerifyPacket(t *testing.T, wgPacket, swgpPacket, decryptedWgPacket []byte) {
-	if len(swgpPacket) < chacha20poly1305.NonceSizeX+2+len(wgPacket)+chacha20poly1305.Overhead {
-		t.Error("Bad swgpPacket length.")
-	}
+func TestParanoidHandler(t *testing.T) {
+	h := newParanoidHandler(t)
 
-	if !bytes.Equal(wgPacket, decryptedWgPacket) {
-		t.Error("Decrypted packet is different from original packet.")
-	}
-}
-
-func TestParanoidHandlePacket(t *testing.T) {
-	h := testNewParanoidHandler(t)
-
-	for i := 1; i < 128; i++ {
-		testHandler(t, WireGuardMessageTypeHandshakeInitiation, i, 0, 0, h, nil, nil, testParanoidVerifyPacket)
-		testHandler(t, WireGuardMessageTypeHandshakeResponse, i, 0, 0, h, nil, nil, testParanoidVerifyPacket)
-		testHandler(t, WireGuardMessageTypeHandshakeCookieReply, i, 0, 0, h, nil, nil, testParanoidVerifyPacket)
-		testHandler(t, WireGuardMessageTypeData, i, 0, 0, h, nil, nil, testParanoidVerifyPacket)
+	for _, msg := range []struct {
+		name    string
+		msgType byte
+	}{
+		{"HandshakeInitiation", WireGuardMessageTypeHandshakeInitiation},
+		{"HandshakeResponse", WireGuardMessageTypeHandshakeResponse},
+		{"HandshakeCookieReply", WireGuardMessageTypeHandshakeCookieReply},
+		{"Data", WireGuardMessageTypeData},
+	} {
+		t.Run(msg.name, func(t *testing.T) {
+			for _, length := range []int{0, 1, 16, 128, 1280} {
+				t.Run(strconv.Itoa(length), func(t *testing.T) {
+					testHandler(t, msg.msgType, length, h, nil, nil, nil)
+				})
+			}
+		})
 	}
 }

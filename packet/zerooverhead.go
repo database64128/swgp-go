@@ -8,12 +8,9 @@ import (
 	"fmt"
 	mrand "math/rand/v2"
 
+	"github.com/database64128/swgp-go/slicehelper"
 	"golang.org/x/crypto/chacha20poly1305"
 )
-
-// zeroOverheadHandshakePacketMinimumOverhead is the minimum overhead of a handshake packet encrypted by zeroOverheadHandler.
-// Additional overhead is the random-length padding.
-const zeroOverheadHandshakePacketMinimumOverhead = 2 + chacha20poly1305.Overhead + chacha20poly1305.NonceSizeX
 
 // zeroOverheadHandler encrypts and decrypts the first 16 bytes of packets using an AES block cipher.
 // The remainder of handshake packets (message type 1, 2, 3) are also randomly padded and encrypted
@@ -22,15 +19,17 @@ const zeroOverheadHandshakePacketMinimumOverhead = 2 + chacha20poly1305.Overhead
 //	swgpPacket := aes(wgDataPacket[:16]) + wgDataPacket[16:]
 //	swgpPacket := aes(wgHandshakePacket[:16]) + AEAD_Seal(payload + padding + u16be payload length) + 24B nonce
 //
-// zeroOverheadHandler implements the Handler interface.
+// zeroOverheadHandler implements [Handler].
 type zeroOverheadHandler struct {
-	cb   cipher.Block
-	aead cipher.AEAD
+	cb                     cipher.Block
+	aead                   cipher.AEAD
+	maxPacketSize          int
+	maxHandshakePacketSize int
 }
 
 // NewZeroOverheadHandler creates a zero-overhead handler that
 // uses the given PSK to encrypt and decrypt packets.
-func NewZeroOverheadHandler(psk []byte) (Handler, error) {
+func NewZeroOverheadHandler(psk []byte, maxPacketSize int) (Handler, error) {
 	cb, err := aes.NewCipher(psk)
 	if err != nil {
 		return nil, err
@@ -42,45 +41,57 @@ func NewZeroOverheadHandler(psk []byte) (Handler, error) {
 	}
 
 	return &zeroOverheadHandler{
-		cb:   cb,
-		aead: aead,
+		cb:                     cb,
+		aead:                   aead,
+		maxPacketSize:          maxPacketSize,
+		maxHandshakePacketSize: zeroOverheadHandlerMaxHandshakePacketSizeFromMaxPacketSize(maxPacketSize),
 	}, nil
 }
 
-// Headroom implements the Handler Headroom method.
-func (*zeroOverheadHandler) Headroom() Headroom {
-	return Headroom{}
+// WithMaxPacketSize implements [Handler.WithMaxPacketSize].
+func (h *zeroOverheadHandler) WithMaxPacketSize(maxPacketSize int) Handler {
+	if h.maxPacketSize == maxPacketSize {
+		return h
+	}
+	return &zeroOverheadHandler{
+		cb:                     h.cb,
+		aead:                   h.aead,
+		maxHandshakePacketSize: zeroOverheadHandlerMaxHandshakePacketSizeFromMaxPacketSize(maxPacketSize),
+	}
 }
 
-// EncryptZeroCopy implements the Handler EncryptZeroCopy method.
-func (h *zeroOverheadHandler) EncryptZeroCopy(buf []byte, wgPacketStart, wgPacketLength int) (swgpPacketStart, swgpPacketLength int, err error) {
-	swgpPacketStart = wgPacketStart
-	swgpPacketLength = wgPacketLength
+func zeroOverheadHandlerMaxHandshakePacketSizeFromMaxPacketSize(maxPacketSize int) int {
+	return maxPacketSize - 2 - chacha20poly1305.Overhead - chacha20poly1305.NonceSizeX
+}
 
-	// Skip small packets.
-	if wgPacketLength < 16 {
-		return
+// Encrypt implements [Handler.Encrypt].
+func (h *zeroOverheadHandler) Encrypt(dst, wgPacket []byte) ([]byte, error) {
+	// Return packets smaller than a single AES block unmodified.
+	if len(wgPacket) < aes.BlockSize {
+		return append(dst, wgPacket...), nil
 	}
 
-	// Save message type.
-	messageType := buf[wgPacketStart]
+	dst, b := slicehelper.Extend(dst, len(wgPacket))
 
-	// Encrypt first 16 bytes.
-	h.cb.Encrypt(buf[wgPacketStart:], buf[wgPacketStart:])
+	// Save message type.
+	messageType := wgPacket[0]
+
+	// Encrypt the first AES block.
+	h.cb.Encrypt(b, wgPacket)
+
+	// Copy the remaining bytes.
+	remainingPayloadSize := copy(b[aes.BlockSize:], wgPacket[aes.BlockSize:])
 
 	// We are done with non-handshake packets.
 	switch messageType {
 	case WireGuardMessageTypeHandshakeInitiation, WireGuardMessageTypeHandshakeResponse, WireGuardMessageTypeHandshakeCookieReply:
 	default:
-		return
+		return dst, nil
 	}
 
-	// Return error if packet is so big that buffer has no room for AEAD overhead.
-	rearHeadroom := len(buf) - wgPacketStart - wgPacketLength
-	paddingHeadroom := rearHeadroom - 2 - chacha20poly1305.Overhead - chacha20poly1305.NonceSizeX
-	if paddingHeadroom < 0 {
-		err = &HandlerErr{ErrPacketSize, fmt.Sprintf("handshake packet (length %d) is too large to process in buffer (length %d)", wgPacketLength, len(buf))}
-		return
+	paddingHeadroom := h.maxHandshakePacketSize - len(wgPacket)
+	if paddingHeadroom < 0 || remainingPayloadSize > 65535 {
+		return nil, fmt.Errorf("handshake packet (type %d) is too large (%d bytes)", messageType, len(wgPacket))
 	}
 
 	var paddingLen int
@@ -88,77 +99,67 @@ func (h *zeroOverheadHandler) EncryptZeroCopy(buf []byte, wgPacketStart, wgPacke
 		paddingLen = 1 + mrand.IntN(paddingHeadroom)
 	}
 
-	swgpPacketLength += paddingLen + zeroOverheadHandshakePacketMinimumOverhead
+	dst, b = slicehelper.Extend(dst, paddingLen+2+chacha20poly1305.Overhead+chacha20poly1305.NonceSizeX)
 
-	// Calculate offsets.
-	plaintextStart := wgPacketStart + 16
-	payloadLengthBufStart := wgPacketStart + wgPacketLength + paddingLen
-	plaintextEnd := payloadLengthBufStart + 2
-	nonceStart := plaintextEnd + chacha20poly1305.Overhead
-	nonceEnd := nonceStart + chacha20poly1305.NonceSizeX
+	// Put payload length.
+	binary.BigEndian.PutUint16(b[paddingLen:], uint16(remainingPayloadSize))
 
-	// Write payload length.
-	payloadLength := wgPacketLength - 16
-	payloadLengthBuf := buf[payloadLengthBufStart:plaintextEnd]
-	binary.BigEndian.PutUint16(payloadLengthBuf, uint16(payloadLength))
-
-	plaintext := buf[plaintextStart:plaintextEnd]
-	nonce := buf[nonceStart:nonceEnd]
-	_, err = rand.Read(nonce)
-	if err != nil {
-		return
+	// Put nonce.
+	nonce := dst[len(dst)-chacha20poly1305.NonceSizeX:]
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, err
 	}
 
-	h.aead.Seal(plaintext[:0], nonce, plaintext, nil)
-	return
+	// Seal the remainder in-place.
+	plaintextEnd := len(dst) - chacha20poly1305.NonceSizeX - chacha20poly1305.Overhead
+	plaintextStart := plaintextEnd - 2 - paddingLen - remainingPayloadSize
+	plaintext := dst[plaintextStart:plaintextEnd]
+	_ = h.aead.Seal(plaintext[:0], nonce, plaintext, nil)
+
+	return dst, nil
 }
 
-// DecryptZeroCopy implements the Handler DecryptZeroCopy method.
-func (h *zeroOverheadHandler) DecryptZeroCopy(buf []byte, swgpPacketStart, swgpPacketLength int) (wgPacketStart, wgPacketLength int, err error) {
-	wgPacketStart = swgpPacketStart
-	wgPacketLength = swgpPacketLength
-
-	// Skip small packets.
-	if swgpPacketLength < 16 {
-		return
+// Decrypt implements [Handler.Decrypt].
+func (h *zeroOverheadHandler) Decrypt(dst, swgpPacket []byte) ([]byte, error) {
+	// Return packets smaller than a single AES block unmodified.
+	if len(swgpPacket) < aes.BlockSize {
+		return append(dst, swgpPacket...), nil
 	}
 
-	// Decrypt first 16 bytes.
-	h.cb.Decrypt(buf[swgpPacketStart:], buf[swgpPacketStart:])
+	dst, b := slicehelper.Extend(dst, aes.BlockSize)
 
-	// We are done with non-handshake and short handshake packets.
-	switch buf[swgpPacketStart] {
+	// Decrypt the first AES block.
+	h.cb.Decrypt(b, swgpPacket)
+
+	// For non-handshake packets, copy the remaining bytes and be done with it.
+	switch b[0] {
 	case WireGuardMessageTypeHandshakeInitiation, WireGuardMessageTypeHandshakeResponse, WireGuardMessageTypeHandshakeCookieReply:
-		if swgpPacketLength < 16+zeroOverheadHandshakePacketMinimumOverhead {
-			err = &HandlerErr{ErrPacketSize, fmt.Sprintf("swgp packet too short: %d", swgpPacketLength)}
-			return
-		}
 	default:
-		return
+		return append(dst, swgpPacket[aes.BlockSize:]...), nil
 	}
 
-	// Calculate offsets.
-	nonceEnd := swgpPacketStart + swgpPacketLength
-	nonceStart := nonceEnd - chacha20poly1305.NonceSizeX
-	plaintextEnd := nonceStart - chacha20poly1305.Overhead
-	payloadLengthBufStart := plaintextEnd - 2
-	plaintextStart := swgpPacketStart + 16
+	if len(swgpPacket) < aes.BlockSize+2+chacha20poly1305.Overhead+chacha20poly1305.NonceSizeX {
+		return nil, fmt.Errorf("invalid swgp handshake packet length %d", len(swgpPacket))
+	}
 
-	ciphertext := buf[plaintextStart:nonceStart]
-	nonce := buf[nonceStart:nonceEnd]
-	_, err = h.aead.Open(ciphertext[:0], nonce, ciphertext, nil)
+	dstLen := len(dst)
+
+	// Open the remainder into dst.
+	nonceStart := len(swgpPacket) - chacha20poly1305.NonceSizeX
+	nonce := swgpPacket[nonceStart:]
+	ciphertext := swgpPacket[aes.BlockSize:nonceStart]
+	dst, err := h.aead.Open(dst, nonce, ciphertext, nil)
 	if err != nil {
-		return
+		return nil, err
 	}
 
 	// Read and validate payload length.
-	payloadLengthBuf := buf[payloadLengthBufStart:plaintextEnd]
-	payloadLength := int(binary.BigEndian.Uint16(payloadLengthBuf))
-	if payloadLength > payloadLengthBufStart-plaintextStart {
-		err = &HandlerErr{ErrPayloadLength, fmt.Sprintf("payload length field value %d is out of range", payloadLength)}
-		return
+	paddingEnd := len(dst) - 2
+	remainingPayloadSize := int(binary.BigEndian.Uint16(dst[paddingEnd:]))
+	dstLen += remainingPayloadSize
+	if dstLen > paddingEnd {
+		return nil, fmt.Errorf("invalid swgp handshake packet payload length %d", remainingPayloadSize)
 	}
 
-	wgPacketLength = 16 + payloadLength
-	return
+	return dst[:dstLen], nil
 }

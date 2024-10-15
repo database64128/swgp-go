@@ -5,107 +5,102 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"fmt"
-	"math"
-	mrand "math/rand/v2"
 
+	"github.com/database64128/swgp-go/slicehelper"
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
 // paranoidHandler encrypts and decrypts whole packets using an AEAD cipher.
-// All packets, irrespective of message type, are padded up to the maximum packet length
+// All packets, irrespective of message type, are padded to the maximum packet length
 // to hide any possible characteristics.
 //
 //	swgpPacket := 24B nonce + AEAD_Seal(u16be payload length + payload + padding)
 //
-// paranoidHandler implements the Handler interface.
+// paranoidHandler implements [Handler].
 type paranoidHandler struct {
-	aead cipher.AEAD
+	aead           cipher.AEAD
+	maxPacketSize  int
+	maxPayloadSize int
 }
 
 // NewParanoidHandler creates a "paranoid" handler that
 // uses the given PSK to encrypt and decrypt packets.
-func NewParanoidHandler(psk []byte) (Handler, error) {
+func NewParanoidHandler(psk []byte, maxPacketSize int) (Handler, error) {
 	aead, err := chacha20poly1305.NewX(psk)
 	if err != nil {
 		return nil, err
 	}
 
 	return &paranoidHandler{
-		aead: aead,
+		aead:           aead,
+		maxPacketSize:  maxPacketSize,
+		maxPayloadSize: paranoidHandlerMaxPayloadSizeFromMaxPacketSize(maxPacketSize),
 	}, nil
 }
 
-// Headroom implements the Handler Headroom method.
-func (*paranoidHandler) Headroom() Headroom {
-	return Headroom{
-		Front: chacha20poly1305.NonceSizeX + 2,
-		Rear:  chacha20poly1305.Overhead,
+// WithMaxPacketSize implements [Handler.WithMaxPacketSize].
+func (h *paranoidHandler) WithMaxPacketSize(maxPacketSize int) Handler {
+	if h.maxPacketSize == maxPacketSize {
+		return h
+	}
+	return &paranoidHandler{
+		aead:           h.aead,
+		maxPacketSize:  maxPacketSize,
+		maxPayloadSize: paranoidHandlerMaxPayloadSizeFromMaxPacketSize(maxPacketSize),
 	}
 }
 
-// EncryptZeroCopy implements the Handler EncryptZeroCopy method.
-func (h *paranoidHandler) EncryptZeroCopy(buf []byte, wgPacketStart, wgPacketLength int) (swgpPacketStart, swgpPacketLength int, err error) {
-	if wgPacketLength > math.MaxUint16 {
-		err = &HandlerErr{ErrPacketSize, fmt.Sprintf("wg packet (length %d) is too large (greater than %d)", wgPacketLength, math.MaxUint16)}
-		return
-	}
-
-	// Determine padding length.
-	rearHeadroom := len(buf) - wgPacketStart - wgPacketLength
-	paddingHeadroom := rearHeadroom - chacha20poly1305.Overhead
-	var paddingLen int
-	if paddingHeadroom > 0 {
-		paddingLen = 1 + mrand.IntN(paddingHeadroom)
-	}
-
-	// Calculate offsets.
-	swgpPacketStart = wgPacketStart - 2 - chacha20poly1305.NonceSizeX
-	swgpPacketLength = chacha20poly1305.NonceSizeX + 2 + wgPacketLength + paddingLen + chacha20poly1305.Overhead
-
-	nonce := buf[swgpPacketStart : wgPacketStart-2]
-	payloadLength := buf[wgPacketStart-2 : wgPacketStart]
-	plaintext := buf[wgPacketStart-2 : wgPacketStart+wgPacketLength+paddingLen]
-
-	// Write random nonce.
-	_, err = rand.Read(nonce)
-	if err != nil {
-		return
-	}
-
-	// Write payload length.
-	binary.BigEndian.PutUint16(payloadLength, uint16(wgPacketLength))
-
-	// AEAD seal.
-	h.aead.Seal(nonce, nonce, plaintext, nil)
-
-	return
+func paranoidHandlerMaxPayloadSizeFromMaxPacketSize(maxPacketSize int) int {
+	return min(65535, maxPacketSize-chacha20poly1305.NonceSizeX-2-chacha20poly1305.Overhead)
 }
 
-// DecryptZeroCopy implements the Handler DecryptZeroCopy method.
-func (h *paranoidHandler) DecryptZeroCopy(buf []byte, swgpPacketStart, swgpPacketLength int) (wgPacketStart, wgPacketLength int, err error) {
-	if swgpPacketLength < chacha20poly1305.NonceSizeX+2+1+chacha20poly1305.Overhead {
-		err = &HandlerErr{ErrPacketSize, fmt.Sprintf("swgp packet (length %d) is too short", swgpPacketLength)}
-		return
+// Encrypt implements [Handler.Encrypt].
+func (h *paranoidHandler) Encrypt(dst, wgPacket []byte) ([]byte, error) {
+	if len(wgPacket) > h.maxPayloadSize {
+		return nil, fmt.Errorf("packet is too large: got %d bytes, want at most %d bytes", len(wgPacket), h.maxPayloadSize)
 	}
 
-	nonce := buf[swgpPacketStart : swgpPacketStart+chacha20poly1305.NonceSizeX]
-	ciphertext := buf[swgpPacketStart+chacha20poly1305.NonceSizeX : swgpPacketStart+swgpPacketLength]
+	dst, b := slicehelper.Extend(dst, h.maxPacketSize)
+	nonce := b[:chacha20poly1305.NonceSizeX]
+	plaintext := b[chacha20poly1305.NonceSizeX : len(b)-chacha20poly1305.Overhead]
 
-	// AEAD open.
+	// Put nonce.
+	if _, err := rand.Read(nonce); err != nil {
+		return nil, err
+	}
+
+	// Put payload length.
+	binary.BigEndian.PutUint16(plaintext, uint16(len(wgPacket)))
+
+	// Copy payload.
+	_ = copy(plaintext[2:], wgPacket)
+
+	// Seal the plaintext in-place.
+	_ = h.aead.Seal(plaintext[:0], nonce, plaintext, nil)
+
+	return dst, nil
+}
+
+// Decrypt implements [Handler.Decrypt].
+func (h *paranoidHandler) Decrypt(dst, swgpPacket []byte) ([]byte, error) {
+	if len(swgpPacket) != h.maxPacketSize {
+		return nil, fmt.Errorf("invalid packet size: got %d bytes, want %d bytes", len(swgpPacket), h.maxPacketSize)
+	}
+
+	nonce := swgpPacket[:chacha20poly1305.NonceSizeX]
+	ciphertext := swgpPacket[chacha20poly1305.NonceSizeX:]
+
+	// Open the ciphertext in-place.
 	plaintext, err := h.aead.Open(ciphertext[:0], nonce, ciphertext, nil)
 	if err != nil {
-		return
+		return nil, err
 	}
 
 	// Read and validate payload length.
-	payloadLengthBuf := plaintext[:2]
-	payloadLength := int(binary.BigEndian.Uint16(payloadLengthBuf))
-	if payloadLength > len(plaintext)-2 {
-		err = &HandlerErr{ErrPayloadLength, fmt.Sprintf("payload length field value %d is out of range", payloadLength)}
-		return
+	payloadLength := int(binary.BigEndian.Uint16(plaintext))
+	if len(plaintext) < 2+payloadLength {
+		return nil, fmt.Errorf("invalid payload length %d", payloadLength)
 	}
 
-	wgPacketStart = swgpPacketStart + chacha20poly1305.NonceSizeX + 2
-	wgPacketLength = payloadLength
-	return
+	return append(dst, plaintext[2:2+payloadLength]...), nil
 }

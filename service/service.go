@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/netip"
 	"time"
 
 	"github.com/database64128/swgp-go/conn"
@@ -82,6 +83,16 @@ type PerfConfig struct {
 
 	// SendChannelCapacity is the capacity of a relay session's uplink send channel.
 	SendChannelCapacity int `json:"sendChannelCapacity"`
+
+	// DisableUDPGSO disables UDP Generic Segmentation Offload (GSO) on the listener.
+	//
+	// UDP GSO is enabled by default when available.
+	DisableUDPGSO bool `json:"disableUDPGSO"`
+
+	// DisableUDPGRO disables UDP Generic Receive Offload (GRO) on the listener.
+	//
+	// UDP GRO is enabled by default when available.
+	DisableUDPGRO bool `json:"disableUDPGRO"`
 }
 
 // CheckAndApplyDefaults checks and applies default values to the configuration.
@@ -91,6 +102,13 @@ func (pc *PerfConfig) CheckAndApplyDefaults() error {
 	default:
 		return fmt.Errorf("unknown batch mode: %s", pc.BatchMode)
 	}
+
+	// About the batch sizes:
+	//
+	// On Linux, the sendmmsg(2) syscall can process up to UIO_MAXIOV (1024) messages at once.
+	// Passing a vlen value greater than UIO_MAXIOV is allowed, but the kernel will silently truncate it.
+	// The recvmmsg(2) syscall does not have a defined limit on vlen, but it does not make much sense to
+	// do more than that.
 
 	switch {
 	case pc.RelayBatchSize > 0 && pc.RelayBatchSize <= 1024:
@@ -192,26 +210,51 @@ func (m *Manager) Stop() {
 	}
 }
 
-func getPacketHandlerForProxyMode(proxyMode string, proxyPSK []byte) (handler packet.Handler, err error) {
+func newPacketHandler(proxyMode string, proxyPSK []byte, maxPacketSize int) (packet.Handler, error) {
 	switch proxyMode {
 	case "zero-overhead":
-		handler, err = packet.NewZeroOverheadHandler(proxyPSK)
+		return packet.NewZeroOverheadHandler(proxyPSK, maxPacketSize)
 	case "paranoid":
-		handler, err = packet.NewParanoidHandler(proxyPSK)
+		return packet.NewParanoidHandler(proxyPSK, maxPacketSize)
 	default:
-		err = fmt.Errorf("unknown proxy mode: %s", proxyMode)
+		return nil, fmt.Errorf("unknown proxy mode: %s", proxyMode)
 	}
-	return
 }
 
-func getWgTunnelMTUForHandler(handler packet.Handler, maxProxyPacketSize int) int {
-	headroom := handler.Headroom()
-	return (maxProxyPacketSize - headroom.Front - headroom.Rear - WireGuardDataPacketOverhead) & WireGuardDataPacketLengthMask
+func wgTunnelMTUFromMaxPacketSize(maxPacketSize int) int {
+	return (maxPacketSize - WireGuardDataPacketOverhead) & WireGuardDataPacketLengthMask
 }
 
 // queuedPacket is the structure used by send channels to queue packets for sending.
 type queuedPacket struct {
-	buf    []byte
-	start  int
-	length int
+	// buf is the buffer containing the packet.
+	buf []byte
+
+	// segmentSize is the size of each segment in buf.
+	// The last segment may be smaller than segmentSize.
+	// If buf is not segmented, segmentSize is len(buf).
+	segmentSize uint32
+
+	// segmentCount is the number of segments in buf.
+	// If buf is not segmented, segmentCount is 1.
+	segmentCount uint32
+}
+
+// isWireGuardHandshakeInitiationMessage walks all segments and returns true if any segment is a WireGuard handshake initiation message.
+func (qp *queuedPacket) isWireGuardHandshakeInitiationMessage() bool {
+	if qp.segmentSize == 0 {
+		return false
+	}
+	for i := 0; i < len(qp.buf); i += int(qp.segmentSize) {
+		if qp.buf[i] == packet.WireGuardMessageTypeHandshakeInitiation {
+			return true
+		}
+	}
+	return false
+}
+
+// pktinfo stores packet information for sending from the correct interface and IP.
+type pktinfo struct {
+	addr    netip.Addr
+	ifindex uint32
 }

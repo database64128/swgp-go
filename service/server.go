@@ -1,7 +1,6 @@
 package service
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -50,8 +49,8 @@ type serverNatEntry struct {
 	//    initialization must not proceed.
 	//  - During shutdown, if the swapped-out value is nil, preceed to the next entry.
 	state              atomic.Pointer[net.UDPConn]
-	clientPktinfo      atomic.Pointer[[]byte]
-	clientPktinfoCache []byte
+	clientPktinfo      atomic.Pointer[pktinfo]
+	clientPktinfoCache pktinfo
 	wgConnSendCh       chan<- queuedPacket
 }
 
@@ -59,15 +58,19 @@ type serverNatUplinkGeneric struct {
 	clientAddrPort netip.AddrPort
 	wgAddrPort     netip.AddrPort
 	wgConn         *net.UDPConn
+	wgConnInfo     conn.SocketInfo
 	wgConnSendCh   <-chan queuedPacket
 }
 
 type serverNatDownlinkGeneric struct {
 	clientAddrPort     netip.AddrPort
-	clientPktinfo      *atomic.Pointer[[]byte]
+	clientPktinfop     *pktinfo
+	clientPktinfo      *atomic.Pointer[pktinfo]
 	wgAddrPort         netip.AddrPort
 	wgConn             *net.UDPConn
 	proxyConn          *net.UDPConn
+	proxyConnInfo      conn.SocketInfo
+	handler            packet.Handler
 	maxProxyPacketSize int
 }
 
@@ -80,13 +83,15 @@ type server struct {
 	relayBatchSize        int
 	mainRecvBatchSize     int
 	sendChannelCapacity   int
+	packetBufSize         int
 	maxProxyPacketSizev4  int
 	maxProxyPacketSizev6  int
 	wgTunnelMTUv4         int
 	wgTunnelMTUv6         int
 	wgNetwork             string
 	wgAddr                conn.Addr
-	handler               packet.Handler
+	handler4              packet.Handler
+	handler6              packet.Handler
 	logger                *zap.Logger
 	proxyConn             *net.UDPConn
 	proxyConnListenConfig conn.ListenConfig
@@ -139,17 +144,18 @@ func (sc *ServerConfig) Server(logger *zap.Logger, listenConfigCache conn.Listen
 		return nil, err
 	}
 
-	// Create packet handler for user-specified proxy mode.
-	handler, err := getPacketHandlerForProxyMode(sc.ProxyMode, sc.ProxyPSK)
-	if err != nil {
-		return nil, err
-	}
-
 	// maxProxyPacketSize = MTU - IP header length - UDP header length
 	maxProxyPacketSizev4 := sc.MTU - IPv4HeaderLength - UDPHeaderLength
 	maxProxyPacketSizev6 := sc.MTU - IPv6HeaderLength - UDPHeaderLength
-	wgTunnelMTUv4 := getWgTunnelMTUForHandler(handler, maxProxyPacketSizev4)
-	wgTunnelMTUv6 := getWgTunnelMTUForHandler(handler, maxProxyPacketSizev6)
+	wgTunnelMTUv4 := wgTunnelMTUFromMaxPacketSize(maxProxyPacketSizev4)
+	wgTunnelMTUv6 := wgTunnelMTUFromMaxPacketSize(maxProxyPacketSizev6)
+
+	// Create packet handler for user-specified proxy mode.
+	handler4, err := newPacketHandler(sc.ProxyMode, sc.ProxyPSK, maxProxyPacketSizev4)
+	if err != nil {
+		return nil, err
+	}
+	handler6 := handler4.WithMaxPacketSize(maxProxyPacketSizev6)
 
 	s := server{
 		name:                 sc.Name,
@@ -166,30 +172,33 @@ func (sc *ServerConfig) Server(logger *zap.Logger, listenConfigCache conn.Listen
 		wgTunnelMTUv6:        wgTunnelMTUv6,
 		wgNetwork:            sc.WgEndpointNetwork,
 		wgAddr:               sc.WgEndpointAddress,
-		handler:              handler,
+		handler4:             handler4,
+		handler6:             handler6,
 		logger:               logger,
 		proxyConnListenConfig: listenConfigCache.Get(conn.ListenerSocketOptions{
-			SendBufferSize:    conn.DefaultUDPSocketBufferSize,
-			ReceiveBufferSize: conn.DefaultUDPSocketBufferSize,
-			Fwmark:            sc.ProxyFwmark,
-			TrafficClass:      sc.ProxyTrafficClass,
-			PathMTUDiscovery:  true,
-			ReceivePacketInfo: true,
+			SendBufferSize:           conn.DefaultUDPSocketBufferSize,
+			ReceiveBufferSize:        conn.DefaultUDPSocketBufferSize,
+			Fwmark:                   sc.ProxyFwmark,
+			TrafficClass:             sc.ProxyTrafficClass,
+			PathMTUDiscovery:         true,
+			ProbeUDPGSOSupport:       !sc.DisableUDPGSO,
+			UDPGenericReceiveOffload: !sc.DisableUDPGRO,
+			ReceivePacketInfo:        true,
 		}),
 		wgConnListenConfig: listenConfigCache.Get(conn.ListenerSocketOptions{
-			SendBufferSize:    conn.DefaultUDPSocketBufferSize,
-			ReceiveBufferSize: conn.DefaultUDPSocketBufferSize,
-			Fwmark:            sc.WgFwmark,
-			TrafficClass:      sc.WgTrafficClass,
-			PathMTUDiscovery:  true,
+			SendBufferSize:           conn.DefaultUDPSocketBufferSize,
+			ReceiveBufferSize:        conn.DefaultUDPSocketBufferSize,
+			Fwmark:                   sc.WgFwmark,
+			TrafficClass:             sc.WgTrafficClass,
+			PathMTUDiscovery:         true,
+			ProbeUDPGSOSupport:       !sc.DisableUDPGSO,
+			UDPGenericReceiveOffload: !sc.DisableUDPGRO,
 		}),
-		packetBufPool: sync.Pool{
-			New: func() any {
-				b := make([]byte, maxProxyPacketSizev4)
-				return unsafe.SliceData(b)
-			},
-		},
 		table: make(map[netip.AddrPort]*serverNatEntry),
+	}
+	s.packetBufPool.New = func() any {
+		b := make([]byte, s.packetBufSize)
+		return unsafe.SliceData(b)
 	}
 	s.setStartFunc(sc.BatchMode)
 	return &s, nil
@@ -206,16 +215,22 @@ func (s *server) Start(ctx context.Context) (err error) {
 }
 
 func (s *server) startGeneric(ctx context.Context) error {
-	proxyConn, _, err := s.proxyConnListenConfig.ListenUDP(ctx, s.proxyListenNetwork, s.proxyListenAddress)
+	proxyConn, proxyConnInfo, err := s.proxyConnListenConfig.ListenUDP(ctx, s.proxyListenNetwork, s.proxyListenAddress)
 	if err != nil {
 		return err
 	}
 	s.proxyConn = proxyConn
 
+	if proxyConnInfo.UDPGenericReceiveOffload {
+		s.packetBufSize = 65535
+	} else {
+		s.packetBufSize = s.maxProxyPacketSizev4
+	}
+
 	s.mwg.Add(1)
 
 	go func() {
-		s.recvFromProxyConnGeneric(ctx, proxyConn)
+		s.recvFromProxyConnGeneric(ctx, proxyConn, proxyConnInfo)
 		s.mwg.Done()
 	}()
 
@@ -225,25 +240,31 @@ func (s *server) startGeneric(ctx context.Context) error {
 		zap.Stringer("wgAddress", &s.wgAddr),
 		zap.Int("wgTunnelMTUv4", s.wgTunnelMTUv4),
 		zap.Int("wgTunnelMTUv6", s.wgTunnelMTUv6),
+		zap.Uint32("maxUDPGSOSegments", proxyConnInfo.MaxUDPGSOSegments),
+		zap.Bool("udpGRO", proxyConnInfo.UDPGenericReceiveOffload),
 	)
 	return nil
 }
 
-func (s *server) recvFromProxyConnGeneric(ctx context.Context, proxyConn *net.UDPConn) {
+func (s *server) recvFromProxyConnGeneric(ctx context.Context, proxyConn *net.UDPConn, proxyConnInfo conn.SocketInfo) {
+	packetBuf := make([]byte, s.packetBufSize)
 	cmsgBuf := make([]byte, conn.SocketControlMessageBufferSize)
+	qp := queuedPacket{
+		buf: s.getPacketBuf(),
+	}
 
 	var (
-		packetsReceived uint64
-		wgBytesReceived uint64
+		queuedPackets     []queuedPacket
+		recvmsgCount      uint64
+		packetsReceived   uint64
+		swgpBytesReceived uint64
+		burstSegmentCount uint32
 	)
 
 	for {
-		packetBuf := s.getPacketBuf()
-
 		n, cmsgn, flags, clientAddrPort, err := proxyConn.ReadMsgUDPAddrPort(packetBuf, cmsgBuf)
 		if err != nil {
 			if errors.Is(err, os.ErrDeadlineExceeded) {
-				s.putPacketBuf(packetBuf)
 				break
 			}
 			s.logger.Warn("Failed to read from proxyConn",
@@ -251,39 +272,127 @@ func (s *server) recvFromProxyConnGeneric(ctx context.Context, proxyConn *net.UD
 				zap.String("listenAddress", s.proxyListenAddress),
 				zap.Stringer("clientAddress", clientAddrPort),
 				zap.Int("packetLength", n),
+				zap.Int("cmsgLength", cmsgn),
 				zap.Error(err),
 			)
-			s.putPacketBuf(packetBuf)
 			continue
 		}
-		err = conn.ParseFlagsForError(flags)
-		if err != nil {
+		if err = conn.ParseFlagsForError(flags); err != nil {
 			s.logger.Warn("Failed to read from proxyConn",
 				zap.String("server", s.name),
 				zap.String("listenAddress", s.proxyListenAddress),
 				zap.Stringer("clientAddress", clientAddrPort),
 				zap.Int("packetLength", n),
+				zap.Int("cmsgLength", cmsgn),
 				zap.Error(err),
 			)
-			s.putPacketBuf(packetBuf)
 			continue
 		}
 
-		wgPacketStart, wgPacketLength, err := s.handler.DecryptZeroCopy(packetBuf, 0, n)
+		rscm, err := conn.ParseSocketControlMessage(cmsgBuf[:cmsgn])
 		if err != nil {
-			s.logger.Warn("Failed to decrypt swgpPacket",
+			s.logger.Warn("Failed to parse socket control message from proxyConn",
 				zap.String("server", s.name),
 				zap.String("listenAddress", s.proxyListenAddress),
 				zap.Stringer("clientAddress", clientAddrPort),
-				zap.Int("packetLength", n),
+				zap.Int("cmsgLength", cmsgn),
 				zap.Error(err),
 			)
-			s.putPacketBuf(packetBuf)
 			continue
 		}
 
-		packetsReceived++
-		wgBytesReceived += uint64(wgPacketLength)
+		recvmsgCount++
+		swgpBytesReceived += uint64(n)
+
+		// For future consideration: To preserve zero-length packets,
+		// append an empty qp to queuedPackets if n == 0.
+
+		swgpPacketBuf := packetBuf[:n]
+
+		recvSegmentSize := int(rscm.SegmentSize)
+		if recvSegmentSize == 0 {
+			recvSegmentSize = len(swgpPacketBuf)
+		}
+
+		var (
+			segmentCount uint32
+			handler      packet.Handler
+		)
+
+		clientAddr := clientAddrPort.Addr()
+		isClientAddr4 := clientAddr.Is4() || clientAddr.Is4In6()
+		if isClientAddr4 {
+			handler = s.handler4
+		} else {
+			handler = s.handler6
+		}
+
+		for len(swgpPacketBuf) > 0 {
+			swgpPacketLength := min(len(swgpPacketBuf), recvSegmentSize)
+			swgpPacket := swgpPacketBuf[:swgpPacketLength]
+			swgpPacketBuf = swgpPacketBuf[swgpPacketLength:]
+			segmentCount++
+
+			dst, err := handler.Decrypt(qp.buf, swgpPacket)
+			if err != nil {
+				s.logger.Warn("Failed to decrypt swgpPacket",
+					zap.String("server", s.name),
+					zap.String("listenAddress", s.proxyListenAddress),
+					zap.Stringer("clientAddress", clientAddrPort),
+					zap.Int("packetLength", swgpPacketLength),
+					zap.Error(err),
+				)
+				continue
+			}
+
+			segmentSize := uint32(len(dst) - len(qp.buf))
+
+			switch {
+			case qp.segmentSize == 0:
+				qp = queuedPacket{
+					buf:          dst,
+					segmentSize:  segmentSize,
+					segmentCount: 1,
+				}
+			case qp.segmentSize < segmentSize:
+				// Move segment to a new wgPacket.
+				segment := dst[len(qp.buf):]
+				queuedPackets = append(queuedPackets, qp)
+				qp = queuedPacket{
+					buf:          append(s.getPacketBuf(), segment...),
+					segmentSize:  segmentSize,
+					segmentCount: 1,
+				}
+			case qp.segmentSize == segmentSize:
+				// Keep segment.
+				qp.buf = dst
+				qp.segmentCount++
+			case qp.segmentSize > segmentSize:
+				// Segment is the last short segment.
+				qp.buf = dst
+				qp.segmentCount++
+				queuedPackets = append(queuedPackets, qp)
+				qp = queuedPacket{
+					buf: s.getPacketBuf(),
+				}
+			default:
+				panic("unreachable")
+			}
+		}
+
+		packetsReceived += uint64(segmentCount)
+		burstSegmentCount = max(burstSegmentCount, segmentCount)
+
+		if len(qp.buf) > 0 {
+			queuedPackets = append(queuedPackets, qp)
+			qp = queuedPacket{
+				buf: s.getPacketBuf(),
+			}
+		}
+
+		if len(queuedPackets) == 0 {
+			continue
+		}
 
 		s.mu.Lock()
 
@@ -292,25 +401,17 @@ func (s *server) recvFromProxyConnGeneric(ctx context.Context, proxyConn *net.UD
 			natEntry = &serverNatEntry{}
 		}
 
-		cmsg := cmsgBuf[:cmsgn]
+		clientPktinfo := pktinfo{
+			addr:    rscm.PktinfoAddr,
+			ifindex: rscm.PktinfoIfindex,
+		}
 
-		if !bytes.Equal(natEntry.clientPktinfoCache, cmsg) {
-			m, err := conn.ParseSocketControlMessage(cmsg)
-			if err != nil {
-				s.logger.Warn("Failed to parse pktinfo control message from proxyConn",
-					zap.String("server", s.name),
-					zap.String("listenAddress", s.proxyListenAddress),
-					zap.Stringer("clientAddress", clientAddrPort),
-					zap.Error(err),
-				)
-				s.putPacketBuf(packetBuf)
-				s.mu.Unlock()
-				continue
-			}
+		var clientPktinfop *pktinfo
 
-			clientPktinfoCache := make([]byte, len(cmsg))
-			copy(clientPktinfoCache, cmsg)
-			natEntry.clientPktinfo.Store(&clientPktinfoCache)
+		if clientPktinfo != natEntry.clientPktinfoCache {
+			clientPktinfoCache := clientPktinfo
+			clientPktinfop = &clientPktinfoCache
+			natEntry.clientPktinfo.Store(clientPktinfop)
 			natEntry.clientPktinfoCache = clientPktinfoCache
 
 			if ce := s.logger.Check(zap.DebugLevel, "Updated client pktinfo"); ce != nil {
@@ -318,8 +419,8 @@ func (s *server) recvFromProxyConnGeneric(ctx context.Context, proxyConn *net.UD
 					zap.String("server", s.name),
 					zap.String("listenAddress", s.proxyListenAddress),
 					zap.Stringer("clientAddress", clientAddrPort),
-					zap.Stringer("clientPktinfoAddr", m.PktinfoAddr),
-					zap.Uint32("clientPktinfoIfindex", m.PktinfoIfindex),
+					zap.Stringer("clientPktinfoAddr", &clientPktinfop.addr),
+					zap.Uint32("clientPktinfoIfindex", clientPktinfoCache.ifindex),
 				)
 			}
 		}
@@ -359,7 +460,7 @@ func (s *server) recvFromProxyConnGeneric(ctx context.Context, proxyConn *net.UD
 					return
 				}
 
-				wgConn, _, err := s.wgConnListenConfig.ListenUDP(ctx, s.wgConnListenNetwork, s.wgConnListenAddress)
+				wgConn, wgConnInfo, err := s.wgConnListenConfig.ListenUDP(ctx, s.wgConnListenNetwork, s.wgConnListenAddress)
 				if err != nil {
 					s.logger.Warn("Failed to create UDP socket for new session",
 						zap.String("server", s.name),
@@ -396,12 +497,16 @@ func (s *server) recvFromProxyConnGeneric(ctx context.Context, proxyConn *net.UD
 					wgTunnelMTU        int
 				)
 
-				if addr := clientAddrPort.Addr(); addr.Is4() || addr.Is4In6() {
+				if isClientAddr4 {
 					maxProxyPacketSize = s.maxProxyPacketSizev4
 					wgTunnelMTU = s.wgTunnelMTUv4
 				} else {
 					maxProxyPacketSize = s.maxProxyPacketSizev6
 					wgTunnelMTU = s.wgTunnelMTUv6
+				}
+
+				if wgConnInfo.UDPGenericReceiveOffload {
+					maxProxyPacketSize = 65535
 				}
 
 				s.logger.Info("Server relay started",
@@ -410,6 +515,8 @@ func (s *server) recvFromProxyConnGeneric(ctx context.Context, proxyConn *net.UD
 					zap.Stringer("clientAddress", clientAddrPort),
 					zap.Stringer("wgAddress", wgAddrPort),
 					zap.Int("wgTunnelMTU", wgTunnelMTU),
+					zap.Uint32("maxUDPGSOSegments", wgConnInfo.MaxUDPGSOSegments),
+					zap.Bool("udpGRO", wgConnInfo.UDPGenericReceiveOffload),
 				)
 
 				s.wg.Add(1)
@@ -419,6 +526,7 @@ func (s *server) recvFromProxyConnGeneric(ctx context.Context, proxyConn *net.UD
 						clientAddrPort: clientAddrPort,
 						wgAddrPort:     wgAddrPort,
 						wgConn:         wgConn,
+						wgConnInfo:     wgConnInfo,
 						wgConnSendCh:   wgConnSendCh,
 					})
 					wgConn.Close()
@@ -427,10 +535,13 @@ func (s *server) recvFromProxyConnGeneric(ctx context.Context, proxyConn *net.UD
 
 				s.relayWgToProxyGeneric(serverNatDownlinkGeneric{
 					clientAddrPort:     clientAddrPort,
+					clientPktinfop:     clientPktinfop,
 					clientPktinfo:      &natEntry.clientPktinfo,
 					wgAddrPort:         wgAddrPort,
 					wgConn:             wgConn,
 					proxyConn:          proxyConn,
+					proxyConnInfo:      proxyConnInfo,
+					handler:            handler,
 					maxProxyPacketSize: maxProxyPacketSize,
 				})
 			}()
@@ -445,55 +556,53 @@ func (s *server) recvFromProxyConnGeneric(ctx context.Context, proxyConn *net.UD
 			}
 		}
 
-		select {
-		case natEntry.wgConnSendCh <- queuedPacket{packetBuf, wgPacketStart, wgPacketLength}:
-		default:
-			if ce := s.logger.Check(zap.DebugLevel, "wgPacket dropped due to full send channel"); ce != nil {
-				ce.Write(
-					zap.String("server", s.name),
-					zap.String("listenAddress", s.proxyListenAddress),
-					zap.Stringer("clientAddress", clientAddrPort),
-					zap.Stringer("wgAddress", &s.wgAddr),
-				)
+		for _, qp := range queuedPackets {
+			select {
+			case natEntry.wgConnSendCh <- qp:
+			default:
+				if ce := s.logger.Check(zap.DebugLevel, "wgPacket dropped due to full send channel"); ce != nil {
+					ce.Write(
+						zap.String("server", s.name),
+						zap.String("listenAddress", s.proxyListenAddress),
+						zap.Stringer("clientAddress", clientAddrPort),
+						zap.Stringer("wgAddress", &s.wgAddr),
+					)
+				}
+				s.putPacketBuf(qp.buf)
 			}
-			s.putPacketBuf(packetBuf)
 		}
 
 		s.mu.Unlock()
+
+		queuedPackets = queuedPackets[:0]
 	}
+
+	s.putPacketBuf(qp.buf)
 
 	s.logger.Info("Finished receiving from proxyConn",
 		zap.String("server", s.name),
 		zap.String("listenAddress", s.proxyListenAddress),
 		zap.Stringer("wgAddress", &s.wgAddr),
+		zap.Uint64("recvmsgCount", recvmsgCount),
 		zap.Uint64("packetsReceived", packetsReceived),
-		zap.Uint64("wgBytesReceived", wgBytesReceived),
+		zap.Uint64("swgpBytesReceived", swgpBytesReceived),
+		zap.Uint32("burstSegmentCount", burstSegmentCount),
 	)
 }
 
 func (s *server) relayProxyToWgGeneric(uplink serverNatUplinkGeneric) {
+	cmsgBuf := make([]byte, 0, conn.SocketControlMessageBufferSize)
+
 	var (
-		packetsSent uint64
-		wgBytesSent uint64
+		sendmsgCount      uint64
+		packetsSent       uint64
+		wgBytesSent       uint64
+		burstSegmentCount uint32
 	)
 
-	for queuedPacket := range uplink.wgConnSendCh {
-		wgPacket := queuedPacket.buf[queuedPacket.start : queuedPacket.start+queuedPacket.length]
-
-		if _, err := uplink.wgConn.WriteToUDPAddrPort(wgPacket, uplink.wgAddrPort); err != nil {
-			s.logger.Warn("Failed to write wgPacket to wgConn",
-				zap.String("server", s.name),
-				zap.String("listenAddress", s.proxyListenAddress),
-				zap.Stringer("clientAddress", uplink.clientAddrPort),
-				zap.Stringer("wgAddress", uplink.wgAddrPort),
-				zap.Int("wgPacketLength", queuedPacket.length),
-				zap.Error(err),
-			)
-		}
-
-		// Update wgConn read deadline when a handshake initiation/response message is received.
-		switch wgPacket[0] {
-		case packet.WireGuardMessageTypeHandshakeInitiation, packet.WireGuardMessageTypeHandshakeResponse:
+	for qp := range uplink.wgConnSendCh {
+		// Update wgConn read deadline when qp contains a WireGuard handshake initiation message.
+		if qp.isWireGuardHandshakeInitiationMessage() { // TODO: merge into the loop below as an optimization
 			if err := uplink.wgConn.SetReadDeadline(time.Now().Add(RejectAfterTime)); err != nil {
 				s.logger.Warn("Failed to SetReadDeadline on wgConn",
 					zap.String("server", s.name),
@@ -505,9 +614,46 @@ func (s *server) relayProxyToWgGeneric(uplink serverNatUplinkGeneric) {
 			}
 		}
 
-		s.putPacketBuf(queuedPacket.buf)
-		packetsSent++
-		wgBytesSent += uint64(queuedPacket.length)
+		b := qp.buf
+		segmentsRemaining := qp.segmentCount
+
+		for segmentsRemaining > 0 {
+			sendSegmentCount := min(segmentsRemaining, uplink.wgConnInfo.MaxUDPGSOSegments)
+			segmentsRemaining -= sendSegmentCount
+
+			sendBufSize := min(len(b), int(qp.segmentSize*sendSegmentCount))
+			sendBuf := b[:sendBufSize]
+			b = b[sendBufSize:]
+
+			var cmsg []byte
+			if sendSegmentCount > 1 {
+				scm := conn.SocketControlMessage{
+					SegmentSize: qp.segmentSize,
+				}
+				cmsg = scm.AppendTo(cmsgBuf)
+			}
+
+			n, _, err := uplink.wgConn.WriteMsgUDPAddrPort(sendBuf, cmsg, uplink.wgAddrPort)
+			if err != nil {
+				s.logger.Warn("Failed to write wgPacket to wgConn",
+					zap.String("server", s.name),
+					zap.String("listenAddress", s.proxyListenAddress),
+					zap.Stringer("clientAddress", uplink.clientAddrPort),
+					zap.Stringer("wgAddress", uplink.wgAddrPort),
+					zap.Int("wgPacketLength", sendBufSize),
+					zap.Uint32("segmentSize", qp.segmentSize),
+					zap.Error(err),
+				)
+				continue
+			}
+
+			sendmsgCount++
+			packetsSent += uint64(sendSegmentCount)
+			wgBytesSent += uint64(n)
+			burstSegmentCount = max(burstSegmentCount, uint32(sendSegmentCount))
+		}
+
+		s.putPacketBuf(qp.buf)
 	}
 
 	s.logger.Info("Finished relay proxyConn -> wgConn",
@@ -515,26 +661,38 @@ func (s *server) relayProxyToWgGeneric(uplink serverNatUplinkGeneric) {
 		zap.String("listenAddress", s.proxyListenAddress),
 		zap.Stringer("clientAddress", uplink.clientAddrPort),
 		zap.Stringer("wgAddress", uplink.wgAddrPort),
+		zap.Uint64("sendmsgCount", sendmsgCount),
 		zap.Uint64("packetsSent", packetsSent),
 		zap.Uint64("wgBytesSent", wgBytesSent),
+		zap.Uint32("burstSegmentCount", burstSegmentCount),
 	)
 }
 
 func (s *server) relayWgToProxyGeneric(downlink serverNatDownlinkGeneric) {
 	var (
-		clientPktinfop *[]byte
-		clientPktinfo  []byte
-		packetsSent    uint64
-		wgBytesSent    uint64
+		clientPktinfo         pktinfo
+		queuedPackets         []queuedPacket
+		recvmsgCount          uint64
+		packetsReceived       uint64
+		wgBytesReceived       uint64
+		sendmsgCount          uint64
+		packetsSent           uint64
+		swgpBytesSent         uint64
+		burstRecvSegmentCount uint32
+		burstSendSegmentCount uint32
 	)
 
-	packetBuf := make([]byte, downlink.maxProxyPacketSize)
+	if downlink.clientPktinfop != nil {
+		clientPktinfo = *downlink.clientPktinfop
+	}
 
-	headroom := s.handler.Headroom()
-	plaintextBuf := packetBuf[headroom.Front : downlink.maxProxyPacketSize-headroom.Rear]
+	recvPacketBuf := make([]byte, downlink.maxProxyPacketSize)
+	recvCmsgBuf := make([]byte, conn.SocketControlMessageBufferSize)
+	sendPacketBuf := make([]byte, 0, downlink.maxProxyPacketSize)
+	sendCmsgBuf := make([]byte, 0, conn.SocketControlMessageBufferSize)
 
 	for {
-		n, _, flags, packetSourceAddrPort, err := downlink.wgConn.ReadMsgUDPAddrPort(plaintextBuf, nil)
+		n, cmsgn, flags, packetSourceAddrPort, err := downlink.wgConn.ReadMsgUDPAddrPort(recvPacketBuf, recvCmsgBuf)
 		if err != nil {
 			if errors.Is(err, os.ErrDeadlineExceeded) {
 				break
@@ -546,12 +704,12 @@ func (s *server) relayWgToProxyGeneric(downlink serverNatDownlinkGeneric) {
 				zap.Stringer("wgAddress", downlink.wgAddrPort),
 				zap.Stringer("packetSourceAddress", packetSourceAddrPort),
 				zap.Int("packetLength", n),
+				zap.Int("cmsgLength", cmsgn),
 				zap.Error(err),
 			)
 			continue
 		}
-		err = conn.ParseFlagsForError(flags)
-		if err != nil {
+		if err = conn.ParseFlagsForError(flags); err != nil {
 			s.logger.Warn("Failed to read from wgConn",
 				zap.String("server", s.name),
 				zap.String("listenAddress", s.proxyListenAddress),
@@ -559,10 +717,12 @@ func (s *server) relayWgToProxyGeneric(downlink serverNatDownlinkGeneric) {
 				zap.Stringer("wgAddress", downlink.wgAddrPort),
 				zap.Stringer("packetSourceAddress", packetSourceAddrPort),
 				zap.Int("packetLength", n),
+				zap.Int("cmsgLength", cmsgn),
 				zap.Error(err),
 			)
 			continue
 		}
+
 		if !conn.AddrPortMappedEqual(packetSourceAddrPort, downlink.wgAddrPort) {
 			s.logger.Warn("Ignoring packet from non-wg address",
 				zap.String("server", s.name),
@@ -576,38 +736,149 @@ func (s *server) relayWgToProxyGeneric(downlink serverNatDownlinkGeneric) {
 			continue
 		}
 
-		swgpPacketStart, swgpPacketLength, err := s.handler.EncryptZeroCopy(packetBuf, headroom.Front, n)
+		rscm, err := conn.ParseSocketControlMessage(recvCmsgBuf[:cmsgn])
 		if err != nil {
-			s.logger.Warn("Failed to encrypt WireGuard packet",
+			s.logger.Warn("Failed to parse socket control message from wgConn",
 				zap.String("server", s.name),
 				zap.String("listenAddress", s.proxyListenAddress),
 				zap.Stringer("clientAddress", downlink.clientAddrPort),
 				zap.Stringer("wgAddress", downlink.wgAddrPort),
+				zap.Stringer("packetSourceAddress", packetSourceAddrPort),
+				zap.Int("cmsgLength", cmsgn),
 				zap.Error(err),
 			)
 			continue
 		}
-		swgpPacket := packetBuf[swgpPacketStart : swgpPacketStart+swgpPacketLength]
 
-		if cpp := downlink.clientPktinfo.Load(); cpp != clientPktinfop {
+		recvmsgCount++
+		wgBytesReceived += uint64(n)
+
+		wgPacketBuf := recvPacketBuf[:n]
+		qp := queuedPacket{
+			buf: sendPacketBuf, // TODO: maybe switch to the approach used in the mmsg variant
+		}
+
+		recvSegmentSize := int(rscm.SegmentSize)
+		if recvSegmentSize == 0 {
+			recvSegmentSize = len(wgPacketBuf)
+		}
+
+		var recvSegmentCount uint32
+
+		for len(wgPacketBuf) > 0 {
+			wgPacketLength := min(len(wgPacketBuf), recvSegmentSize)
+			wgPacket := wgPacketBuf[:wgPacketLength]
+			wgPacketBuf = wgPacketBuf[wgPacketLength:]
+			recvSegmentCount++
+
+			dst, err := downlink.handler.Encrypt(qp.buf, wgPacket)
+			if err != nil {
+				s.logger.Warn("Failed to encrypt wgPacket",
+					zap.String("server", s.name),
+					zap.String("listenAddress", s.proxyListenAddress),
+					zap.Stringer("clientAddress", downlink.clientAddrPort),
+					zap.Stringer("wgAddress", downlink.wgAddrPort),
+					zap.Int("packetLength", wgPacketLength),
+					zap.Error(err),
+				)
+				continue
+			}
+
+			segmentSize := uint32(len(dst) - len(qp.buf))
+
+			switch {
+			case qp.segmentSize == 0:
+				qp = queuedPacket{
+					buf:          dst,
+					segmentSize:  segmentSize,
+					segmentCount: 1,
+				}
+			case qp.segmentSize < segmentSize:
+				// Save existing qp and start a new one with the current segment.
+				segment := dst[len(qp.buf):]
+				queuedPackets = append(queuedPackets, qp)
+				qp = queuedPacket{
+					buf:          segment,
+					segmentSize:  segmentSize,
+					segmentCount: 1,
+				}
+			case qp.segmentSize == segmentSize:
+				// Keep segment.
+				qp.buf = dst
+				qp.segmentCount++
+			case qp.segmentSize > segmentSize:
+				// Segment is the last short segment.
+				qp.buf = dst
+				qp.segmentCount++
+				queuedPackets = append(queuedPackets, qp)
+				qp = queuedPacket{
+					buf: dst[len(dst):],
+				}
+			default:
+				panic("unreachable")
+			}
+		}
+
+		packetsReceived += uint64(recvSegmentCount)
+		burstRecvSegmentCount = max(burstRecvSegmentCount, recvSegmentCount)
+
+		if len(qp.buf) > 0 {
+			queuedPackets = append(queuedPackets, qp)
+		}
+
+		if len(queuedPackets) == 0 {
+			continue
+		}
+
+		if cpp := downlink.clientPktinfo.Load(); cpp != downlink.clientPktinfop {
 			clientPktinfo = *cpp
-			clientPktinfop = cpp
+			downlink.clientPktinfop = cpp
 		}
 
-		_, _, err = downlink.proxyConn.WriteMsgUDPAddrPort(swgpPacket, clientPktinfo, downlink.clientAddrPort)
-		if err != nil {
-			s.logger.Warn("Failed to write swgpPacket to proxyConn",
-				zap.String("server", s.name),
-				zap.String("listenAddress", s.proxyListenAddress),
-				zap.Stringer("clientAddress", downlink.clientAddrPort),
-				zap.Stringer("wgAddress", downlink.wgAddrPort),
-				zap.Int("swgpPacketLength", swgpPacketLength),
-				zap.Error(err),
-			)
+		for _, qp := range queuedPackets {
+			b := qp.buf
+			segmentsRemaining := qp.segmentCount
+
+			for segmentsRemaining > 0 {
+				sendSegmentCount := min(segmentsRemaining, downlink.proxyConnInfo.MaxUDPGSOSegments)
+				segmentsRemaining -= sendSegmentCount
+
+				sendBufSize := min(len(b), int(qp.segmentSize*sendSegmentCount))
+				sendBuf := b[:sendBufSize]
+				b = b[sendBufSize:]
+
+				sscm := conn.SocketControlMessage{
+					PktinfoAddr:    clientPktinfo.addr,
+					PktinfoIfindex: clientPktinfo.ifindex,
+				}
+				if sendSegmentCount > 1 {
+					sscm.SegmentSize = qp.segmentSize
+				}
+				cmsg := sscm.AppendTo(sendCmsgBuf)
+
+				n, _, err := downlink.proxyConn.WriteMsgUDPAddrPort(sendBuf, cmsg, downlink.clientAddrPort)
+				if err != nil {
+					s.logger.Warn("Failed to write swgpPacket to proxyConn",
+						zap.String("server", s.name),
+						zap.String("listenAddress", s.proxyListenAddress),
+						zap.Stringer("clientAddress", downlink.clientAddrPort),
+						zap.Stringer("wgAddress", downlink.wgAddrPort),
+						zap.Int("swgpPacketLength", len(sendBuf)),
+						zap.Uint32("segmentSize", qp.segmentSize),
+						zap.Uint32("segmentCount", sendSegmentCount),
+						zap.Error(err),
+					)
+					continue
+				}
+
+				sendmsgCount++
+				packetsSent += uint64(sendSegmentCount)
+				swgpBytesSent += uint64(n)
+				burstSendSegmentCount = max(burstSendSegmentCount, sendSegmentCount)
+			}
 		}
 
-		packetsSent++
-		wgBytesSent += uint64(n)
+		queuedPackets = queuedPackets[:0]
 	}
 
 	s.logger.Info("Finished relay wgConn -> proxyConn",
@@ -615,18 +886,27 @@ func (s *server) relayWgToProxyGeneric(downlink serverNatDownlinkGeneric) {
 		zap.String("listenAddress", s.proxyListenAddress),
 		zap.Stringer("clientAddress", downlink.clientAddrPort),
 		zap.Stringer("wgAddress", downlink.wgAddrPort),
+		zap.Uint64("recvmsgCount", recvmsgCount),
+		zap.Uint64("packetsReceived", packetsReceived),
+		zap.Uint64("wgBytesReceived", wgBytesReceived),
+		zap.Uint64("sendmsgCount", sendmsgCount),
 		zap.Uint64("packetsSent", packetsSent),
-		zap.Uint64("wgBytesSent", wgBytesSent),
+		zap.Uint64("swgpBytesSent", swgpBytesSent),
+		zap.Uint32("burstRecvSegmentCount", burstRecvSegmentCount),
+		zap.Uint32("burstSendSegmentCount", burstSendSegmentCount),
 	)
 }
 
 // getPacketBuf retrieves a packet buffer from the pool.
 func (s *server) getPacketBuf() []byte {
-	return unsafe.Slice(s.packetBufPool.Get().(*byte), s.maxProxyPacketSizev4)
+	return unsafe.Slice(s.packetBufPool.Get().(*byte), s.packetBufSize)[:0]
 }
 
 // putPacketBuf puts the packet buffer back into the pool.
 func (s *server) putPacketBuf(packetBuf []byte) {
+	if cap(packetBuf) < s.packetBufSize {
+		panic(fmt.Sprintf("putPacketBuf: packetBuf capacity %d, expected at least %d", cap(packetBuf), s.packetBufSize))
+	}
 	s.packetBufPool.Put(unsafe.SliceData(packetBuf))
 }
 
