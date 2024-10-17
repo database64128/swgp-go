@@ -50,7 +50,7 @@ type MmsgWConn struct {
 	rawWriteFunc func(fd uintptr) (done bool)
 	writeMsgvec  []Mmsghdr
 	writeFlags   int
-	writeErr     error
+	writeErrno   syscall.Errno
 }
 
 // RConn returns a new [MmsgRConn] instance for batch reading.
@@ -82,22 +82,42 @@ func (c rawUDPConn) WConn() *MmsgWConn {
 	}
 
 	mmsgWConn.rawWriteFunc = func(fd uintptr) (done bool) {
-		n, errno := sendmmsg(int(fd), mmsgWConn.writeMsgvec, mmsgWConn.writeFlags)
-		switch errno {
-		case 0:
-		case syscall.EAGAIN:
+		for {
+			n, errno := sendmmsg(int(fd), mmsgWConn.writeMsgvec, mmsgWConn.writeFlags)
+			switch errno {
+			case 0:
+			case syscall.EAGAIN:
+				return false
+			default:
+				mmsgWConn.writeErrno = errno
+				mmsgWConn.writeMsgvec = mmsgWConn.writeMsgvec[1:]
+				if len(mmsgWConn.writeMsgvec) == 0 {
+					return true
+				}
+				continue
+			}
+
+			mmsgWConn.writeMsgvec = mmsgWConn.writeMsgvec[n:]
+
+			if len(mmsgWConn.writeMsgvec) == 0 {
+				return true
+			}
+
+			// Short-write optimization:
+			//
+			// According to tokio, not writing the full msgvec is sufficient to show
+			// that the socket buffer is full. Previous tests also showed that this is
+			// faster than immediately trying to write again.
+			//
+			// Do keep in mind that this is not how the Go runtime handles writes though.
+
+			// sendmmsg(2) sends up to UIO_MAXIOV (1024) messages per call.
+			if n == 1024 {
+				continue
+			}
+
 			return false
-		default:
-			mmsgWConn.writeErr = os.NewSyscallError("sendmmsg", errno)
-			n = 1
 		}
-		mmsgWConn.writeMsgvec = mmsgWConn.writeMsgvec[n:]
-		// According to tokio, not writing the full msgvec is sufficient to show
-		// that the socket buffer is full. Previous tests also showed that this is
-		// faster than immediately trying to write again.
-		//
-		// Do keep in mind that this is not how the Go runtime handles writes though.
-		return len(mmsgWConn.writeMsgvec) == 0
 	}
 
 	return &mmsgWConn
@@ -120,9 +140,12 @@ func (c *MmsgRConn) ReadMsgs(msgvec []Mmsghdr, flags int) (int, error) {
 func (c *MmsgWConn) WriteMsgs(msgvec []Mmsghdr, flags int) error {
 	c.writeMsgvec = msgvec
 	c.writeFlags = flags
-	c.writeErr = nil
+	c.writeErrno = 0
 	if err := c.rawConn.Write(c.rawWriteFunc); err != nil {
 		return err
 	}
-	return c.writeErr
+	if c.writeErrno != 0 {
+		return os.NewSyscallError("sendmmsg", c.writeErrno)
+	}
+	return nil
 }
