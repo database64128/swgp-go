@@ -12,7 +12,10 @@ import (
 const socketControlMessageBufferSize = unix.SizeofCmsghdr + alignedSizeofInet6Pktinfo +
 	unix.SizeofCmsghdr + alignedSizeofGROSegmentSize
 
-const sizeofGROSegmentSize = int(unsafe.Sizeof(uint16(0)))
+const (
+	sizeofGSOSegmentSize = int(unsafe.Sizeof(uint16(0)))
+	sizeofGROSegmentSize = int(unsafe.Sizeof(int32(0)))
+)
 
 func cmsgAlign(n uint64) uint64 {
 	return (n + unix.SizeofPtr - 1) & ^uint64(unix.SizeofPtr-1)
@@ -49,9 +52,7 @@ func parseSocketControlMessage(cmsg []byte) (m SocketControlMessage, err error) 
 			if len(cmsg) < unix.SizeofCmsghdr+sizeofGROSegmentSize {
 				return m, fmt.Errorf("invalid UDP_GRO control message length %d", cmsghdr.Len)
 			}
-			var segmentSize uint16
-			_ = copy(unsafe.Slice((*byte)(unsafe.Pointer(&segmentSize)), sizeofGROSegmentSize), cmsg[unix.SizeofCmsghdr:])
-			m.SegmentSize = uint32(segmentSize)
+			_ = copy(unsafe.Slice((*byte)(unsafe.Pointer(&m.SegmentSize)), sizeofGROSegmentSize), cmsg[unix.SizeofCmsghdr:])
 		}
 
 		cmsg = cmsg[msgSize:]
@@ -63,6 +64,7 @@ func parseSocketControlMessage(cmsg []byte) (m SocketControlMessage, err error) 
 const (
 	alignedSizeofInet4Pktinfo   = (unix.SizeofInet4Pktinfo + unix.SizeofPtr - 1) & ^(unix.SizeofPtr - 1)
 	alignedSizeofInet6Pktinfo   = (unix.SizeofInet6Pktinfo + unix.SizeofPtr - 1) & ^(unix.SizeofPtr - 1)
+	alignedSizeofGSOSegmentSize = (sizeofGSOSegmentSize + unix.SizeofPtr - 1) & ^(unix.SizeofPtr - 1)
 	alignedSizeofGROSegmentSize = (sizeofGROSegmentSize + unix.SizeofPtr - 1) & ^(unix.SizeofPtr - 1)
 )
 
@@ -101,15 +103,15 @@ func (m SocketControlMessage) appendTo(b []byte) []byte {
 
 	if m.SegmentSize > 0 {
 		var msgBuf []byte
-		b, msgBuf = slicehelper.Extend(b, unix.SizeofCmsghdr+alignedSizeofGROSegmentSize)
+		b, msgBuf = slicehelper.Extend(b, unix.SizeofCmsghdr+alignedSizeofGSOSegmentSize)
 		cmsghdr := (*unix.Cmsghdr)(unsafe.Pointer(unsafe.SliceData(msgBuf)))
 		*cmsghdr = unix.Cmsghdr{
-			Len:   unix.SizeofCmsghdr + uint64(sizeofGROSegmentSize),
+			Len:   unix.SizeofCmsghdr + uint64(sizeofGSOSegmentSize),
 			Level: unix.IPPROTO_UDP,
-			Type:  unix.UDP_GRO,
+			Type:  unix.UDP_SEGMENT,
 		}
 		segmentSize := uint16(m.SegmentSize)
-		_ = copy(msgBuf[unix.SizeofCmsghdr:], unsafe.Slice((*byte)(unsafe.Pointer(&segmentSize)), sizeofGROSegmentSize))
+		_ = copy(msgBuf[unix.SizeofCmsghdr:], unsafe.Slice((*byte)(unsafe.Pointer(&segmentSize)), sizeofGSOSegmentSize))
 	}
 
 	return b

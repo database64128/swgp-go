@@ -17,6 +17,7 @@ const (
 	sizeofCmsghdr       = int(unsafe.Sizeof(Cmsghdr{}))
 	sizeofInet4Pktinfo  = int(unsafe.Sizeof(Inet4Pktinfo{}))
 	sizeofInet6Pktinfo  = int(unsafe.Sizeof(Inet6Pktinfo{}))
+	sizeofSendMsgSize   = int(unsafe.Sizeof(uint32(0)))
 	sizeofCoalescedInfo = int(unsafe.Sizeof(uint32(0)))
 )
 
@@ -87,6 +88,7 @@ func parseSocketControlMessage(cmsg []byte) (m SocketControlMessage, err error) 
 const (
 	alignedSizeofInet4Pktinfo  = (sizeofInet4Pktinfo + sizeofPtr - 1) & ^(sizeofPtr - 1)
 	alignedSizeofInet6Pktinfo  = (sizeofInet6Pktinfo + sizeofPtr - 1) & ^(sizeofPtr - 1)
+	alignedSizeofSendMsgSize   = (sizeofSendMsgSize + sizeofPtr - 1) & ^(sizeofPtr - 1)
 	alignedSizeofCoalescedInfo = (sizeofCoalescedInfo + sizeofPtr - 1) & ^(sizeofPtr - 1)
 )
 
@@ -125,14 +127,14 @@ func (m SocketControlMessage) appendTo(b []byte) []byte {
 
 	if m.SegmentSize > 0 {
 		var msgBuf []byte
-		b, msgBuf = slicehelper.Extend(b, sizeofCmsghdr+alignedSizeofCoalescedInfo)
+		b, msgBuf = slicehelper.Extend(b, sizeofCmsghdr+alignedSizeofSendMsgSize)
 		cmsghdr := (*Cmsghdr)(unsafe.Pointer(unsafe.SliceData(msgBuf)))
 		*cmsghdr = Cmsghdr{
-			Len:   uintptr(sizeofCmsghdr + sizeofCoalescedInfo),
+			Len:   uintptr(sizeofCmsghdr + sizeofSendMsgSize),
 			Level: windows.IPPROTO_UDP,
-			Type:  windows.UDP_COALESCED_INFO,
+			Type:  windows.UDP_SEND_MSG_SIZE,
 		}
-		_ = copy(msgBuf[sizeofCmsghdr:], unsafe.Slice((*byte)(unsafe.Pointer(&m.SegmentSize)), sizeofCoalescedInfo))
+		_ = copy(msgBuf[sizeofCmsghdr:], unsafe.Slice((*byte)(unsafe.Pointer(&m.SegmentSize)), sizeofSendMsgSize))
 	}
 
 	return b
