@@ -417,7 +417,6 @@ func (c *client) relayWgToProxySendmmsg(uplink clientNatUplinkMmsg) {
 	rsa6 := conn.AddrPortToSockaddrInet6(uplink.proxyAddrPort)
 	packetBuf := make([]byte, 0, c.relayBatchSize*c.packetBufSize)
 	cmsgBuf := make([]byte, 0, c.relayBatchSize*conn.SocketControlMessageBufferSize)
-	bufvec := make([][]byte, 0, c.relayBatchSize)
 	iovec := make([]unix.Iovec, 0, c.relayBatchSize)
 	msgvec := make([]conn.Mmsghdr, 0, c.relayBatchSize)
 
@@ -433,8 +432,6 @@ main:
 
 	dequeue:
 		for {
-			bufvec = append(bufvec, rqp.buf)
-
 			// Update proxyConn read deadline when rqp contains a WireGuard handshake initiation message.
 			if rqp.isWireGuardHandshakeInitiationMessage() { // TODO: merge into the loop below as an optimization
 				isHandshake = true
@@ -508,6 +505,8 @@ main:
 					segmentCount: sqpSegmentCount,
 				})
 			}
+
+			c.putPacketBuf(rqp.buf)
 
 			if len(sendQueuedPackets) == 0 {
 				continue main
@@ -607,10 +606,6 @@ main:
 
 		packetBuf = packetBuf[:0]
 		cmsgBuf = cmsgBuf[:0]
-		for _, buf := range bufvec {
-			c.putPacketBuf(buf)
-		}
-		bufvec = bufvec[:0]
 		iovec = iovec[:0]
 		msgvec = msgvec[:0]
 
