@@ -754,16 +754,18 @@ func (s *server) relayWgToProxyGeneric(downlink serverNatDownlinkGeneric) {
 		wgBytesReceived += uint64(n)
 
 		wgPacketBuf := recvPacketBuf[:n]
-		qp := queuedPacket{
-			buf: sendPacketBuf, // TODO: maybe switch to the approach used in the mmsg variant
-		}
 
 		recvSegmentSize := int(rscm.SegmentSize)
 		if recvSegmentSize == 0 {
 			recvSegmentSize = len(wgPacketBuf)
 		}
 
-		var recvSegmentCount uint32
+		var (
+			recvSegmentCount uint32
+			qpLength         uint32
+			qpSegmentSize    uint32
+			qpSegmentCount   uint32
+		)
 
 		for len(wgPacketBuf) > 0 {
 			wgPacketLength := min(len(wgPacketBuf), recvSegmentSize)
@@ -771,7 +773,7 @@ func (s *server) relayWgToProxyGeneric(downlink serverNatDownlinkGeneric) {
 			wgPacketBuf = wgPacketBuf[wgPacketLength:]
 			recvSegmentCount++
 
-			dst, err := downlink.handler.Encrypt(qp.buf, wgPacket)
+			dst, err := downlink.handler.Encrypt(sendPacketBuf, wgPacket)
 			if err != nil {
 				s.logger.Warn("Failed to encrypt wgPacket",
 					zap.String("server", s.name),
@@ -784,46 +786,51 @@ func (s *server) relayWgToProxyGeneric(downlink serverNatDownlinkGeneric) {
 				continue
 			}
 
-			segmentSize := uint32(len(dst) - len(qp.buf))
+			segmentSize := uint32(len(dst) - len(sendPacketBuf))
 
 			switch {
-			case qp.segmentSize == 0:
-				qp = queuedPacket{
-					buf:          dst,
-					segmentSize:  segmentSize,
-					segmentCount: 1,
-				}
-			case qp.segmentSize < segmentSize:
+			case qpLength == 0:
+				qpLength = segmentSize
+				qpSegmentSize = segmentSize
+				qpSegmentCount = 1
+			case qpSegmentSize < segmentSize:
 				// Save existing qp and start a new one with the current segment.
-				segment := dst[len(qp.buf):]
-				queuedPackets = append(queuedPackets, qp)
-				qp = queuedPacket{
-					buf:          segment,
-					segmentSize:  segmentSize,
-					segmentCount: 1,
-				}
-			case qp.segmentSize == segmentSize:
+				queuedPackets = append(queuedPackets, queuedPacket{
+					buf:          sendPacketBuf[len(sendPacketBuf)-int(qpLength):],
+					segmentSize:  qpSegmentSize,
+					segmentCount: qpSegmentCount,
+				})
+				qpLength = segmentSize
+				qpSegmentSize = segmentSize
+				qpSegmentCount = 1
+			case qpSegmentSize == segmentSize:
 				// Keep segment.
-				qp.buf = dst
-				qp.segmentCount++
-			case qp.segmentSize > segmentSize:
+				qpLength += segmentSize
+				qpSegmentCount++
+			case qpSegmentSize > segmentSize:
 				// Segment is the last short segment.
-				qp.buf = dst
-				qp.segmentCount++
-				queuedPackets = append(queuedPackets, qp)
-				qp = queuedPacket{
-					buf: dst[len(dst):],
-				}
+				queuedPackets = append(queuedPackets, queuedPacket{
+					buf:          dst[len(sendPacketBuf)-int(qpLength):],
+					segmentSize:  qpSegmentSize,
+					segmentCount: qpSegmentCount + 1,
+				})
+				qpLength = 0
 			default:
 				panic("unreachable")
 			}
+
+			sendPacketBuf = dst
 		}
 
 		packetsReceived += uint64(recvSegmentCount)
 		burstRecvSegmentCount = max(burstRecvSegmentCount, recvSegmentCount)
 
-		if len(qp.buf) > 0 {
-			queuedPackets = append(queuedPackets, qp)
+		if qpLength > 0 {
+			queuedPackets = append(queuedPackets, queuedPacket{
+				buf:          sendPacketBuf[len(sendPacketBuf)-int(qpLength):],
+				segmentSize:  qpSegmentSize,
+				segmentCount: qpSegmentCount,
+			})
 		}
 
 		if len(queuedPackets) == 0 {
@@ -879,6 +886,7 @@ func (s *server) relayWgToProxyGeneric(downlink serverNatDownlinkGeneric) {
 		}
 
 		queuedPackets = queuedPackets[:0]
+		sendPacketBuf = sendPacketBuf[:0]
 	}
 
 	s.logger.Info("Finished relay wgConn -> proxyConn",
