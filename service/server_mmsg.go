@@ -47,7 +47,7 @@ func (s *server) setStartFunc(batchMode string) {
 }
 
 func (s *server) startMmsg(ctx context.Context) error {
-	proxyConn, proxyConnInfo, err := s.proxyConnListenConfig.ListenUDPRawConn(ctx, s.proxyListenNetwork, s.proxyListenAddress)
+	proxyConn, proxyConnInfo, err := s.proxyConnListenConfig.ListenUDPMmsgConn(ctx, s.proxyListenNetwork, s.proxyListenAddress)
 	if err != nil {
 		return err
 	}
@@ -62,7 +62,7 @@ func (s *server) startMmsg(ctx context.Context) error {
 	s.mwg.Add(1)
 
 	go func() {
-		s.recvFromProxyConnRecvmmsg(ctx, proxyConn.RConn(), proxyConnInfo)
+		s.recvFromProxyConnRecvmmsg(ctx, proxyConn.NewRConn(), proxyConnInfo)
 		s.mwg.Done()
 	}()
 
@@ -336,7 +336,7 @@ func (s *server) recvFromProxyConnRecvmmsg(ctx context.Context, proxyConn *conn.
 						return
 					}
 
-					wgConn, wgConnInfo, err := s.wgConnListenConfig.ListenUDPRawConn(ctx, s.wgConnListenNetwork, s.wgConnListenAddress)
+					wgConn, wgConnInfo, err := s.wgConnListenConfig.ListenUDPMmsgConn(ctx, s.wgConnListenNetwork, s.wgConnListenAddress)
 					if err != nil {
 						s.logger.Warn("Failed to create UDP socket for new session",
 							zap.String("server", s.name),
@@ -401,7 +401,7 @@ func (s *server) recvFromProxyConnRecvmmsg(ctx context.Context, proxyConn *conn.
 						s.relayProxyToWgSendmmsg(serverNatUplinkMmsg{
 							clientAddrPort: clientAddrPort,
 							wgAddrPort:     wgAddrPort,
-							wgConn:         wgConn.WConn(),
+							wgConn:         wgConn.NewWConn(),
 							wgConnInfo:     wgConnInfo,
 							wgConnSendCh:   wgConnSendCh,
 						})
@@ -414,8 +414,8 @@ func (s *server) recvFromProxyConnRecvmmsg(ctx context.Context, proxyConn *conn.
 						clientPktinfop:     clientPktinfop,
 						clientPktinfo:      &natEntry.clientPktinfo,
 						wgAddrPort:         wgAddrPort,
-						wgConn:             wgConn.RConn(),
-						proxyConn:          proxyConn.WConn(),
+						wgConn:             wgConn.NewRConn(),
+						proxyConn:          proxyConn.NewWConn(),
 						proxyConnInfo:      proxyConnInfo,
 						handler:            handler,
 						maxProxyPacketSize: maxProxyPacketSize,
@@ -561,14 +561,24 @@ func (s *server) relayProxyToWgSendmmsg(uplink serverNatUplinkMmsg) {
 			}
 		}
 
-		if err := uplink.wgConn.WriteMsgs(msgvec, 0); err != nil {
-			s.logger.Warn("Failed to write wgPacket to wgConn",
-				zap.String("server", s.name),
-				zap.String("listenAddress", s.proxyListenAddress),
-				zap.Stringer("clientAddress", uplink.clientAddrPort),
-				zap.Stringer("wgAddress", uplink.wgAddrPort),
-				zap.Error(err),
-			)
+		for start := 0; start < len(msgvec); {
+			n, err := uplink.wgConn.WriteMsgs(msgvec[start:], 0)
+			start += n
+			if err != nil {
+				s.logger.Warn("Failed to write wgPacket to wgConn",
+					zap.String("server", s.name),
+					zap.String("listenAddress", s.proxyListenAddress),
+					zap.Stringer("clientAddress", uplink.clientAddrPort),
+					zap.Stringer("wgAddress", uplink.wgAddrPort),
+					zap.Uint("wgPacketLength", uint(iovec[start].Len)),
+					zap.Error(err),
+				)
+				start++
+			}
+
+			sendmmsgCount++
+			msgsSent += uint64(n)
+			burstBatchSize = max(burstBatchSize, n)
 		}
 
 		if isHandshake {
@@ -582,10 +592,6 @@ func (s *server) relayProxyToWgSendmmsg(uplink serverNatUplinkMmsg) {
 				)
 			}
 		}
-
-		sendmmsgCount++
-		msgsSent += uint64(len(msgvec))
-		burstBatchSize = max(burstBatchSize, len(msgvec))
 
 		cmsgBuf = cmsgBuf[:0]
 		for _, buf := range bufvec {
@@ -884,19 +890,25 @@ func (s *server) relayWgToProxySendmmsg(downlink serverNatDownlinkMmsg) {
 
 		queuedPackets = queuedPackets[:0]
 
-		if err = downlink.proxyConn.WriteMsgs(smsgvec, 0); err != nil {
-			s.logger.Warn("Failed to write swgpPacket to proxyConn",
-				zap.String("server", s.name),
-				zap.String("listenAddress", s.proxyListenAddress),
-				zap.Stringer("clientAddress", downlink.clientAddrPort),
-				zap.Stringer("wgAddress", downlink.wgAddrPort),
-				zap.Error(err),
-			)
-		}
+		for start := 0; start < len(smsgvec); {
+			n, err := downlink.proxyConn.WriteMsgs(smsgvec[start:], 0)
+			start += n
+			if err != nil {
+				s.logger.Warn("Failed to write swgpPacket to proxyConn",
+					zap.String("server", s.name),
+					zap.String("listenAddress", s.proxyListenAddress),
+					zap.Stringer("clientAddress", downlink.clientAddrPort),
+					zap.Stringer("wgAddress", downlink.wgAddrPort),
+					zap.Uint("swgpPacketLength", uint(siovec[start].Len)),
+					zap.Error(err),
+				)
+				start++
+			}
 
-		sendmmsgCount++
-		msgsSent += uint64(len(smsgvec))
-		burstSendBatchSize = max(burstSendBatchSize, len(smsgvec))
+			sendmmsgCount++
+			msgsSent += uint64(n)
+			burstSendBatchSize = max(burstSendBatchSize, n)
+		}
 
 		sendPacketBuf = sendPacketBuf[:0]
 		sendCmsgBuf = sendCmsgBuf[:0]

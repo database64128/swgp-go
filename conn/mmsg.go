@@ -6,33 +6,37 @@ import (
 	"net"
 	"os"
 	"syscall"
+	"unsafe"
+
+	"golang.org/x/sys/unix"
 )
 
-type rawUDPConn struct {
+// MmsgConn wraps a [*net.UDPConn] and provides methods for reading and writing
+// multiple messages using the recvmmsg(2) and sendmmsg(2) system calls.
+type MmsgConn struct {
 	*net.UDPConn
 	rawConn syscall.RawConn
 }
 
-// NewRawUDPConn wraps a [net.UDPConn] in a [rawUDPConn] for batch I/O.
-func NewRawUDPConn(udpConn *net.UDPConn) (rawUDPConn, error) {
+// NewMmsgConn returns a new [MmsgConn] for udpConn.
+func NewMmsgConn(udpConn *net.UDPConn) (MmsgConn, error) {
 	rawConn, err := udpConn.SyscallConn()
 	if err != nil {
-		return rawUDPConn{}, err
+		return MmsgConn{}, err
 	}
 
-	return rawUDPConn{
+	return MmsgConn{
 		UDPConn: udpConn,
 		rawConn: rawConn,
 	}, nil
 }
 
-// MmsgRConn wraps a [net.UDPConn] and provides the [ReadMsgs] method
-// for reading multiple messages in a single recvmmsg(2) system call.
+// MmsgRConn provides read access to the [MmsgConn].
 //
-// [MmsgRConn] is not safe for concurrent use.
-// Use the [RConn] method to create a new [MmsgRConn] instance for each goroutine.
+// MmsgRConn is not safe for concurrent use.
+// Always create a new MmsgRConn for each goroutine.
 type MmsgRConn struct {
-	rawUDPConn
+	MmsgConn
 	rawReadFunc func(fd uintptr) (done bool)
 	readMsgvec  []Mmsghdr
 	readFlags   int
@@ -40,66 +44,66 @@ type MmsgRConn struct {
 	readErr     error
 }
 
-// MmsgWConn wraps a [net.UDPConn] and provides the [WriteMsgs] method
-// for writing multiple messages in a single sendmmsg(2) system call.
+// MmsgWConn provides write access to the [MmsgConn].
 //
-// [MmsgWConn] is not safe for concurrent use.
-// Use the [WConn] method to create a new [MmsgWConn] instance for each goroutine.
+// MmsgWConn is not safe for concurrent use.
+// Always create a new MmsgWConn for each goroutine.
 type MmsgWConn struct {
-	rawUDPConn
+	MmsgConn
 	rawWriteFunc func(fd uintptr) (done bool)
 	writeMsgvec  []Mmsghdr
 	writeFlags   int
-	writeErrno   syscall.Errno
+	writeN       int
+	writeErr     error
 }
 
-// RConn returns a new [MmsgRConn] instance for batch reading.
-func (c rawUDPConn) RConn() *MmsgRConn {
-	mmsgRConn := MmsgRConn{
-		rawUDPConn: c,
+// NewRConn returns the connection wrapped in a new [*MmsgRConn] for batch reading.
+func (c MmsgConn) NewRConn() *MmsgRConn {
+	rc := MmsgRConn{
+		MmsgConn: c,
 	}
 
-	mmsgRConn.rawReadFunc = func(fd uintptr) (done bool) {
+	rc.rawReadFunc = func(fd uintptr) (done bool) {
 		var errno syscall.Errno
-		mmsgRConn.readN, errno = recvmmsg(int(fd), mmsgRConn.readMsgvec, mmsgRConn.readFlags)
+		rc.readN, errno = recvmmsg(int(fd), rc.readMsgvec, rc.readFlags)
 		switch errno {
 		case 0:
+			rc.readErr = nil
 		case syscall.EAGAIN:
 			return false
 		default:
-			mmsgRConn.readErr = os.NewSyscallError("recvmmsg", errno)
+			rc.readErr = os.NewSyscallError("recvmmsg", errno)
 		}
 		return true
 	}
 
-	return &mmsgRConn
+	return &rc
 }
 
-// WConn returns a new [MmsgWConn] instance for batch writing.
-func (c rawUDPConn) WConn() *MmsgWConn {
-	mmsgWConn := MmsgWConn{
-		rawUDPConn: c,
+// NewWConn returns the connection wrapped in a new [*MmsgWConn] for batch writing.
+func (c MmsgConn) NewWConn() *MmsgWConn {
+	wc := MmsgWConn{
+		MmsgConn: c,
 	}
 
-	mmsgWConn.rawWriteFunc = func(fd uintptr) (done bool) {
+	wc.rawWriteFunc = func(fd uintptr) (done bool) {
+		wc.writeN = 0
 		for {
-			n, errno := sendmmsg(int(fd), mmsgWConn.writeMsgvec, mmsgWConn.writeFlags)
+			n, errno := sendmmsg(int(fd), wc.writeMsgvec, wc.writeFlags)
 			switch errno {
 			case 0:
 			case syscall.EAGAIN:
 				return false
 			default:
-				mmsgWConn.writeErrno = errno
-				mmsgWConn.writeMsgvec = mmsgWConn.writeMsgvec[1:]
-				if len(mmsgWConn.writeMsgvec) == 0 {
-					return true
-				}
-				continue
+				wc.writeErr = os.NewSyscallError("sendmmsg", errno)
+				return true
 			}
 
-			mmsgWConn.writeMsgvec = mmsgWConn.writeMsgvec[n:]
+			wc.writeMsgvec = wc.writeMsgvec[n:]
+			wc.writeN += n
 
-			if len(mmsgWConn.writeMsgvec) == 0 {
+			if len(wc.writeMsgvec) == 0 {
+				wc.writeErr = nil
 				return true
 			}
 
@@ -120,32 +124,49 @@ func (c rawUDPConn) WConn() *MmsgWConn {
 		}
 	}
 
-	return &mmsgWConn
+	return &wc
 }
 
-// ReadMsgs reads as many messages as possible into the given msgvec
+// ReadMsgs reads as many messages as possible into msgvec
 // and returns the number of messages read or an error.
 func (c *MmsgRConn) ReadMsgs(msgvec []Mmsghdr, flags int) (int, error) {
 	c.readMsgvec = msgvec
 	c.readFlags = flags
-	c.readN = 0
-	c.readErr = nil
 	if err := c.rawConn.Read(c.rawReadFunc); err != nil {
 		return 0, err
 	}
 	return c.readN, c.readErr
 }
 
-// WriteMsgs writes all messages in the given msgvec and returns the last encountered error.
-func (c *MmsgWConn) WriteMsgs(msgvec []Mmsghdr, flags int) error {
+// WriteMsgs writes the messages in msgvec to the connection.
+// It returns the number of messages written as n, and if n < len(msgvec),
+// the error from writing the n-th message.
+func (c *MmsgWConn) WriteMsgs(msgvec []Mmsghdr, flags int) (int, error) {
 	c.writeMsgvec = msgvec
 	c.writeFlags = flags
-	c.writeErrno = 0
 	if err := c.rawConn.Write(c.rawWriteFunc); err != nil {
-		return err
+		return 0, err
 	}
-	if c.writeErrno != 0 {
-		return os.NewSyscallError("sendmmsg", c.writeErrno)
+	return c.writeN, c.writeErr
+}
+
+type Mmsghdr struct {
+	Msghdr unix.Msghdr
+	Msglen uint32
+}
+
+func mmsgSyscall(trap uintptr, fd int, msgvec []Mmsghdr, flags int) (int, syscall.Errno) {
+	r0, _, e1 := unix.Syscall6(trap, uintptr(fd), uintptr(unsafe.Pointer(unsafe.SliceData(msgvec))), uintptr(len(msgvec)), uintptr(flags), 0, 0)
+	if e1 != 0 {
+		return 0, e1
 	}
-	return nil
+	return int(r0), 0
+}
+
+func recvmmsg(fd int, msgvec []Mmsghdr, flags int) (int, syscall.Errno) {
+	return mmsgSyscall(SYS_RECVMMSG, fd, msgvec, flags)
+}
+
+func sendmmsg(fd int, msgvec []Mmsghdr, flags int) (int, syscall.Errno) {
+	return mmsgSyscall(unix.SYS_SENDMMSG, fd, msgvec, flags)
 }
