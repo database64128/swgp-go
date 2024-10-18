@@ -13,19 +13,19 @@ const socketControlMessageBufferSize = unix.SizeofCmsghdr + alignedSizeofInet6Pk
 	unix.SizeofCmsghdr + alignedSizeofGROSegmentSize
 
 const (
-	sizeofGSOSegmentSize = int(unsafe.Sizeof(uint16(0)))
-	sizeofGROSegmentSize = int(unsafe.Sizeof(int32(0)))
+	sizeofGSOSegmentSize = 2 // int(unsafe.Sizeof(uint16(0)))
+	sizeofGROSegmentSize = 4 // int(unsafe.Sizeof(int32(0)))
 )
 
-func cmsgAlign(n uint64) uint64 {
-	return (n + unix.SizeofPtr - 1) & ^uint64(unix.SizeofPtr-1)
+func cmsgAlign(n int) int {
+	return (n + unix.SizeofPtr - 1) & ^(unix.SizeofPtr - 1)
 }
 
 func parseSocketControlMessage(cmsg []byte) (m SocketControlMessage, err error) {
 	for len(cmsg) >= unix.SizeofCmsghdr {
 		cmsghdr := (*unix.Cmsghdr)(unsafe.Pointer(unsafe.SliceData(cmsg)))
-		msgSize := cmsgAlign(cmsghdr.Len)
-		if cmsghdr.Len < unix.SizeofCmsghdr || int(msgSize) > len(cmsg) {
+		msgSize := cmsgAlign(int(cmsghdr.Len))
+		if cmsghdr.Len < unix.SizeofCmsghdr || msgSize > len(cmsg) {
 			return m, fmt.Errorf("invalid control message length %d", cmsghdr.Len)
 		}
 
@@ -106,7 +106,7 @@ func (m SocketControlMessage) appendTo(b []byte) []byte {
 		b, msgBuf = slicehelper.Extend(b, unix.SizeofCmsghdr+alignedSizeofGSOSegmentSize)
 		cmsghdr := (*unix.Cmsghdr)(unsafe.Pointer(unsafe.SliceData(msgBuf)))
 		*cmsghdr = unix.Cmsghdr{
-			Len:   unix.SizeofCmsghdr + uint64(sizeofGSOSegmentSize),
+			Len:   unix.SizeofCmsghdr + sizeofGSOSegmentSize,
 			Level: unix.IPPROTO_UDP,
 			Type:  unix.UDP_SEGMENT,
 		}

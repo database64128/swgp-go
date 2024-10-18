@@ -527,19 +527,19 @@ func (s *server) relayProxyToWgSendmmsg(uplink serverNatUplinkMmsg) {
 
 				iovec = append(iovec, unix.Iovec{
 					Base: unsafe.SliceData(sendBuf),
-					Len:  uint64(len(sendBuf)),
 				})
+				iovec[len(iovec)-1].SetLen(len(sendBuf))
 
 				msgvec = append(msgvec, conn.Mmsghdr{
 					Msghdr: unix.Msghdr{
-						Name:       (*byte)(unsafe.Pointer(&rsa6)),
-						Namelen:    unix.SizeofSockaddrInet6,
-						Iov:        &iovec[len(iovec)-1],
-						Iovlen:     1,
-						Control:    unsafe.SliceData(cmsg),
-						Controllen: uint64(len(cmsg)),
+						Name:    (*byte)(unsafe.Pointer(&rsa6)),
+						Namelen: unix.SizeofSockaddrInet6,
+						Iov:     &iovec[len(iovec)-1],
+						Iovlen:  1,
+						Control: unsafe.SliceData(cmsg),
 					},
 				})
+				msgvec[len(msgvec)-1].Msghdr.SetControllen(len(cmsg))
 
 				packetsSent += uint64(sendSegmentCount)
 				burstSegmentCount = max(burstSegmentCount, sendSegmentCount)
@@ -868,19 +868,19 @@ func (s *server) relayWgToProxySendmmsg(downlink serverNatDownlinkMmsg) {
 
 				siovec = append(siovec, unix.Iovec{
 					Base: unsafe.SliceData(sendBuf),
-					Len:  uint64(len(sendBuf)),
 				})
+				siovec[len(siovec)-1].SetLen(len(sendBuf))
 
 				smsgvec = append(smsgvec, conn.Mmsghdr{
 					Msghdr: unix.Msghdr{
-						Name:       name,
-						Namelen:    namelen,
-						Iov:        &siovec[len(siovec)-1],
-						Iovlen:     1,
-						Control:    unsafe.SliceData(cmsg),
-						Controllen: uint64(len(cmsg)),
+						Name:    name,
+						Namelen: namelen,
+						Iov:     &siovec[len(siovec)-1],
+						Iovlen:  1,
+						Control: unsafe.SliceData(cmsg),
 					},
 				})
+				smsgvec[len(smsgvec)-1].Msghdr.SetControllen(len(cmsg))
 
 				packetsSent += uint64(sendSegmentCount)
 				swgpBytesSent += uint64(len(sendBuf))
