@@ -544,22 +544,10 @@ func (c *client) relayWgToProxyGeneric(uplink clientNatUplinkGeneric) {
 	)
 
 	for rqp := range uplink.proxyConnSendCh {
-		// Update proxyConn read deadline when rqp contains a WireGuard handshake initiation message.
-		if rqp.isWireGuardHandshakeInitiationMessage() { // TODO: merge into the loop below as an optimization
-			if err := uplink.proxyConn.SetReadDeadline(time.Now().Add(RejectAfterTime)); err != nil {
-				c.logger.Warn("Failed to SetReadDeadline on proxyConn",
-					zap.String("client", c.name),
-					zap.String("listenAddress", c.wgListenAddress),
-					zap.Stringer("clientAddress", uplink.clientAddrPort),
-					zap.Stringer("proxyAddress", uplink.proxyAddrPort),
-					zap.Error(err),
-				)
-			}
-		}
-
 		wgPacketBuf := rqp.buf
 
 		var (
+			isHandshake     bool
 			sqpLength       uint32
 			sqpSegmentSize  uint32
 			sqpSegmentCount uint32
@@ -569,6 +557,11 @@ func (c *client) relayWgToProxyGeneric(uplink clientNatUplinkGeneric) {
 			wgPacketLength := min(len(wgPacketBuf), int(rqp.segmentSize))
 			wgPacket := wgPacketBuf[:wgPacketLength]
 			wgPacketBuf = wgPacketBuf[wgPacketLength:]
+
+			// Update proxyConn read deadline when rqp contains a WireGuard handshake initiation message.
+			if wgPacket[0] == packet.WireGuardMessageLengthHandshakeInitiation {
+				isHandshake = true
+			}
 
 			dst, err := uplink.handler.Encrypt(packetBuf, wgPacket)
 			if err != nil {
@@ -675,6 +668,18 @@ func (c *client) relayWgToProxyGeneric(uplink clientNatUplinkGeneric) {
 
 		sendQueuedPackets = sendQueuedPackets[:0]
 		packetBuf = packetBuf[:0]
+
+		if isHandshake {
+			if err := uplink.proxyConn.SetReadDeadline(time.Now().Add(RejectAfterTime)); err != nil {
+				c.logger.Warn("Failed to SetReadDeadline on proxyConn",
+					zap.String("client", c.name),
+					zap.String("listenAddress", c.wgListenAddress),
+					zap.Stringer("clientAddress", uplink.clientAddrPort),
+					zap.Stringer("proxyAddress", uplink.proxyAddrPort),
+					zap.Error(err),
+				)
+			}
+		}
 	}
 
 	c.logger.Info("Finished relay wgConn -> proxyConn",

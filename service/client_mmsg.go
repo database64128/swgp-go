@@ -432,11 +432,6 @@ main:
 
 	dequeue:
 		for {
-			// Update proxyConn read deadline when rqp contains a WireGuard handshake initiation message.
-			if rqp.isWireGuardHandshakeInitiationMessage() { // TODO: merge into the loop below as an optimization
-				isHandshake = true
-			}
-
 			wgPacketBuf := rqp.buf
 
 			var (
@@ -449,6 +444,11 @@ main:
 				wgPacketLength := min(len(wgPacketBuf), int(rqp.segmentSize))
 				wgPacket := wgPacketBuf[:wgPacketLength]
 				wgPacketBuf = wgPacketBuf[wgPacketLength:]
+
+				// Update proxyConn read deadline when rqp contains a WireGuard handshake initiation message.
+				if wgPacket[0] == packet.WireGuardMessageLengthHandshakeInitiation {
+					isHandshake = true
+				}
 
 				dst, err := uplink.handler.Encrypt(packetBuf, wgPacket)
 				if err != nil {

@@ -500,7 +500,7 @@ func (s *server) relayProxyToWgSendmmsg(uplink serverNatUplinkMmsg) {
 			bufvec = append(bufvec, qp.buf)
 
 			// Update wgConn read deadline when qp contains a WireGuard handshake initiation message.
-			if qp.isWireGuardHandshakeInitiationMessage() { // TODO: merge into the loop below as an optimization
+			if qp.isWireGuardHandshakeInitiationMessage() {
 				isHandshake = true
 			}
 

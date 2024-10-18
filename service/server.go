@@ -602,7 +602,7 @@ func (s *server) relayProxyToWgGeneric(uplink serverNatUplinkGeneric) {
 
 	for qp := range uplink.wgConnSendCh {
 		// Update wgConn read deadline when qp contains a WireGuard handshake initiation message.
-		if qp.isWireGuardHandshakeInitiationMessage() { // TODO: merge into the loop below as an optimization
+		if qp.isWireGuardHandshakeInitiationMessage() {
 			if err := uplink.wgConn.SetReadDeadline(time.Now().Add(RejectAfterTime)); err != nil {
 				s.logger.Warn("Failed to SetReadDeadline on wgConn",
 					zap.String("server", s.name),
