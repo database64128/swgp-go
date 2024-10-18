@@ -107,20 +107,16 @@ func (c MmsgConn) NewWConn() *MmsgWConn {
 				return true
 			}
 
-			// Short-write optimization:
+			// sendmmsg(2) may return less than vlen in one of the following cases:
 			//
-			// According to tokio, not writing the full msgvec is sufficient to show
-			// that the socket buffer is full. Previous tests also showed that this is
-			// faster than immediately trying to write again.
+			//   - The socket write buffer is full.
+			//   - vlen is greater than UIO_MAXIOV (1024).
+			//   - Sending the next message would return an error.
 			//
-			// Do keep in mind that this is not how the Go runtime handles writes though.
-
-			// sendmmsg(2) sends up to UIO_MAXIOV (1024) messages per call.
-			if n == 1024 {
-				continue
-			}
-
-			return false
+			// The first case is the only one where it's safe to clear write readiness.
+			// The other cases require the caller to retry sending the remaining messages.
+			// Unfortunately, the API does not tell us which one is the case, so we always
+			// retry the call with the remaining messages.
 		}
 	}
 
