@@ -693,6 +693,12 @@ func (s *server) relayWgToProxySendmmsg(downlink serverNatDownlinkMmsg) {
 		msgsReceived += uint64(nr)
 		burstRecvBatchSize = max(burstRecvBatchSize, nr)
 
+		var (
+			qpLength       uint32
+			qpSegmentSize  uint32
+			qpSegmentCount uint32
+		)
+
 		rmsgvecn := rmsgvec[:nr]
 
 		for i := range rmsgvecn {
@@ -760,12 +766,7 @@ func (s *server) relayWgToProxySendmmsg(downlink serverNatDownlinkMmsg) {
 				recvSegmentSize = len(wgPacketBuf)
 			}
 
-			var (
-				recvSegmentCount uint32
-				qpLength         uint32
-				qpSegmentSize    uint32
-				qpSegmentCount   uint32
-			)
+			var recvSegmentCount uint32
 
 			for len(wgPacketBuf) > 0 {
 				wgPacketLength := min(len(wgPacketBuf), recvSegmentSize)
@@ -824,14 +825,14 @@ func (s *server) relayWgToProxySendmmsg(downlink serverNatDownlinkMmsg) {
 
 			packetsReceived += uint64(recvSegmentCount)
 			burstRecvSegmentCount = max(burstRecvSegmentCount, recvSegmentCount)
+		}
 
-			if qpLength > 0 {
-				queuedPackets = append(queuedPackets, queuedPacket{
-					buf:          sendPacketBuf[len(sendPacketBuf)-int(qpLength):],
-					segmentSize:  qpSegmentSize,
-					segmentCount: qpSegmentCount,
-				})
-			}
+		if qpLength > 0 {
+			queuedPackets = append(queuedPackets, queuedPacket{
+				buf:          sendPacketBuf[len(sendPacketBuf)-int(qpLength):],
+				segmentSize:  qpSegmentSize,
+				segmentCount: qpSegmentCount,
+			})
 		}
 
 		if len(queuedPackets) == 0 {

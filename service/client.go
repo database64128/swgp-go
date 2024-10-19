@@ -544,8 +544,6 @@ func (c *client) relayWgToProxyGeneric(uplink clientNatUplinkGeneric) {
 	)
 
 	for rqp := range uplink.proxyConnSendCh {
-		wgPacketBuf := rqp.buf
-
 		var (
 			isHandshake     bool
 			sqpLength       uint32
@@ -553,7 +551,7 @@ func (c *client) relayWgToProxyGeneric(uplink clientNatUplinkGeneric) {
 			sqpSegmentCount uint32
 		)
 
-		for len(wgPacketBuf) > 0 {
+		for wgPacketBuf := rqp.buf; len(wgPacketBuf) > 0; {
 			wgPacketLength := min(len(wgPacketBuf), int(rqp.segmentSize))
 			wgPacket := wgPacketBuf[:wgPacketLength]
 			wgPacketBuf = wgPacketBuf[wgPacketLength:]

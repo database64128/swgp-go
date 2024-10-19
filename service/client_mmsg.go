@@ -422,25 +422,22 @@ func (c *client) relayWgToProxySendmmsg(uplink clientNatUplinkMmsg) {
 
 main:
 	for {
-		var isHandshake bool
-
 		// Block on first dequeue op.
 		rqp, ok := <-uplink.proxyConnSendCh
 		if !ok {
 			break
 		}
 
+		var (
+			isHandshake     bool
+			sqpLength       uint32
+			sqpSegmentSize  uint32
+			sqpSegmentCount uint32
+		)
+
 	dequeue:
 		for {
-			wgPacketBuf := rqp.buf
-
-			var (
-				sqpLength       uint32
-				sqpSegmentSize  uint32
-				sqpSegmentCount uint32
-			)
-
-			for len(wgPacketBuf) > 0 {
+			for wgPacketBuf := rqp.buf; len(wgPacketBuf) > 0; {
 				wgPacketLength := min(len(wgPacketBuf), int(rqp.segmentSize))
 				wgPacket := wgPacketBuf[:wgPacketLength]
 				wgPacketBuf = wgPacketBuf[wgPacketLength:]
@@ -498,17 +495,9 @@ main:
 				packetBuf = dst
 			}
 
-			if sqpLength > 0 {
-				sendQueuedPackets = append(sendQueuedPackets, queuedPacket{
-					buf:          packetBuf[len(packetBuf)-int(sqpLength):],
-					segmentSize:  sqpSegmentSize,
-					segmentCount: sqpSegmentCount,
-				})
-			}
-
 			c.putPacketBuf(rqp.buf)
 
-			if len(sendQueuedPackets) == 0 {
+			if len(sendQueuedPackets) == 0 && sqpLength == 0 {
 				continue main
 			}
 
@@ -524,6 +513,14 @@ main:
 			default:
 				break dequeue
 			}
+		}
+
+		if sqpLength > 0 {
+			sendQueuedPackets = append(sendQueuedPackets, queuedPacket{
+				buf:          packetBuf[len(packetBuf)-int(sqpLength):],
+				segmentSize:  sqpSegmentSize,
+				segmentCount: sqpSegmentCount,
+			})
 		}
 
 		for _, sqp := range sendQueuedPackets {
