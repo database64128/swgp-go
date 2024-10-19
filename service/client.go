@@ -627,8 +627,14 @@ func (c *client) relayWgToProxyGeneric(uplink clientNatUplinkGeneric) {
 			b := sqp.buf
 			segmentsRemaining := sqp.segmentCount
 
+			maxUDPGSOSegments := uplink.proxyConnInfo.MaxUDPGSOSegments
+			if maxUDPGSOSegments > 1 {
+				// Cap each coalesced message to 65535 bytes to prevent -EMSGSIZE.
+				maxUDPGSOSegments = max(1, 65535/sqp.segmentSize)
+			}
+
 			for segmentsRemaining > 0 {
-				sendSegmentCount := min(segmentsRemaining, uplink.proxyConnInfo.MaxUDPGSOSegments)
+				sendSegmentCount := min(segmentsRemaining, maxUDPGSOSegments)
 				segmentsRemaining -= sendSegmentCount
 
 				sendBufSize := min(len(b), int(sqp.segmentSize*sendSegmentCount))
@@ -870,8 +876,14 @@ func (c *client) relayProxyToWgGeneric(downlink clientNatDownlinkGeneric) {
 			b := qp.buf
 			segmentsRemaining := qp.segmentCount
 
+			maxUDPGSOSegments := downlink.wgConnInfo.MaxUDPGSOSegments
+			if maxUDPGSOSegments > 1 {
+				// Cap each coalesced message to 65535 bytes to prevent -EMSGSIZE.
+				maxUDPGSOSegments = max(1, 65535/qp.segmentSize)
+			}
+
 			for segmentsRemaining > 0 {
-				sendSegmentCount := min(segmentsRemaining, downlink.wgConnInfo.MaxUDPGSOSegments)
+				sendSegmentCount := min(segmentsRemaining, maxUDPGSOSegments)
 				segmentsRemaining -= sendSegmentCount
 
 				sendBufSize := min(len(b), int(qp.segmentSize*sendSegmentCount))
