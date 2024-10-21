@@ -3,25 +3,68 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/database64128/swgp-go.svg)](https://pkg.go.dev/github.com/database64128/swgp-go)
 [![Test](https://github.com/database64128/swgp-go/actions/workflows/test.yml/badge.svg)](https://github.com/database64128/swgp-go/actions/workflows/test.yml)
 [![Release](https://github.com/database64128/swgp-go/actions/workflows/release.yml/badge.svg)](https://github.com/database64128/swgp-go/actions/workflows/release.yml)
-[![swgp-go AUR package](https://img.shields.io/aur/version/swgp-go?label=swgp-go)](https://aur.archlinux.org/packages/swgp-go)
-[![swgp-go-git AUR package](https://img.shields.io/aur/version/swgp-go-git?label=swgp-go-git)](https://aur.archlinux.org/packages/swgp-go-git)
 
 🐉 Simple WireGuard proxy with minimal overhead for WireGuard traffic.
 
-## Proxy Modes
+## Proxy modes
 
 ### 1. Zero overhead
 
-The first 16 bytes of all packets are encrypted using an AES block cipher. The remainder of handshake packets (message type 1, 2, 3) are also randomly padded and encrypted using XChaCha20-Poly1305 to blend into normal traffic.
+- Encrypts the first 16 bytes as an AES block.
+- Adds padding of random length to handshake packets, then encrypts all bytes after the first 16 using XChaCha20-Poly1305.
+
+#### When to use
+
+- ✅ Does not affect tunnel MTU.
+- ✅ Minimal processing of data packets.
 
 ### 2. Paranoid
 
-Pad all types of packets without exceeding MTU, then encrypt the whole packet using XChaCha20-Poly1305. We pad data packets because:
+Packets are padded to the maximum packet size allowed by the MTU, then encrypted using XChaCha20-Poly1305.
 
-- The length of a WireGuard data packet is always a multiple of 16.
-- Many IPv6 websites cap their outgoing MTU to 1280 for maximum compatibility.
+#### When to use
 
-## Configuration Examples
+- ✅ Full-packet AEAD.
+- ✅ Hides in-tunnel packet sizes.
+    - The length of a WireGuard data packet is always a multiple of 16.
+    - Many IPv6 websites cap their outgoing MTU to 1280 for maximum compatibility.
+- ❗️ Slight reduction of tunnel MTU.
+- ❗️ Increased bandwidth usage.
+
+## Deployment
+
+### Arch Linux package
+
+Release and VCS packages are available in the AUR:
+
+- [![swgp-go AUR package](https://img.shields.io/aur/version/swgp-go?label=swgp-go)](https://aur.archlinux.org/packages/swgp-go)
+- [![swgp-go-git AUR package](https://img.shields.io/aur/version/swgp-go-git?label=swgp-go-git)](https://aur.archlinux.org/packages/swgp-go-git)
+
+### Prebuilt binaries
+
+Download from [releases](https://github.com/database64128/swgp-go/releases).
+
+### Container images
+
+There are container images maintained by the community:
+
+- [vnxme/docker-swgp-go](https://github.com/vnxme/docker-swgp-go)
+
+### Build from source
+
+Build and install the latest version using Go:
+
+```sh
+go install github.com/database64128/swgp-go@latest
+```
+
+Or clone the repository and build it manually:
+
+```sh
+go build -trimpath -ldflags '-s -w' ./cmd/swgp-go
+```
+
+## Configuration
 
 All configuration examples and systemd unit files can be found in the [docs](docs) directory.
 
@@ -73,4 +116,4 @@ In this example, `swgp-go` runs a proxy client instance on port 20222. Encrypted
 
 ## License
 
-[AGPLv3](LICENSE)
+[AGPL-3.0-or-later](LICENSE)
