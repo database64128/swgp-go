@@ -17,6 +17,9 @@ type SocketInfo struct {
 
 	// UDPGenericReceiveOffload indicates whether UDP GRO is enabled on the socket.
 	UDPGenericReceiveOffload bool
+
+	// IPv6Only reports whether the socket is IPv6-only.
+	IPv6Only bool
 }
 
 type setFunc = func(fd int, network string, info *SocketInfo) error

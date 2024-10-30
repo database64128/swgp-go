@@ -8,7 +8,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func setPMTUD(fd int, network string) error {
+func setPMTUD(fd int, network string, _ *SocketInfo) error {
 	switch network {
 	case "udp4":
 		if err := unix.SetsockoptInt(int(fd), unix.IPPROTO_IP, unix.IP_DONTFRAG, 1); err != nil {

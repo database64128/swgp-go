@@ -6,7 +6,7 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func setRecvPktinfo(fd int, network string) error {
+func setRecvPktinfo(fd int, network string, _ *SocketInfo) error {
 	switch network {
 	case "udp4":
 		if err := unix.SetsockoptInt(fd, unix.IPPROTO_IP, unix.IP_RECVPKTINFO, 1); err != nil {
@@ -24,6 +24,7 @@ func setRecvPktinfo(fd int, network string) error {
 
 func (lso ListenerSocketOptions) buildSetFns() setFuncSlice {
 	return setFuncSlice{}.
+		appendGetIPv6Only().
 		appendSetSendBufferSize(lso.SendBufferSize).
 		appendSetRecvBufferSize(lso.ReceiveBufferSize).
 		appendSetTrafficClassFunc(lso.TrafficClass).

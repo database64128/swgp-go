@@ -1,4 +1,4 @@
-//go:build unix && !linux
+//go:build aix || darwin || dragonfly || freebsd || netbsd || openbsd || solaris || zos
 
 package conn
 
