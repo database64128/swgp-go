@@ -9,40 +9,49 @@ import (
 	"go.uber.org/zap"
 )
 
-// PprofConfig is the configuration for the pprof service.
-type PprofConfig struct {
+// Config is the configuration for the pprof service.
+type Config struct {
 	// Enabled controls whether the pprof service is enabled.
 	Enabled bool `json:"enabled"`
+
+	// ListenNetwork is the network to listen on.
+	ListenNetwork string `json:"listenNetwork"`
 
 	// ListenAddress is the address to listen on.
 	ListenAddress string `json:"listenAddress"`
 }
 
 // NewService creates a new pprof service.
-func (pc *PprofConfig) NewService(logger *zap.Logger) *Service {
+func (c Config) NewService(logger *zap.Logger) *Service {
+	network := c.ListenNetwork
+	if network == "" {
+		network = "tcp"
+	}
 	return &Service{
-		logger: logger,
+		logger:  logger,
+		network: network,
 		server: http.Server{
-			Addr: pc.ListenAddress,
+			Addr: c.ListenAddress,
 		},
 	}
 }
 
 // Service implements [service.Service].
 type Service struct {
-	logger *zap.Logger
-	server http.Server
+	logger  *zap.Logger
+	network string
+	server  http.Server
 }
 
 // String implements [service.Service.String].
-func (s *Service) String() string {
+func (*Service) String() string {
 	return "pprof"
 }
 
 // Start implements [service.Service.Start].
 func (s *Service) Start(ctx context.Context) error {
 	var lc net.ListenConfig
-	ln, err := lc.Listen(ctx, "tcp", s.server.Addr)
+	ln, err := lc.Listen(ctx, s.network, s.server.Addr)
 	if err != nil {
 		return err
 	}
@@ -53,7 +62,7 @@ func (s *Service) Start(ctx context.Context) error {
 		}
 	}()
 
-	s.logger.Info("Started pprof", zap.String("listenAddress", s.server.Addr))
+	s.logger.Info("Started pprof", zap.Stringer("listenAddress", ln.Addr()))
 	return nil
 }
 

@@ -49,6 +49,7 @@
     ],
     "pprof": {
         "enabled": false,
+        "listenNetwork": "tcp",
         "listenAddress": ":8080"
     }
 }

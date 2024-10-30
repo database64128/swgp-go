@@ -140,9 +140,9 @@ func (pc *PerfConfig) CheckAndApplyDefaults() error {
 // Config stores configurations for a typical swgp service.
 // It may be marshaled as or unmarshaled from JSON.
 type Config struct {
-	Servers []ServerConfig    `json:"servers"`
-	Clients []ClientConfig    `json:"clients"`
-	Pprof   pprof.PprofConfig `json:"pprof"`
+	Servers []ServerConfig `json:"servers"`
+	Clients []ClientConfig `json:"clients"`
+	Pprof   pprof.Config   `json:"pprof"`
 }
 
 // Manager initializes the service manager.
