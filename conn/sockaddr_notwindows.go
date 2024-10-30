@@ -24,6 +24,19 @@ func AddrPortToSockaddr(addrPort netip.AddrPort) (name *byte, namelen uint32) {
 	return
 }
 
+func AddrPortToSockaddrWithAddressFamily(addrPort netip.AddrPort, is4 bool) (name *byte, namelen uint32) {
+	if is4 {
+		rsa4 := AddrPortToSockaddrInet4(addrPort)
+		name = (*byte)(unsafe.Pointer(&rsa4))
+		namelen = unix.SizeofSockaddrInet4
+	} else {
+		rsa6 := AddrPortToSockaddrInet6(addrPort)
+		name = (*byte)(unsafe.Pointer(&rsa6))
+		namelen = unix.SizeofSockaddrInet6
+	}
+	return
+}
+
 func SockaddrToAddrPort(name *byte, namelen uint32) (netip.AddrPort, error) {
 	switch namelen {
 	case unix.SizeofSockaddrInet4:

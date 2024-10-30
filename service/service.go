@@ -225,6 +225,13 @@ func wgTunnelMTUFromMaxPacketSize(maxPacketSize int) int {
 	return (maxPacketSize - WireGuardDataPacketOverhead) & WireGuardDataPacketLengthMask
 }
 
+func listenUDPNetworkForRemoteAddr(remoteAddr netip.Addr) string {
+	if remoteAddr.Is4() || remoteAddr.Is4In6() {
+		return "udp4"
+	}
+	return "udp6"
+}
+
 // queuedPacket is the structure used by send channels to queue packets for sending.
 type queuedPacket struct {
 	// buf is the buffer containing the packet.

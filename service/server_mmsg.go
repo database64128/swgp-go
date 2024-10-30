@@ -5,6 +5,7 @@ package service
 import (
 	"context"
 	"errors"
+	"net"
 	"net/netip"
 	"os"
 	"sync/atomic"
@@ -18,23 +19,25 @@ import (
 )
 
 type serverNatUplinkMmsg struct {
-	clientAddrPort netip.AddrPort
-	wgAddrPort     netip.AddrPort
-	wgConn         *conn.MmsgWConn
-	wgConnInfo     conn.SocketInfo
-	wgConnSendCh   <-chan queuedPacket
+	clientAddrPort       netip.AddrPort
+	wgConnListenAddrPort netip.AddrPort
+	wgAddrPort           netip.AddrPort
+	wgConn               *conn.MmsgWConn
+	wgConnInfo           conn.SocketInfo
+	wgConnSendCh         <-chan queuedPacket
 }
 
 type serverNatDownlinkMmsg struct {
-	clientAddrPort     netip.AddrPort
-	clientPktinfop     *pktinfo
-	clientPktinfo      *atomic.Pointer[pktinfo]
-	wgAddrPort         netip.AddrPort
-	wgConn             *conn.MmsgRConn
-	proxyConn          *conn.MmsgWConn
-	proxyConnInfo      conn.SocketInfo
-	handler            packet.Handler
-	maxProxyPacketSize int
+	clientAddrPort       netip.AddrPort
+	clientPktinfop       *pktinfo
+	clientPktinfo        *atomic.Pointer[pktinfo]
+	wgConnListenAddrPort netip.AddrPort
+	wgAddrPort           netip.AddrPort
+	wgConn               *conn.MmsgRConn
+	proxyConn            *conn.MmsgWConn
+	proxyConnInfo        conn.SocketInfo
+	handler              packet.Handler
+	maxProxyPacketSize   int
 }
 
 func (s *server) setStartFunc(batchMode string) {
@@ -52,6 +55,7 @@ func (s *server) startMmsg(ctx context.Context) error {
 		return err
 	}
 	s.proxyConn = proxyConn.UDPConn
+	s.proxyListenAddress = proxyConn.LocalAddr().String()
 
 	if proxyConnInfo.UDPGenericReceiveOffload {
 		s.packetBufSize = 65535
@@ -336,23 +340,29 @@ func (s *server) recvFromProxyConnRecvmmsg(ctx context.Context, proxyConn *conn.
 						return
 					}
 
-					wgConn, wgConnInfo, err := s.wgConnListenConfig.ListenUDPMmsgConn(ctx, s.wgConnListenNetwork, s.wgConnListenAddress)
+					wgConnListenNetwork := listenUDPNetworkForRemoteAddr(wgAddrPort.Addr())
+
+					wgConn, wgConnInfo, err := s.wgConnListenConfig.ListenUDPMmsgConn(ctx, wgConnListenNetwork, s.wgConnListenAddress)
 					if err != nil {
 						s.logger.Warn("Failed to create UDP socket for new session",
 							zap.String("server", s.name),
 							zap.String("listenAddress", s.proxyListenAddress),
 							zap.Stringer("clientAddress", clientAddrPort),
+							zap.String("wgConnListenNetwork", wgConnListenNetwork),
+							zap.String("wgConnListenAddress", s.wgConnListenAddress),
 							zap.Error(err),
 						)
 						return
 					}
 
-					err = wgConn.SetReadDeadline(time.Now().Add(RejectAfterTime))
-					if err != nil {
+					wgConnListenAddrPort := wgConn.LocalAddr().(*net.UDPAddr).AddrPort()
+
+					if err = wgConn.SetReadDeadline(time.Now().Add(RejectAfterTime)); err != nil {
 						s.logger.Warn("Failed to SetReadDeadline on wgConn",
 							zap.String("server", s.name),
 							zap.String("listenAddress", s.proxyListenAddress),
 							zap.Stringer("clientAddress", clientAddrPort),
+							zap.Stringer("wgConnListenAddress", wgConnListenAddrPort),
 							zap.Error(err),
 						)
 						wgConn.Close()
@@ -389,6 +399,7 @@ func (s *server) recvFromProxyConnRecvmmsg(ctx context.Context, proxyConn *conn.
 						zap.String("server", s.name),
 						zap.String("listenAddress", s.proxyListenAddress),
 						zap.Stringer("clientAddress", clientAddrPort),
+						zap.Stringer("wgConnListenAddress", wgConnListenAddrPort),
 						zap.Stringer("wgAddress", wgAddrPort),
 						zap.Int("wgTunnelMTU", wgTunnelMTU),
 						zap.Uint32("maxUDPGSOSegments", wgConnInfo.MaxUDPGSOSegments),
@@ -399,26 +410,28 @@ func (s *server) recvFromProxyConnRecvmmsg(ctx context.Context, proxyConn *conn.
 
 					go func() {
 						s.relayProxyToWgSendmmsg(serverNatUplinkMmsg{
-							clientAddrPort: clientAddrPort,
-							wgAddrPort:     wgAddrPort,
-							wgConn:         wgConn.NewWConn(),
-							wgConnInfo:     wgConnInfo,
-							wgConnSendCh:   wgConnSendCh,
+							clientAddrPort:       clientAddrPort,
+							wgConnListenAddrPort: wgConnListenAddrPort,
+							wgAddrPort:           wgAddrPort,
+							wgConn:               wgConn.NewWConn(),
+							wgConnInfo:           wgConnInfo,
+							wgConnSendCh:         wgConnSendCh,
 						})
 						wgConn.Close()
 						s.wg.Done()
 					}()
 
 					s.relayWgToProxySendmmsg(serverNatDownlinkMmsg{
-						clientAddrPort:     clientAddrPort,
-						clientPktinfop:     clientPktinfop,
-						clientPktinfo:      &natEntry.clientPktinfo,
-						wgAddrPort:         wgAddrPort,
-						wgConn:             wgConn.NewRConn(),
-						proxyConn:          proxyConn.NewWConn(),
-						proxyConnInfo:      proxyConnInfo,
-						handler:            handler,
-						maxProxyPacketSize: maxProxyPacketSize,
+						clientAddrPort:       clientAddrPort,
+						clientPktinfop:       clientPktinfop,
+						clientPktinfo:        &natEntry.clientPktinfo,
+						wgConnListenAddrPort: wgConnListenAddrPort,
+						wgAddrPort:           wgAddrPort,
+						wgConn:               wgConn.NewRConn(),
+						proxyConn:            proxyConn.NewWConn(),
+						proxyConnInfo:        proxyConnInfo,
+						handler:              handler,
+						maxProxyPacketSize:   maxProxyPacketSize,
 					})
 				}()
 
@@ -479,8 +492,7 @@ func (s *server) relayProxyToWgSendmmsg(uplink serverNatUplinkMmsg) {
 		burstSegmentCount uint32
 	)
 
-	// TODO: use wgConn's listen address to determine the address family
-	rsa6 := conn.AddrPortToSockaddrInet6(uplink.wgAddrPort)
+	name, namelen := conn.AddrPortToSockaddrWithAddressFamily(uplink.wgAddrPort, uplink.wgConnListenAddrPort.Addr().Is4())
 	cmsgBuf := make([]byte, 0, s.relayBatchSize*conn.SocketControlMessageBufferSize)
 	bufvec := make([][]byte, 0, s.relayBatchSize)
 	iovec := make([]unix.Iovec, 0, s.relayBatchSize)
@@ -538,8 +550,8 @@ func (s *server) relayProxyToWgSendmmsg(uplink serverNatUplinkMmsg) {
 
 				msgvec = append(msgvec, conn.Mmsghdr{
 					Msghdr: unix.Msghdr{
-						Name:    (*byte)(unsafe.Pointer(&rsa6)),
-						Namelen: unix.SizeofSockaddrInet6,
+						Name:    name,
+						Namelen: namelen,
 						Iov:     &iovec[len(iovec)-1],
 						Iovlen:  1,
 						Control: unsafe.SliceData(cmsg),
@@ -575,6 +587,7 @@ func (s *server) relayProxyToWgSendmmsg(uplink serverNatUplinkMmsg) {
 					zap.String("server", s.name),
 					zap.String("listenAddress", s.proxyListenAddress),
 					zap.Stringer("clientAddress", uplink.clientAddrPort),
+					zap.Stringer("wgConnListenAddress", uplink.wgConnListenAddrPort),
 					zap.Stringer("wgAddress", uplink.wgAddrPort),
 					zap.Uint("wgPacketLength", uint(iovec[start].Len)),
 					zap.Error(err),
@@ -593,6 +606,7 @@ func (s *server) relayProxyToWgSendmmsg(uplink serverNatUplinkMmsg) {
 					zap.String("server", s.name),
 					zap.String("listenAddress", s.proxyListenAddress),
 					zap.Stringer("clientAddress", uplink.clientAddrPort),
+					zap.Stringer("wgConnListenAddress", uplink.wgConnListenAddrPort),
 					zap.Stringer("wgAddress", uplink.wgAddrPort),
 					zap.Error(err),
 				)
@@ -616,6 +630,7 @@ func (s *server) relayProxyToWgSendmmsg(uplink serverNatUplinkMmsg) {
 		zap.String("server", s.name),
 		zap.String("listenAddress", s.proxyListenAddress),
 		zap.Stringer("clientAddress", uplink.clientAddrPort),
+		zap.Stringer("wgConnListenAddress", uplink.wgConnListenAddrPort),
 		zap.Stringer("wgAddress", uplink.wgAddrPort),
 		zap.Uint64("sendmmsgCount", sendmmsgCount),
 		zap.Uint64("msgsSent", msgsSent),
@@ -689,6 +704,7 @@ func (s *server) relayWgToProxySendmmsg(downlink serverNatDownlinkMmsg) {
 				zap.String("server", s.name),
 				zap.String("listenAddress", s.proxyListenAddress),
 				zap.Stringer("clientAddress", downlink.clientAddrPort),
+				zap.Stringer("wgConnListenAddress", downlink.wgConnListenAddrPort),
 				zap.Stringer("wgAddress", downlink.wgAddrPort),
 				zap.Error(err),
 			)
@@ -718,6 +734,7 @@ func (s *server) relayWgToProxySendmmsg(downlink serverNatDownlinkMmsg) {
 					zap.String("server", s.name),
 					zap.String("listenAddress", s.proxyListenAddress),
 					zap.Stringer("clientAddress", downlink.clientAddrPort),
+					zap.Stringer("wgConnListenAddress", downlink.wgConnListenAddrPort),
 					zap.Stringer("wgAddress", downlink.wgAddrPort),
 					zap.Error(err),
 				)
@@ -728,6 +745,7 @@ func (s *server) relayWgToProxySendmmsg(downlink serverNatDownlinkMmsg) {
 					zap.String("server", s.name),
 					zap.String("listenAddress", s.proxyListenAddress),
 					zap.Stringer("clientAddress", downlink.clientAddrPort),
+					zap.Stringer("wgConnListenAddress", downlink.wgConnListenAddrPort),
 					zap.Stringer("wgAddress", downlink.wgAddrPort),
 					zap.Stringer("packetSourceAddress", packetSourceAddrPort),
 					zap.Uint32("packetLength", msg.Msglen),
@@ -741,6 +759,7 @@ func (s *server) relayWgToProxySendmmsg(downlink serverNatDownlinkMmsg) {
 					zap.String("server", s.name),
 					zap.String("listenAddress", s.proxyListenAddress),
 					zap.Stringer("clientAddress", downlink.clientAddrPort),
+					zap.Stringer("wgConnListenAddress", downlink.wgConnListenAddrPort),
 					zap.Stringer("wgAddress", downlink.wgAddrPort),
 					zap.Uint32("packetLength", msg.Msglen),
 					zap.Int("cmsgLength", len(cmsg)),
@@ -755,6 +774,7 @@ func (s *server) relayWgToProxySendmmsg(downlink serverNatDownlinkMmsg) {
 					zap.String("server", s.name),
 					zap.String("listenAddress", s.proxyListenAddress),
 					zap.Stringer("clientAddress", downlink.clientAddrPort),
+					zap.Stringer("wgConnListenAddress", downlink.wgConnListenAddrPort),
 					zap.Stringer("wgAddress", downlink.wgAddrPort),
 					zap.Stringer("packetSourceAddress", packetSourceAddrPort),
 					zap.Int("cmsgLength", len(cmsg)),
@@ -786,6 +806,7 @@ func (s *server) relayWgToProxySendmmsg(downlink serverNatDownlinkMmsg) {
 						zap.String("server", s.name),
 						zap.String("listenAddress", s.proxyListenAddress),
 						zap.Stringer("clientAddress", downlink.clientAddrPort),
+						zap.Stringer("wgConnListenAddress", downlink.wgConnListenAddrPort),
 						zap.Stringer("wgAddress", downlink.wgAddrPort),
 						zap.Int("packetLength", wgPacketLength),
 						zap.Error(err),
@@ -911,6 +932,7 @@ func (s *server) relayWgToProxySendmmsg(downlink serverNatDownlinkMmsg) {
 					zap.String("server", s.name),
 					zap.String("listenAddress", s.proxyListenAddress),
 					zap.Stringer("clientAddress", downlink.clientAddrPort),
+					zap.Stringer("wgConnListenAddress", downlink.wgConnListenAddrPort),
 					zap.Stringer("wgAddress", downlink.wgAddrPort),
 					zap.Uint("swgpPacketLength", uint(siovec[start].Len)),
 					zap.Error(err),
@@ -933,6 +955,7 @@ func (s *server) relayWgToProxySendmmsg(downlink serverNatDownlinkMmsg) {
 		zap.String("server", s.name),
 		zap.String("listenAddress", s.proxyListenAddress),
 		zap.Stringer("clientAddress", downlink.clientAddrPort),
+		zap.Stringer("wgConnListenAddress", downlink.wgConnListenAddrPort),
 		zap.Stringer("wgAddress", downlink.wgAddrPort),
 		zap.Uint64("recvmmmsgCount", recvmmmsgCount),
 		zap.Uint64("msgsReceived", msgsReceived),
