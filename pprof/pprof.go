@@ -27,13 +27,37 @@ func (c Config) NewService(logger *zap.Logger) *Service {
 	if network == "" {
 		network = "tcp"
 	}
+
+	errorLog, err := zap.NewStdLogAt(logger, zap.ErrorLevel)
+	if err != nil {
+		// For now, panic instead of returning an error.
+		// Once we migrate to log/slog, there won't be any error to handle.
+		panic(err)
+	}
+
 	return &Service{
 		logger:  logger,
 		network: network,
 		server: http.Server{
-			Addr: c.ListenAddress,
+			Addr:     c.ListenAddress,
+			Handler:  logPprofRequests(logger, http.DefaultServeMux),
+			ErrorLog: errorLog,
 		},
 	}
+}
+
+// logPprofRequests is a middleware that logs pprof requests.
+func logPprofRequests(logger *zap.Logger, h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h.ServeHTTP(w, r)
+		logger.Info("Handled pprof request",
+			zap.String("proto", r.Proto),
+			zap.String("method", r.Method),
+			zap.String("requestURI", r.RequestURI),
+			zap.String("host", r.Host),
+			zap.String("remoteAddr", r.RemoteAddr),
+		)
+	})
 }
 
 // Service implements [service.Service].
