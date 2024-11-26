@@ -55,7 +55,7 @@ There are container images maintained by the community:
 Build and install the latest version using Go:
 
 ```sh
-go install github.com/database64128/swgp-go@latest
+go install github.com/database64128/swgp-go/cmd/swgp-go@latest
 ```
 
 Or clone the repository and build it manually:
