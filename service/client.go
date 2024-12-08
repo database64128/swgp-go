@@ -557,7 +557,7 @@ func (c *client) relayWgToProxyGeneric(uplink clientNatUplinkGeneric) {
 			wgPacketBuf = wgPacketBuf[wgPacketLength:]
 
 			// Update proxyConn read deadline when rqp contains a WireGuard handshake initiation message.
-			if wgPacket[0] == packet.WireGuardMessageLengthHandshakeInitiation {
+			if wgPacket[0] == packet.WireGuardMessageTypeHandshakeInitiation {
 				isHandshake = true
 			}
 
