@@ -77,7 +77,7 @@ func (c *Config) NewTestLogger(t testingLogger) *Logger {
 }
 
 // Logger is an opinionated logging implementation that writes structured log messages,
-// tinted with color by default, to [os.Stderr].
+// tinted with color by default, to its handler.
 type Logger struct {
 	level   slog.Level
 	noTime  bool
