@@ -85,6 +85,7 @@ func main() {
 		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 		sig := <-sigCh
 		logger.Info("Received exit signal", slog.Any("signal", sig))
+		signal.Stop(sigCh)
 		cancel()
 	}()
 
