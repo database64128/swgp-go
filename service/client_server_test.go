@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"log/slog"
 	"net"
 	"net/netip"
 	"testing"
@@ -11,8 +12,7 @@ import (
 
 	"github.com/database64128/swgp-go/conn"
 	"github.com/database64128/swgp-go/packet"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zaptest"
+	"github.com/database64128/swgp-go/tslog"
 )
 
 var cases = []struct {
@@ -73,7 +73,7 @@ func generateTestPSK() []byte {
 	return psk
 }
 
-func testClientServerHandshake(t *testing.T, ctx context.Context, logger *zap.Logger, serverConfig ServerConfig, clientConfig ClientConfig) {
+func testClientServerHandshake(t *testing.T, ctx context.Context, logger *tslog.Logger, serverConfig ServerConfig, clientConfig ClientConfig) {
 	sc := Config{
 		Servers: []ServerConfig{serverConfig},
 		Clients: []ClientConfig{clientConfig},
@@ -165,8 +165,8 @@ func testClientServerHandshake(t *testing.T, ctx context.Context, logger *zap.Lo
 
 func TestClientServerHandshake(t *testing.T) {
 	ctx := context.Background()
-	logger := zaptest.NewLogger(t)
-	defer logger.Sync()
+	logCfg := tslog.Config{Level: slog.LevelDebug}
+	logger := logCfg.NewTestLogger(t)
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -175,7 +175,7 @@ func TestClientServerHandshake(t *testing.T) {
 	}
 }
 
-func testClientServerDataPackets(t *testing.T, ctx context.Context, logger *zap.Logger, serverConfig ServerConfig, clientConfig ClientConfig) {
+func testClientServerDataPackets(t *testing.T, ctx context.Context, logger *tslog.Logger, serverConfig ServerConfig, clientConfig ClientConfig) {
 	sc := Config{
 		Servers: []ServerConfig{serverConfig},
 		Clients: []ClientConfig{clientConfig},
@@ -258,8 +258,8 @@ func testClientServerDataPackets(t *testing.T, ctx context.Context, logger *zap.
 
 func TestClientServerDataPackets(t *testing.T) {
 	ctx := context.Background()
-	logger := zaptest.NewLogger(t)
-	defer logger.Sync()
+	logCfg := tslog.Config{Level: slog.LevelDebug}
+	logger := logCfg.NewTestLogger(t)
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

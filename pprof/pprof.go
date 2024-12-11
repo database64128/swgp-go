@@ -2,11 +2,12 @@ package pprof
 
 import (
 	"context"
+	"log/slog"
 	"net"
 	"net/http"
 	_ "net/http/pprof"
 
-	"go.uber.org/zap"
+	"github.com/database64128/swgp-go/tslog"
 )
 
 // Config is the configuration for the pprof service.
@@ -22,17 +23,10 @@ type Config struct {
 }
 
 // NewService creates a new pprof service.
-func (c Config) NewService(logger *zap.Logger) *Service {
+func (c Config) NewService(logger *tslog.Logger) *Service {
 	network := c.ListenNetwork
 	if network == "" {
 		network = "tcp"
-	}
-
-	errorLog, err := zap.NewStdLogAt(logger, zap.ErrorLevel)
-	if err != nil {
-		// For now, panic instead of returning an error.
-		// Once we migrate to log/slog, there won't be any error to handle.
-		panic(err)
 	}
 
 	return &Service{
@@ -41,28 +35,28 @@ func (c Config) NewService(logger *zap.Logger) *Service {
 		server: http.Server{
 			Addr:     c.ListenAddress,
 			Handler:  logPprofRequests(logger, http.DefaultServeMux),
-			ErrorLog: errorLog,
+			ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelError),
 		},
 	}
 }
 
 // logPprofRequests is a middleware that logs pprof requests.
-func logPprofRequests(logger *zap.Logger, h http.Handler) http.Handler {
+func logPprofRequests(logger *tslog.Logger, h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h.ServeHTTP(w, r)
 		logger.Info("Handled pprof request",
-			zap.String("proto", r.Proto),
-			zap.String("method", r.Method),
-			zap.String("requestURI", r.RequestURI),
-			zap.String("host", r.Host),
-			zap.String("remoteAddr", r.RemoteAddr),
+			slog.String("proto", r.Proto),
+			slog.String("method", r.Method),
+			slog.String("requestURI", r.RequestURI),
+			slog.String("host", r.Host),
+			slog.String("remoteAddr", r.RemoteAddr),
 		)
 	})
 }
 
 // Service implements [service.Service].
 type Service struct {
-	logger  *zap.Logger
+	logger  *tslog.Logger
 	network string
 	server  http.Server
 }
@@ -82,11 +76,11 @@ func (s *Service) Start(ctx context.Context) error {
 
 	go func() {
 		if err := s.server.Serve(ln); err != nil && err != http.ErrServerClosed {
-			s.logger.Error("Failed to serve pprof", zap.Error(err))
+			s.logger.Error("Failed to serve pprof", tslog.Err(err))
 		}
 	}()
 
-	s.logger.Info("Started pprof", zap.Stringer("listenAddress", ln.Addr()))
+	s.logger.Info("Started pprof", slog.Any("listenAddress", ln.Addr()))
 	return nil
 }
 

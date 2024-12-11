@@ -6,13 +6,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/netip"
 	"time"
 
 	"github.com/database64128/swgp-go/conn"
 	"github.com/database64128/swgp-go/packet"
 	"github.com/database64128/swgp-go/pprof"
-	"go.uber.org/zap"
+	"github.com/database64128/swgp-go/tslog"
 )
 
 const (
@@ -146,7 +147,7 @@ type Config struct {
 }
 
 // Manager initializes the service manager.
-func (sc *Config) Manager(logger *zap.Logger) (*Manager, error) {
+func (sc *Config) Manager(logger *tslog.Logger) (*Manager, error) {
 	serviceCount := len(sc.Servers) + len(sc.Clients)
 	if sc.Pprof.Enabled {
 		serviceCount++
@@ -184,7 +185,7 @@ func (sc *Config) Manager(logger *zap.Logger) (*Manager, error) {
 // Manager manages the services.
 type Manager struct {
 	services []Service
-	logger   *zap.Logger
+	logger   *tslog.Logger
 }
 
 // Start starts all configured server (interface) and client (peer) services.
@@ -202,11 +203,11 @@ func (m *Manager) Stop() {
 	for _, s := range m.services {
 		if err := s.Stop(); err != nil {
 			m.logger.Warn("Failed to stop service",
-				zap.Stringer("service", s),
-				zap.Error(err),
+				slog.Any("service", s),
+				tslog.Err(err),
 			)
 		}
-		m.logger.Info("Stopped service", zap.Stringer("service", s))
+		m.logger.Info("Stopped service", slog.Any("service", s))
 	}
 }
 
