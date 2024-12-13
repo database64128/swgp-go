@@ -4,7 +4,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-ExecStart=/usr/bin/swgp-go -confPath /etc/swgp-go/config.json -logNoColor -logNoTime
+ExecStart=/usr/bin/swgp-go -confPath /etc/swgp-go/config.json -logNoTime
 
 [Install]
 WantedBy=multi-user.target
