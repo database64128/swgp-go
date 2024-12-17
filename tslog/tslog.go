@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/database64128/swgp-go/conn"
-	"github.com/database64128/tint"
+	"github.com/lmittmann/tint"
 )
 
 // Config is a set of options for a [*Logger].
