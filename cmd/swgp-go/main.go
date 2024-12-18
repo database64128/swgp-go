@@ -99,7 +99,7 @@ func main() {
 		sig := <-sigCh
 		logger.Info("Received exit signal", slog.Any("signal", sig))
 		signal.Stop(sigCh)
-		cleanupHook(&sc, logger)
+		cleanupHook()
 		cancel()
 	}()
 

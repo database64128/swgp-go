@@ -11,6 +11,6 @@ func initHook(config service.Config, logger *zap.Logger) {
 	// NOOP
 }
 
-func cleanerHook(config service.Config, logger *zap.Logger) {
+func cleanerHook() {
 	// NOOP
 }
