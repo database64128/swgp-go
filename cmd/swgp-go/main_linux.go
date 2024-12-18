@@ -4,10 +4,10 @@ package main
 
 import (
 	"github.com/database64128/swgp-go/service"
-	"go.uber.org/zap"
+	"github.com/database64128/swgp-go/tslog"
 )
 
-func initHook(config service.Config, logger *zap.Logger) {
+func initHook(config service.Config, logger *tslog.Logger) {
 	// NOOP
 }
 
