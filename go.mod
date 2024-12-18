@@ -7,7 +7,7 @@ require (
 	github.com/lmittmann/tint v1.0.6
 	go.uber.org/zap v1.27.0
 	golang.org/x/crypto v0.31.0
-	golang.org/x/net v0.21.0
+	golang.org/x/net v0.32.0
 	golang.org/x/sys v0.28.0
 )
 
