@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/database64128/swgp-go/tslog"
+	"log/slog"
 	"net"
 	"os"
 	"strings"
@@ -15,7 +17,6 @@ import (
 	"unsafe"
 
 	"github.com/database64128/swgp-go/service"
-	"go.uber.org/zap"
 	"golang.org/x/net/route"
 )
 
@@ -28,7 +29,7 @@ var (
 type GatewayMonitor struct {
 	mu          sync.RWMutex
 	ip          net.IP
-	logger      *zap.Logger
+	logger      *tslog.Logger
 	cfg         *service.Config
 	ctx         context.Context
 	cancel      context.CancelFunc
@@ -38,7 +39,7 @@ type GatewayMonitor struct {
 }
 
 // NewGatewayMonitor creates a new gateway monitor instance
-func NewGatewayMonitor(cfg *service.Config, logger *zap.Logger, interval time.Duration) (*GatewayMonitor, error) {
+func NewGatewayMonitor(cfg *service.Config, logger *tslog.Logger, interval time.Duration) (*GatewayMonitor, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Open routing socket
@@ -120,13 +121,13 @@ func (g *GatewayMonitor) discoverGateway() (net.IP, error) {
 		}
 	}
 	if len(ips) > 0 {
-		g.logger.Info("Found gateway", zap.String("ip", ips[0].String()))
+		g.logger.Info("Found gateway", slog.String("ip", ips[0].String()))
 		return ips[0], nil
 	}
 	return nil, fmt.Errorf("no default gateway found")
 }
 
-func isValidGateway(ip net.IP, logger *zap.Logger) bool {
+func isValidGateway(ip net.IP, logger *tslog.Logger) bool {
 	if ip == nil || ip.Equal(net.IPv4zero) {
 		logger.Debug("Invalid gateway: nil or zero IP")
 		return false
@@ -143,7 +144,7 @@ func isValidGateway(ip net.IP, logger *zap.Logger) bool {
 	for _, network := range privateNetworks {
 		_, ipnet, err := net.ParseCIDR(network)
 		if err != nil {
-			logger.Error("Failed to parse CIDR", zap.String("network", network), zap.Error(err))
+			logger.Error("Failed to parse CIDR", slog.String("network", network), tslog.Err(err))
 			continue
 		}
 		if ipnet.Contains(ip) {
@@ -151,7 +152,7 @@ func isValidGateway(ip net.IP, logger *zap.Logger) bool {
 		}
 	}
 
-	logger.Debug("Invalid gateway: not in private or link-local range", zap.String("ip", ip.String()))
+	logger.Debug("Invalid gateway: not in private or link-local range", slog.String("ip", ip.String()))
 	return false
 }
 
@@ -319,7 +320,7 @@ func (g *GatewayMonitor) deleteRouteSyscall(dest net.IP) error {
 	}
 
 	g.logger.Info("Successfully deleted route using syscall",
-		zap.String("destination", dest.String()))
+		slog.String("destination", dest.String()))
 	return nil
 }
 
@@ -359,7 +360,7 @@ func (g *GatewayMonitor) verifyRoutesSyscall(gatewayIP net.IP) (map[string]bool,
 	fd, err := syscall.Socket(syscall.AF_ROUTE, syscall.SOCK_RAW, syscall.AF_UNSPEC)
 	if err != nil {
 		g.logger.Error("Failed to open route socket",
-			zap.Error(err))
+			tslog.Err(err))
 		return nil, err
 	}
 	defer syscall.Close(fd)
@@ -368,7 +369,7 @@ func (g *GatewayMonitor) verifyRoutesSyscall(gatewayIP net.IP) (map[string]bool,
 	tab, err := syscall.RouteRIB(syscall.NET_RT_DUMP2, 0)
 	if err != nil {
 		g.logger.Error("Failed to get routing table",
-			zap.Error(err))
+			tslog.Err(err))
 		return nil, err
 	}
 
@@ -376,7 +377,7 @@ func (g *GatewayMonitor) verifyRoutesSyscall(gatewayIP net.IP) (map[string]bool,
 	msgs, err := syscall.ParseRoutingMessage(tab)
 	if err != nil {
 		g.logger.Error("Failed to parse routing messages",
-			zap.Error(err))
+			tslog.Err(err))
 		return nil, err
 	}
 
@@ -422,7 +423,7 @@ func (g *GatewayMonitor) updateRoutes(gatewayIP net.IP) error {
 		return ErrInvalidGateway
 	}
 
-	g.logger.Info("Updating gateway routes", zap.String("gateway", gatewayIP.String()))
+	g.logger.Info("Updating gateway routes", slog.String("gateway", gatewayIP.String()))
 
 	for _, client := range g.cfg.Clients {
 		clientAddr := client.ProxyEndpointAddress.IP()
@@ -432,8 +433,8 @@ func (g *GatewayMonitor) updateRoutes(gatewayIP net.IP) error {
 		err := g.deleteRouteSyscall(clientIP)
 		if err != nil {
 			g.logger.Debug("Route deletion failed (may not exist)",
-				zap.String("client", clientAddr.String()),
-				zap.Error(err))
+				slog.String("client", clientAddr.String()),
+				tslog.Err(err))
 		}
 
 		// Add the new route
@@ -452,7 +453,7 @@ func (g *GatewayMonitor) cleanup() {
 	// Get current routes first
 	routes, err := g.verifyRoutesSyscall(g.ip)
 	if err != nil {
-		g.logger.Warn("Failed to get current routes during cleanup", zap.Error(err))
+		g.logger.Warn("Failed to get current routes during cleanup", tslog.Err(err))
 	}
 
 	maxRetries := 3
@@ -474,13 +475,13 @@ func (g *GatewayMonitor) cleanup() {
 				// Only log as error if it's not "no such route"
 				if !strings.Contains(err.Error(), "no such process") {
 					g.logger.Error("Failed to delete route",
-						zap.String("client", clientAddr.String()),
-						zap.Error(err))
+						slog.String("client", clientAddr.String()),
+						tslog.Err(err))
 					allDeleted = false
 				}
 			} else {
 				g.logger.Info("Successfully deleted route",
-					zap.String("client", clientAddr.String()))
+					slog.String("client", clientAddr.String()))
 			}
 		}
 
@@ -494,8 +495,8 @@ func (g *GatewayMonitor) cleanup() {
 		routes, err = g.verifyRoutesSyscall(g.ip)
 		if err != nil {
 			g.logger.Warn("Failed to verify routes during cleanup retry",
-				zap.Int("retry", retry+1),
-				zap.Error(err))
+				slog.Int("retry", retry+1),
+				tslog.Err(err))
 		}
 	}
 
@@ -544,9 +545,9 @@ func (g *GatewayMonitor) watch() {
 			if err != nil {
 				consecutiveErrors++
 				if consecutiveErrors > 3 {
-					g.logger.Error("Failed to get gateway address", zap.Error(err))
+					g.logger.Error("Failed to get gateway address", tslog.Err(err))
 				} else {
-					g.logger.Debug("Temporary error getting gateway", zap.Error(err))
+					g.logger.Debug("Temporary error getting gateway", tslog.Err(err))
 				}
 
 				// If we have a last valid gateway, keep using it
@@ -563,8 +564,8 @@ func (g *GatewayMonitor) watch() {
 			gatewayChanged := !ip.Equal(g.ip)
 			if gatewayChanged {
 				g.logger.Info("Gateway IP changed",
-					zap.String("old", g.ip.String()),
-					zap.String("new", ip.String()))
+					slog.String("old", g.ip.String()),
+					slog.String("new", ip.String()))
 
 				// Delete old routes before updating the gateway IP
 				g.logger.Info("Cleaning up old routes")
@@ -576,7 +577,7 @@ func (g *GatewayMonitor) watch() {
 
 				// Add new routes
 				if err := g.updateRoutes(ip); err != nil {
-					g.logger.Error("Failed to update routes", zap.Error(err))
+					g.logger.Error("Failed to update routes", tslog.Err(err))
 				}
 			}
 			g.mu.Unlock()
@@ -587,15 +588,15 @@ func (g *GatewayMonitor) watch() {
 var monitor *GatewayMonitor
 
 // Initialize sets up the gateway monitor
-func initHook(cfg *service.Config, logger *zap.Logger) {
+func initHook(cfg *service.Config, logger *tslog.Logger) {
 	var err error
 	monitor, err = NewGatewayMonitor(cfg, logger, 10*time.Second)
 	if err != nil {
-		logger.Fatal("Failed to create gateway monitor", zap.Error(err))
+		panic(err)
 	}
 
 	if err := monitor.Start(); err != nil {
-		logger.Fatal("Failed to start gateway monitor", zap.Error(err))
+		panic(err)
 	}
 }
 
