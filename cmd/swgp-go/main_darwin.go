@@ -79,15 +79,8 @@ func NewGatewayMonitor(cfg *service.Config, logger *tslog.Logger, interval time.
 	return monitor, nil
 }
 
-// roundup rounds up length to the nearest multiple of 4
-func roundup(length int) int {
-	if length == 0 {
-		return 0
-	}
-	return ((length) + 3) &^ 3
-}
-
-func (g *GatewayMonitor) discoverGateway() (net.IP, error) {
+// getRouteTable returns the routing table messages using x/net/route package
+func (g *GatewayMonitor) getRouteTable() ([]*route.RouteMessage, error) {
 	rib, err := route.FetchRIB(syscall.AF_INET, syscall.NET_RT_DUMP, 0)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch RIB: %v", err)
@@ -98,24 +91,36 @@ func (g *GatewayMonitor) discoverGateway() (net.IP, error) {
 		return nil, fmt.Errorf("failed to parse RIB: %v", err)
 	}
 
-	var ips []net.IP
-
+	var routeMsgs []*route.RouteMessage
 	for _, m := range msgs {
 		if rm, ok := m.(*route.RouteMessage); ok {
-			if rm.Flags&syscall.RTF_GATEWAY != 0 && rm.Flags&syscall.RTF_UP != 0 {
-				addr := rm.Addrs[syscall.RTAX_GATEWAY]
-				switch sa := addr.(type) {
-				case *route.Inet4Addr:
-					ip := net.IPv4(sa.IP[0], sa.IP[1], sa.IP[2], sa.IP[3])
-					if isValidGateway(ip, g.logger) {
-						ips = append(ips, ip)
-					}
-				case *route.Inet6Addr:
-					ip := make(net.IP, net.IPv6len)
-					copy(ip, sa.IP[:])
-					if isValidGateway(ip, g.logger) {
-						ips = append(ips, ip)
-					}
+			routeMsgs = append(routeMsgs, rm)
+		}
+	}
+	return routeMsgs, nil
+}
+
+func (g *GatewayMonitor) discoverGateway() (net.IP, error) {
+	msgs, err := g.getRouteTable()
+	if err != nil {
+		return nil, err
+	}
+
+	var ips []net.IP
+	for _, rm := range msgs {
+		if rm.Flags&syscall.RTF_GATEWAY != 0 && rm.Flags&syscall.RTF_UP != 0 {
+			addr := rm.Addrs[syscall.RTAX_GATEWAY]
+			switch sa := addr.(type) {
+			case *route.Inet4Addr:
+				ip := net.IPv4(sa.IP[0], sa.IP[1], sa.IP[2], sa.IP[3])
+				if isValidGateway(ip, g.logger) {
+					ips = append(ips, ip)
+				}
+			case *route.Inet6Addr:
+				ip := make(net.IP, net.IPv6len)
+				copy(ip, sa.IP[:])
+				if isValidGateway(ip, g.logger) {
+					ips = append(ips, ip)
 				}
 			}
 		}
@@ -352,65 +357,28 @@ func (g *GatewayMonitor) handleRouteResponse(buf []byte, n int, op string) error
 }
 
 func (g *GatewayMonitor) verifyRoutesSyscall(gatewayIP net.IP) (map[string]bool, error) {
-	g.logger.Info("Verifying routes using syscall")
+	g.logger.Info("Verifying routes")
+	
+	msgs, err := g.getRouteTable()
+	if err != nil {
+		return nil, err
+	}
 
 	routes := make(map[string]bool)
-
-	// Open a route socket
-	fd, err := syscall.Socket(syscall.AF_ROUTE, syscall.SOCK_RAW, syscall.AF_UNSPEC)
-	if err != nil {
-		g.logger.Error("Failed to open route socket",
-			tslog.Err(err))
-		return nil, err
-	}
-	defer syscall.Close(fd)
-
-	// Get the routing table
-	tab, err := syscall.RouteRIB(syscall.NET_RT_DUMP2, 0)
-	if err != nil {
-		g.logger.Error("Failed to get routing table",
-			tslog.Err(err))
-		return nil, err
-	}
-
-	// Parse the routing messages
-	msgs, err := syscall.ParseRoutingMessage(tab)
-	if err != nil {
-		g.logger.Error("Failed to parse routing messages",
-			tslog.Err(err))
-		return nil, err
-	}
-
-	// Process each routing message
-	for _, msg := range msgs {
-		rmsg, ok := msg.(*syscall.RouteMessage)
-		if !ok {
-			continue
-		}
-
-		// Get addresses from the message
-		data := rmsg.Data[:]
-		for len(data) > 0 {
-			alen := int(data[0])
-			if alen < 4 {
-				// Malformed address
-				break
+	for _, rm := range msgs {
+		addr := rm.Addrs[syscall.RTAX_GATEWAY]
+		switch sa := addr.(type) {
+		case *route.Inet4Addr:
+			ip := net.IPv4(sa.IP[0], sa.IP[1], sa.IP[2], sa.IP[3])
+			if ip.Equal(gatewayIP) {
+				routes[ip.String()] = true
 			}
-
-			if len(data) < alen {
-				// Message too short
-				break
+		case *route.Inet6Addr:
+			ip := make(net.IP, net.IPv6len)
+			copy(ip, sa.IP[:])
+			if ip.Equal(gatewayIP) {
+				routes[ip.String()] = true
 			}
-
-			// For IPv4 addresses
-			if alen >= 8 {
-				ip := net.IP(data[4:8])
-				if ip.Equal(gatewayIP) {
-					routes[ip.String()] = true
-				}
-			}
-
-			data = data[alen:]
 		}
 	}
 
