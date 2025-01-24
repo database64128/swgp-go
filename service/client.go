@@ -55,26 +55,25 @@ type clientNatEntry struct {
 }
 
 type clientNatUplinkGeneric struct {
-	clientAddrPort          netip.AddrPort
-	proxyConnListenAddrPort netip.AddrPort
-	proxyAddrPort           netip.AddrPort
-	proxyConn               *net.UDPConn
-	proxyConnInfo           conn.SocketInfo
-	proxyConnSendCh         <-chan queuedPacket
-	handler                 packet.Handler
+	proxyAddrPort   netip.AddrPort
+	proxyConn       *net.UDPConn
+	proxyConnInfo   conn.SocketInfo
+	proxyConnSendCh <-chan queuedPacket
+	handler         packet.Handler
+	logger          *tslog.Logger
 }
 
 type clientNatDownlinkGeneric struct {
-	clientAddrPort          netip.AddrPort
-	clientPktinfop          *pktinfo
-	clientPktinfo           *atomic.Pointer[pktinfo]
-	proxyConnListenAddrPort netip.AddrPort
-	proxyAddrPort           netip.AddrPort
-	proxyConn               *net.UDPConn
-	wgConn                  *net.UDPConn
-	wgConnInfo              conn.SocketInfo
-	handler                 packet.Handler
-	maxProxyPacketSize      int
+	clientAddrPort     netip.AddrPort
+	clientPktinfop     *pktinfo
+	clientPktinfo      *atomic.Pointer[pktinfo]
+	proxyAddrPort      netip.AddrPort
+	proxyConn          *net.UDPConn
+	wgConn             *net.UDPConn
+	wgConnInfo         conn.SocketInfo
+	handler            packet.Handler
+	maxProxyPacketSize int
+	logger             *tslog.Logger
 }
 
 type client struct {
@@ -82,6 +81,7 @@ type client struct {
 	wgListenNetwork        string
 	wgListenAddress        string
 	proxyConnListenAddress string
+	batchMode              string
 	relayBatchSize         int
 	mainRecvBatchSize      int
 	sendChannelCapacity    int
@@ -103,7 +103,6 @@ type client struct {
 	wg                     sync.WaitGroup
 	mwg                    sync.WaitGroup
 	table                  map[netip.AddrPort]*clientNatEntry
-	startFunc              func(context.Context) error
 }
 
 // Client creates a swgp client service from the client config.
@@ -164,6 +163,7 @@ func (cc *ClientConfig) Client(logger *tslog.Logger, listenConfigCache conn.List
 		wgListenNetwork:        cc.WgListenNetwork,
 		wgListenAddress:        cc.WgListenAddress,
 		proxyConnListenAddress: cc.ProxyConnListenAddress,
+		batchMode:              cc.BatchMode,
 		relayBatchSize:         cc.RelayBatchSize,
 		mainRecvBatchSize:      cc.MainRecvBatchSize,
 		sendChannelCapacity:    cc.SendChannelCapacity,
@@ -201,18 +201,17 @@ func (cc *ClientConfig) Client(logger *tslog.Logger, listenConfigCache conn.List
 		b := make([]byte, c.packetBufSize)
 		return unsafe.SliceData(b)
 	}
-	c.setStartFunc(cc.BatchMode)
 	return &c, nil
 }
 
-// String implements the Service String method.
-func (c *client) String() string {
-	return c.name + " swgp client service"
+// SlogAttr implements [Service.SlogAttr].
+func (c *client) SlogAttr() slog.Attr {
+	return slog.String("client", c.name)
 }
 
-// Start implements the Service Start method.
+// Start implements [Service.Start].
 func (c *client) Start(ctx context.Context) (err error) {
-	return c.startFunc(ctx)
+	return c.start(ctx)
 }
 
 func (c *client) startGeneric(ctx context.Context) error {
@@ -229,21 +228,21 @@ func (c *client) startGeneric(ctx context.Context) error {
 		c.packetBufSize = c.maxProxyPacketSize
 	}
 
+	logger := c.logger.WithAttrs(
+		slog.String("client", c.name),
+		slog.String("listenAddress", c.wgListenAddress),
+	)
+
 	c.mwg.Add(1)
 
 	go func() {
-		c.recvFromWgConnGeneric(ctx, wgConn, wgConnInfo)
+		c.recvFromWgConnGeneric(ctx, logger, wgConn, wgConnInfo)
 		c.mwg.Done()
 	}()
 
-	if c.logger.Enabled(slog.LevelInfo) {
-		fields := make([]slog.Attr, 0, 7)
-
-		fields = append(fields,
-			slog.String("client", c.name),
-			slog.String("listenAddress", c.wgListenAddress),
-			tslog.ConnAddrp("proxyAddress", &c.proxyAddr),
-		)
+	if logger.Enabled(slog.LevelInfo) {
+		fields := make([]slog.Attr, 0, 5)
+		fields = append(fields, tslog.ConnAddrp("proxyAddress", &c.proxyAddr))
 
 		if c.proxyAddr.IsIP() {
 			fields = append(fields, slog.Int("wgTunnelMTU", c.wgTunnelMTU))
@@ -259,12 +258,12 @@ func (c *client) startGeneric(ctx context.Context) error {
 			slog.Bool("udpGRO", wgConnInfo.UDPGenericReceiveOffload),
 		)
 
-		c.logger.Info("Started service", fields...)
+		logger.Info("Started service", fields...)
 	}
 	return nil
 }
 
-func (c *client) recvFromWgConnGeneric(ctx context.Context, wgConn *net.UDPConn, wgConnInfo conn.SocketInfo) {
+func (c *client) recvFromWgConnGeneric(ctx context.Context, logger *tslog.Logger, wgConn *net.UDPConn, wgConnInfo conn.SocketInfo) {
 	packetBuf := c.getPacketBuf()
 	cmsgBuf := make([]byte, conn.SocketControlMessageBufferSize)
 
@@ -281,9 +280,7 @@ func (c *client) recvFromWgConnGeneric(ctx context.Context, wgConn *net.UDPConn,
 			if errors.Is(err, os.ErrDeadlineExceeded) {
 				break
 			}
-			c.logger.Warn("Failed to read from wgConn",
-				slog.String("client", c.name),
-				slog.String("listenAddress", c.wgListenAddress),
+			logger.Warn("Failed to read from wgConn",
 				tslog.AddrPort("clientAddress", clientAddrPort),
 				slog.Int("packetLength", n),
 				slog.Int("cmsgLength", cmsgn),
@@ -292,9 +289,7 @@ func (c *client) recvFromWgConnGeneric(ctx context.Context, wgConn *net.UDPConn,
 			continue
 		}
 		if err = conn.ParseFlagsForError(flags); err != nil {
-			c.logger.Warn("Failed to read from wgConn",
-				slog.String("client", c.name),
-				slog.String("listenAddress", c.wgListenAddress),
+			logger.Warn("Failed to read from wgConn",
 				tslog.AddrPort("clientAddress", clientAddrPort),
 				slog.Int("packetLength", n),
 				slog.Int("cmsgLength", cmsgn),
@@ -305,9 +300,7 @@ func (c *client) recvFromWgConnGeneric(ctx context.Context, wgConn *net.UDPConn,
 
 		rscm, err := conn.ParseSocketControlMessage(cmsgBuf[:cmsgn])
 		if err != nil {
-			c.logger.Warn("Failed to parse socket control message from wgConn",
-				slog.String("client", c.name),
-				slog.String("listenAddress", c.wgListenAddress),
+			logger.Warn("Failed to parse socket control message from wgConn",
 				tslog.AddrPort("clientAddress", clientAddrPort),
 				slog.Int("cmsgLength", cmsgn),
 				tslog.Err(err),
@@ -351,10 +344,8 @@ func (c *client) recvFromWgConnGeneric(ctx context.Context, wgConn *net.UDPConn,
 			natEntry.clientPktinfo.Store(clientPktinfop)
 			natEntry.clientPktinfoCache = clientPktinfoCache
 
-			if c.logger.Enabled(slog.LevelDebug) {
-				c.logger.Debug("Updated client pktinfo",
-					slog.String("client", c.name),
-					slog.String("listenAddress", c.wgListenAddress),
+			if logger.Enabled(slog.LevelDebug) {
+				logger.Debug("Updated client pktinfo",
 					tslog.AddrPort("clientAddress", clientAddrPort),
 					tslog.Addrp("clientPktinfoAddr", &clientPktinfop.addr),
 					tslog.Uint("clientPktinfoIfindex", clientPktinfoCache.ifindex),
@@ -388,9 +379,7 @@ func (c *client) recvFromWgConnGeneric(ctx context.Context, wgConn *net.UDPConn,
 
 				proxyAddrPort, err := c.proxyAddr.ResolveIPPort(ctx, c.proxyNetwork)
 				if err != nil {
-					c.logger.Warn("Failed to resolve proxy address for new session",
-						slog.String("client", c.name),
-						slog.String("listenAddress", c.wgListenAddress),
+					logger.Warn("Failed to resolve proxy address for new session",
 						tslog.AddrPort("clientAddress", clientAddrPort),
 						tslog.Err(err),
 					)
@@ -401,9 +390,7 @@ func (c *client) recvFromWgConnGeneric(ctx context.Context, wgConn *net.UDPConn,
 
 				proxyConn, proxyConnInfo, err := c.proxyConnListenConfig.ListenUDP(ctx, proxyConnListenNetwork, c.proxyConnListenAddress)
 				if err != nil {
-					c.logger.Warn("Failed to create UDP socket for new session",
-						slog.String("client", c.name),
-						slog.String("listenAddress", c.wgListenAddress),
+					logger.Warn("Failed to create UDP socket for new session",
 						tslog.AddrPort("clientAddress", clientAddrPort),
 						slog.String("proxyConnListenNetwork", proxyConnListenNetwork),
 						slog.String("proxyConnListenAddress", c.proxyConnListenAddress),
@@ -415,9 +402,7 @@ func (c *client) recvFromWgConnGeneric(ctx context.Context, wgConn *net.UDPConn,
 				proxyConnListenAddrPort := proxyConn.LocalAddr().(*net.UDPAddr).AddrPort()
 
 				if err = proxyConn.SetReadDeadline(time.Now().Add(RejectAfterTime)); err != nil {
-					c.logger.Warn("Failed to SetReadDeadline on proxyConn",
-						slog.String("client", c.name),
-						slog.String("listenAddress", c.wgListenAddress),
+					logger.Warn("Failed to SetReadDeadline on proxyConn",
 						tslog.AddrPort("clientAddress", clientAddrPort),
 						tslog.AddrPort("proxyConnListenAddress", proxyConnListenAddrPort),
 						tslog.Err(err),
@@ -451,12 +436,13 @@ func (c *client) recvFromWgConnGeneric(ctx context.Context, wgConn *net.UDPConn,
 					maxProxyPacketSize = 65535
 				}
 
-				c.logger.Info("Client relay started",
-					slog.String("client", c.name),
-					slog.String("listenAddress", c.wgListenAddress),
+				sesLogger := logger.WithAttrs(
 					tslog.AddrPort("clientAddress", clientAddrPort),
 					tslog.AddrPort("proxyConnListenAddress", proxyConnListenAddrPort),
 					tslog.AddrPort("proxyAddress", proxyAddrPort),
+				)
+
+				sesLogger.Info("Client relay started",
 					slog.Int("wgTunnelMTU", wgTunnelMTU),
 					tslog.Uint("maxUDPGSOSegments", proxyConnInfo.MaxUDPGSOSegments),
 					slog.Bool("udpGRO", proxyConnInfo.UDPGenericReceiveOffload),
@@ -466,36 +452,33 @@ func (c *client) recvFromWgConnGeneric(ctx context.Context, wgConn *net.UDPConn,
 
 				go func() {
 					c.relayWgToProxyGeneric(clientNatUplinkGeneric{
-						clientAddrPort:          clientAddrPort,
-						proxyConnListenAddrPort: proxyConnListenAddrPort,
-						proxyAddrPort:           proxyAddrPort,
-						proxyConn:               proxyConn,
-						proxyConnInfo:           proxyConnInfo,
-						proxyConnSendCh:         proxyConnSendCh,
-						handler:                 handler,
+						proxyAddrPort:   proxyAddrPort,
+						proxyConn:       proxyConn,
+						proxyConnInfo:   proxyConnInfo,
+						proxyConnSendCh: proxyConnSendCh,
+						handler:         handler,
+						logger:          sesLogger,
 					})
 					proxyConn.Close()
 					c.wg.Done()
 				}()
 
 				c.relayProxyToWgGeneric(clientNatDownlinkGeneric{
-					clientAddrPort:          clientAddrPort,
-					clientPktinfop:          clientPktinfop,
-					clientPktinfo:           &natEntry.clientPktinfo,
-					proxyConnListenAddrPort: proxyConnListenAddrPort,
-					proxyAddrPort:           proxyAddrPort,
-					proxyConn:               proxyConn,
-					wgConn:                  wgConn,
-					wgConnInfo:              wgConnInfo,
-					handler:                 handler,
-					maxProxyPacketSize:      maxProxyPacketSize,
+					clientAddrPort:     clientAddrPort,
+					clientPktinfop:     clientPktinfop,
+					clientPktinfo:      &natEntry.clientPktinfo,
+					proxyAddrPort:      proxyAddrPort,
+					proxyConn:          proxyConn,
+					wgConn:             wgConn,
+					wgConnInfo:         wgConnInfo,
+					handler:            handler,
+					maxProxyPacketSize: maxProxyPacketSize,
+					logger:             sesLogger,
 				})
 			}()
 
-			if c.logger.Enabled(slog.LevelDebug) {
-				c.logger.Debug("New client session",
-					slog.String("client", c.name),
-					slog.String("listenAddress", c.wgListenAddress),
+			if logger.Enabled(slog.LevelDebug) {
+				logger.Debug("New client session",
 					tslog.AddrPort("clientAddress", clientAddrPort),
 					tslog.ConnAddrp("proxyAddress", &c.proxyAddr),
 				)
@@ -506,10 +489,8 @@ func (c *client) recvFromWgConnGeneric(ctx context.Context, wgConn *net.UDPConn,
 		case natEntry.proxyConnSendCh <- qp:
 			packetBuf = c.getPacketBuf()
 		default:
-			if c.logger.Enabled(slog.LevelDebug) {
-				c.logger.Debug("swgpPacket dropped due to full send channel",
-					slog.String("client", c.name),
-					slog.String("listenAddress", c.wgListenAddress),
+			if logger.Enabled(slog.LevelDebug) {
+				logger.Debug("swgpPacket dropped due to full send channel",
 					tslog.AddrPort("clientAddress", clientAddrPort),
 					tslog.ConnAddrp("proxyAddress", &c.proxyAddr),
 				)
@@ -521,9 +502,7 @@ func (c *client) recvFromWgConnGeneric(ctx context.Context, wgConn *net.UDPConn,
 
 	c.putPacketBuf(packetBuf)
 
-	c.logger.Info("Finished receiving from wgConn",
-		slog.String("client", c.name),
-		slog.String("listenAddress", c.wgListenAddress),
+	logger.Info("Finished receiving from wgConn",
 		tslog.ConnAddrp("proxyAddress", &c.proxyAddr),
 		tslog.Uint("recvmsgCount", recvmsgCount),
 		tslog.Uint("packetsReceived", packetsReceived),
@@ -564,12 +543,7 @@ func (c *client) relayWgToProxyGeneric(uplink clientNatUplinkGeneric) {
 
 			dst, err := uplink.handler.Encrypt(packetBuf, wgPacket)
 			if err != nil {
-				c.logger.Warn("Failed to encrypt wgPacket",
-					slog.String("client", c.name),
-					slog.String("listenAddress", c.wgListenAddress),
-					tslog.AddrPort("clientAddress", uplink.clientAddrPort),
-					tslog.AddrPort("proxyConnListenAddress", uplink.proxyConnListenAddrPort),
-					tslog.AddrPort("proxyAddress", uplink.proxyAddrPort),
+				uplink.logger.Warn("Failed to encrypt wgPacket",
 					slog.Int("packetLength", wgPacketLength),
 					tslog.Err(err),
 				)
@@ -654,12 +628,7 @@ func (c *client) relayWgToProxyGeneric(uplink clientNatUplinkGeneric) {
 
 				n, _, err := uplink.proxyConn.WriteMsgUDPAddrPort(sendBuf, cmsg, uplink.proxyAddrPort)
 				if err != nil {
-					c.logger.Warn("Failed to write swgpPacket to proxyConn",
-						slog.String("client", c.name),
-						slog.String("listenAddress", c.wgListenAddress),
-						tslog.AddrPort("clientAddress", uplink.clientAddrPort),
-						tslog.AddrPort("proxyConnListenAddress", uplink.proxyConnListenAddrPort),
-						tslog.AddrPort("proxyAddress", uplink.proxyAddrPort),
+					uplink.logger.Warn("Failed to write swgpPacket to proxyConn",
 						slog.Int("swgpPacketLength", sendBufSize),
 						tslog.Uint("segmentSize", sqp.segmentSize),
 						tslog.Err(err),
@@ -679,24 +648,12 @@ func (c *client) relayWgToProxyGeneric(uplink clientNatUplinkGeneric) {
 
 		if isHandshake {
 			if err := uplink.proxyConn.SetReadDeadline(time.Now().Add(RejectAfterTime)); err != nil {
-				c.logger.Warn("Failed to SetReadDeadline on proxyConn",
-					slog.String("client", c.name),
-					slog.String("listenAddress", c.wgListenAddress),
-					tslog.AddrPort("clientAddress", uplink.clientAddrPort),
-					tslog.AddrPort("proxyConnListenAddress", uplink.proxyConnListenAddrPort),
-					tslog.AddrPort("proxyAddress", uplink.proxyAddrPort),
-					tslog.Err(err),
-				)
+				uplink.logger.Warn("Failed to SetReadDeadline on proxyConn", tslog.Err(err))
 			}
 		}
 	}
 
-	c.logger.Info("Finished relay wgConn -> proxyConn",
-		slog.String("client", c.name),
-		slog.String("listenAddress", c.wgListenAddress),
-		tslog.AddrPort("clientAddress", uplink.clientAddrPort),
-		tslog.AddrPort("proxyConnListenAddress", uplink.proxyConnListenAddrPort),
-		tslog.AddrPort("proxyAddress", uplink.proxyAddrPort),
+	uplink.logger.Info("Finished relay wgConn -> proxyConn",
 		tslog.Uint("sendmsgCount", sendmsgCount),
 		tslog.Uint("packetsSent", packetsSent),
 		tslog.Uint("swgpBytesSent", swgpBytesSent),
@@ -733,12 +690,7 @@ func (c *client) relayProxyToWgGeneric(downlink clientNatDownlinkGeneric) {
 			if errors.Is(err, os.ErrDeadlineExceeded) {
 				break
 			}
-			c.logger.Warn("Failed to read from proxyConn",
-				slog.String("client", c.name),
-				slog.String("listenAddress", c.wgListenAddress),
-				tslog.AddrPort("clientAddress", downlink.clientAddrPort),
-				tslog.AddrPort("proxyConnListenAddress", downlink.proxyConnListenAddrPort),
-				tslog.AddrPort("proxyAddress", downlink.proxyAddrPort),
+			downlink.logger.Warn("Failed to read from proxyConn",
 				tslog.AddrPort("packetSourceAddress", packetSourceAddrPort),
 				slog.Int("packetLength", n),
 				slog.Int("cmsgLength", cmsgn),
@@ -747,12 +699,7 @@ func (c *client) relayProxyToWgGeneric(downlink clientNatDownlinkGeneric) {
 			continue
 		}
 		if err = conn.ParseFlagsForError(flags); err != nil {
-			c.logger.Warn("Failed to read from proxyConn",
-				slog.String("client", c.name),
-				slog.String("listenAddress", c.wgListenAddress),
-				tslog.AddrPort("clientAddress", downlink.clientAddrPort),
-				tslog.AddrPort("proxyConnListenAddress", downlink.proxyConnListenAddrPort),
-				tslog.AddrPort("proxyAddress", downlink.proxyAddrPort),
+			downlink.logger.Warn("Failed to read from proxyConn",
 				tslog.AddrPort("packetSourceAddress", packetSourceAddrPort),
 				slog.Int("packetLength", n),
 				slog.Int("cmsgLength", cmsgn),
@@ -762,12 +709,7 @@ func (c *client) relayProxyToWgGeneric(downlink clientNatDownlinkGeneric) {
 		}
 
 		if !conn.AddrPortMappedEqual(packetSourceAddrPort, downlink.proxyAddrPort) {
-			c.logger.Warn("Ignoring packet from non-proxy address",
-				slog.String("client", c.name),
-				slog.String("listenAddress", c.wgListenAddress),
-				tslog.AddrPort("clientAddress", downlink.clientAddrPort),
-				tslog.AddrPort("proxyConnListenAddress", downlink.proxyConnListenAddrPort),
-				tslog.AddrPort("proxyAddress", downlink.proxyAddrPort),
+			downlink.logger.Warn("Ignoring packet from non-proxy address",
 				tslog.AddrPort("packetSourceAddress", packetSourceAddrPort),
 				slog.Int("packetLength", n),
 				tslog.Err(err),
@@ -777,12 +719,7 @@ func (c *client) relayProxyToWgGeneric(downlink clientNatDownlinkGeneric) {
 
 		rscm, err := conn.ParseSocketControlMessage(recvCmsgBuf[:cmsgn])
 		if err != nil {
-			c.logger.Warn("Failed to parse socket control message from proxyConn",
-				slog.String("client", c.name),
-				slog.String("listenAddress", c.wgListenAddress),
-				tslog.AddrPort("clientAddress", downlink.clientAddrPort),
-				tslog.AddrPort("proxyConnListenAddress", downlink.proxyConnListenAddrPort),
-				tslog.AddrPort("proxyAddress", downlink.proxyAddrPort),
+			downlink.logger.Warn("Failed to parse socket control message from proxyConn",
 				tslog.AddrPort("packetSourceAddress", packetSourceAddrPort),
 				slog.Int("cmsgLength", cmsgn),
 				tslog.Err(err),
@@ -815,12 +752,7 @@ func (c *client) relayProxyToWgGeneric(downlink clientNatDownlinkGeneric) {
 
 			dst, err := downlink.handler.Decrypt(sendPacketBuf, swgpPacket)
 			if err != nil {
-				c.logger.Warn("Failed to decrypt swgpPacket",
-					slog.String("client", c.name),
-					slog.String("listenAddress", c.wgListenAddress),
-					tslog.AddrPort("clientAddress", downlink.clientAddrPort),
-					tslog.AddrPort("proxyConnListenAddress", downlink.proxyConnListenAddrPort),
-					tslog.AddrPort("proxyAddress", downlink.proxyAddrPort),
+				downlink.logger.Warn("Failed to decrypt swgpPacket",
 					slog.Int("packetLength", swgpPacketLength),
 					tslog.Err(err),
 				)
@@ -912,12 +844,7 @@ func (c *client) relayProxyToWgGeneric(downlink clientNatDownlinkGeneric) {
 
 				n, _, err := downlink.wgConn.WriteMsgUDPAddrPort(sendBuf, cmsg, downlink.clientAddrPort)
 				if err != nil {
-					c.logger.Warn("Failed to write wgPacket to wgConn",
-						slog.String("client", c.name),
-						slog.String("listenAddress", c.wgListenAddress),
-						tslog.AddrPort("clientAddress", downlink.clientAddrPort),
-						tslog.AddrPort("proxyConnListenAddress", downlink.proxyConnListenAddrPort),
-						tslog.AddrPort("proxyAddress", downlink.proxyAddrPort),
+					downlink.logger.Warn("Failed to write wgPacket to wgConn",
 						slog.Int("wgPacketLength", sendBufSize),
 						tslog.Uint("segmentSize", qp.segmentSize),
 						tslog.Uint("segmentCount", sendSegmentCount),
@@ -937,12 +864,7 @@ func (c *client) relayProxyToWgGeneric(downlink clientNatDownlinkGeneric) {
 		sendPacketBuf = sendPacketBuf[:0]
 	}
 
-	c.logger.Info("Finished relay proxyConn -> wgConn",
-		slog.String("client", c.name),
-		slog.String("listenAddress", c.wgListenAddress),
-		tslog.AddrPort("clientAddress", downlink.clientAddrPort),
-		tslog.AddrPort("proxyConnListenAddress", downlink.proxyConnListenAddrPort),
-		tslog.AddrPort("proxyAddress", downlink.proxyAddrPort),
+	downlink.logger.Info("Finished relay proxyConn -> wgConn",
 		tslog.Uint("recvmsgCount", recvmsgCount),
 		tslog.Uint("packetsReceived", packetsReceived),
 		tslog.Uint("swgpBytesReceived", swgpBytesReceived),
@@ -967,7 +889,7 @@ func (c *client) putPacketBuf(packetBuf []byte) {
 	c.packetBufPool.Put(unsafe.SliceData(packetBuf))
 }
 
-// Stop implements the Service Stop method.
+// Stop implements [Service.Stop].
 func (c *client) Stop() error {
 	if err := c.wgConn.SetReadDeadline(conn.ALongTimeAgo); err != nil {
 		return err

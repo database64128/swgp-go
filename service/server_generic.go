@@ -2,6 +2,8 @@
 
 package service
 
-func (s *server) setStartFunc(_ string) {
-	s.startFunc = s.startGeneric
+import "context"
+
+func (s *server) start(ctx context.Context) error {
+	return s.startGeneric(ctx)
 }

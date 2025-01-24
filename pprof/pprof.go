@@ -61,9 +61,9 @@ type Service struct {
 	server  http.Server
 }
 
-// String implements [service.Service.String].
-func (*Service) String() string {
-	return "pprof"
+// SlogAttr implements [service.Service.SlogAttr].
+func (*Service) SlogAttr() slog.Attr {
+	return slog.String("service", "pprof")
 }
 
 // Start implements [service.Service.Start].

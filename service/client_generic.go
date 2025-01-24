@@ -2,6 +2,8 @@
 
 package service
 
-func (c *client) setStartFunc(_ string) {
-	c.startFunc = c.startGeneric
+import "context"
+
+func (c *client) start(ctx context.Context) error {
+	return c.startGeneric(ctx)
 }

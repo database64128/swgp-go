@@ -56,8 +56,8 @@ var ErrMTUTooSmall = errors.New("MTU must be at least 1280")
 // Service is implemented by encapsulations that utilize packet handlers
 // to provide swgp service over a connection or other abstractions.
 type Service interface {
-	// String returns the service's name.
-	String() string
+	// SlogAttr returns a [slog.Attr] that identifies the service.
+	SlogAttr() slog.Attr
 
 	// Start starts the service.
 	Start(ctx context.Context) error
@@ -157,20 +157,36 @@ func (sc *Config) Manager(logger *tslog.Logger) (*Manager, error) {
 	}
 
 	services := make([]Service, 0, serviceCount)
+	serverIndexByName := make(map[string]int, len(sc.Servers))
+	clientIndexByName := make(map[string]int, len(sc.Clients))
 	listenConfigCache := conn.NewListenConfigCache()
 
 	for i := range sc.Servers {
-		s, err := sc.Servers[i].Server(logger, listenConfigCache)
+		serverConfig := &sc.Servers[i]
+
+		if dupIndex, ok := serverIndexByName[serverConfig.Name]; ok {
+			return nil, fmt.Errorf("duplicate server name %q at index %d and %d", serverConfig.Name, dupIndex, i)
+		}
+		serverIndexByName[serverConfig.Name] = i
+
+		s, err := serverConfig.Server(logger, listenConfigCache)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create server service %s: %w", sc.Servers[i].Name, err)
+			return nil, fmt.Errorf("failed to create server service %q: %w", serverConfig.Name, err)
 		}
 		services = append(services, s)
 	}
 
 	for i := range sc.Clients {
-		c, err := sc.Clients[i].Client(logger, listenConfigCache)
+		clientConfig := &sc.Clients[i]
+
+		if dupIndex, ok := clientIndexByName[clientConfig.Name]; ok {
+			return nil, fmt.Errorf("duplicate client name %q at index %d and %d", clientConfig.Name, dupIndex, i)
+		}
+		clientIndexByName[clientConfig.Name] = i
+
+		c, err := clientConfig.Client(logger, listenConfigCache)
 		if err != nil {
-			return nil, fmt.Errorf("failed to create client service %s: %w", sc.Clients[i].Name, err)
+			return nil, fmt.Errorf("failed to create client service %q: %w", clientConfig.Name, err)
 		}
 		services = append(services, c)
 	}
@@ -192,7 +208,7 @@ type Manager struct {
 func (m *Manager) Start(ctx context.Context) error {
 	for _, s := range m.services {
 		if err := s.Start(ctx); err != nil {
-			return fmt.Errorf("failed to start %s: %w", s.String(), err)
+			return fmt.Errorf("failed to start %s: %w", s.SlogAttr().String(), err)
 		}
 	}
 	return nil
@@ -203,11 +219,11 @@ func (m *Manager) Stop() {
 	for _, s := range m.services {
 		if err := s.Stop(); err != nil {
 			m.logger.Warn("Failed to stop service",
-				slog.Any("service", s),
+				s.SlogAttr(),
 				tslog.Err(err),
 			)
 		}
-		m.logger.Info("Stopped service", slog.Any("service", s))
+		m.logger.Info("Stopped service", s.SlogAttr())
 	}
 }
 
@@ -218,7 +234,7 @@ func newPacketHandler(proxyMode string, proxyPSK []byte, maxPacketSize int) (pac
 	case "paranoid":
 		return packet.NewParanoidHandler(proxyPSK, maxPacketSize)
 	default:
-		return nil, fmt.Errorf("unknown proxy mode: %s", proxyMode)
+		return nil, fmt.Errorf("unknown proxy mode: %q", proxyMode)
 	}
 }
 
