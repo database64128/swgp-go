@@ -2,7 +2,6 @@ package conn
 
 import (
 	"bytes"
-	"context"
 	"crypto/rand"
 	"net/netip"
 	"strings"
@@ -144,7 +143,7 @@ func TestAddrIPPort(t *testing.T) {
 }
 
 func TestAddrResolveIP(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	ip, err := addrIP.ResolveIP(ctx, "ip")
 	if err != nil {
@@ -166,7 +165,7 @@ func TestAddrResolveIP(t *testing.T) {
 }
 
 func TestAddrResolveIPPort(t *testing.T) {
-	ctx := context.Background()
+	ctx := t.Context()
 
 	ipPort, err := addrIP.ResolveIPPort(ctx, "ip")
 	if err != nil {
@@ -218,10 +217,7 @@ func TestAddrString(t *testing.T) {
 
 func TestAddrAppendTo(t *testing.T) {
 	head := make([]byte, 64)
-	_, err := rand.Read(head)
-	if err != nil {
-		t.Fatal(err)
-	}
+	rand.Read(head)
 
 	b := make([]byte, 0, 128)
 	b = append(b, head...)

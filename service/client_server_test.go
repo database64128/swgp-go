@@ -2,7 +2,6 @@ package service
 
 import (
 	"bytes"
-	"context"
 	"crypto/rand"
 	"log/slog"
 	"net"
@@ -66,14 +65,11 @@ func init() {
 
 func generateTestPSK() []byte {
 	psk := make([]byte, 32)
-	_, err := rand.Read(psk)
-	if err != nil {
-		panic(err)
-	}
+	rand.Read(psk)
 	return psk
 }
 
-func testClientServerHandshake(t *testing.T, ctx context.Context, logger *tslog.Logger, serverConfig ServerConfig, clientConfig ClientConfig) {
+func testClientServerHandshake(t *testing.T, logger *tslog.Logger, serverConfig ServerConfig, clientConfig ClientConfig) {
 	sc := Config{
 		Servers: []ServerConfig{serverConfig},
 		Clients: []ClientConfig{clientConfig},
@@ -82,6 +78,7 @@ func testClientServerHandshake(t *testing.T, ctx context.Context, logger *tslog.
 	if err != nil {
 		t.Fatal(err)
 	}
+	ctx := t.Context()
 	if err = m.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -90,18 +87,14 @@ func testClientServerHandshake(t *testing.T, ctx context.Context, logger *tslog.
 	// Make packets.
 	handshakeInitiationPacket := make([]byte, packet.WireGuardMessageLengthHandshakeInitiation)
 	handshakeInitiationPacket[0] = packet.WireGuardMessageTypeHandshakeInitiation
-	if _, err = rand.Read(handshakeInitiationPacket[1:]); err != nil {
-		t.Fatal(err)
-	}
+	rand.Read(handshakeInitiationPacket[1:])
 	expectedHandshakeInitiationPacket := make([]byte, packet.WireGuardMessageLengthHandshakeInitiation)
 	copy(expectedHandshakeInitiationPacket, handshakeInitiationPacket)
 	receivedHandshakeInitiationPacket := make([]byte, packet.WireGuardMessageLengthHandshakeInitiation+1)
 
 	handshakeResponsePacket := make([]byte, packet.WireGuardMessageLengthHandshakeResponse)
 	handshakeResponsePacket[0] = packet.WireGuardMessageTypeHandshakeResponse
-	if _, err = rand.Read(handshakeResponsePacket[1:]); err != nil {
-		t.Fatal(err)
-	}
+	rand.Read(handshakeResponsePacket[1:])
 	expectedHandshakeResponsePacket := make([]byte, packet.WireGuardMessageLengthHandshakeResponse)
 	copy(expectedHandshakeResponsePacket, handshakeResponsePacket)
 	receivedHandshakeResponsePacket := make([]byte, packet.WireGuardMessageLengthHandshakeResponse+1)
@@ -164,18 +157,17 @@ func testClientServerHandshake(t *testing.T, ctx context.Context, logger *tslog.
 }
 
 func TestClientServerHandshake(t *testing.T) {
-	ctx := context.Background()
 	logCfg := tslog.Config{Level: slog.LevelDebug}
 	logger := logCfg.NewTestLogger(t)
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			testClientServerHandshake(t, ctx, logger, c.serverConfig, c.clientConfig)
+			testClientServerHandshake(t, logger, c.serverConfig, c.clientConfig)
 		})
 	}
 }
 
-func testClientServerDataPackets(t *testing.T, ctx context.Context, logger *tslog.Logger, serverConfig ServerConfig, clientConfig ClientConfig) {
+func testClientServerDataPackets(t *testing.T, logger *tslog.Logger, serverConfig ServerConfig, clientConfig ClientConfig) {
 	sc := Config{
 		Servers: []ServerConfig{serverConfig},
 		Clients: []ClientConfig{clientConfig},
@@ -184,6 +176,7 @@ func testClientServerDataPackets(t *testing.T, ctx context.Context, logger *tslo
 	if err != nil {
 		t.Fatal(err)
 	}
+	ctx := t.Context()
 	if err = m.Start(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -192,9 +185,7 @@ func testClientServerDataPackets(t *testing.T, ctx context.Context, logger *tslo
 	// Make packets.
 	smallDataPacket := make([]byte, 1024)
 	smallDataPacket[0] = packet.WireGuardMessageTypeData
-	if _, err = rand.Read(smallDataPacket[1:]); err != nil {
-		t.Fatal(err)
-	}
+	rand.Read(smallDataPacket[1:])
 	expectedSmallDataPacket := make([]byte, 1024)
 	copy(expectedSmallDataPacket, smallDataPacket)
 	receivedSmallDataPacket := make([]byte, 1024+1)
@@ -257,13 +248,12 @@ func testClientServerDataPackets(t *testing.T, ctx context.Context, logger *tslo
 }
 
 func TestClientServerDataPackets(t *testing.T) {
-	ctx := context.Background()
 	logCfg := tslog.Config{Level: slog.LevelDebug}
 	logger := logCfg.NewTestLogger(t)
 
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			testClientServerDataPackets(t, ctx, logger, c.serverConfig, c.clientConfig)
+			testClientServerDataPackets(t, logger, c.serverConfig, c.clientConfig)
 		})
 	}
 }

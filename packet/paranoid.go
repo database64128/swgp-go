@@ -65,9 +65,7 @@ func (h *paranoidHandler) Encrypt(dst, wgPacket []byte) ([]byte, error) {
 	plaintext := b[chacha20poly1305.NonceSizeX : len(b)-chacha20poly1305.Overhead]
 
 	// Put nonce.
-	if _, err := rand.Read(nonce); err != nil {
-		return nil, err
-	}
+	rand.Read(nonce)
 
 	// Put payload length.
 	binary.BigEndian.PutUint16(plaintext, uint16(len(wgPacket)))

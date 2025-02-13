@@ -106,9 +106,7 @@ func (h *zeroOverheadHandler) Encrypt(dst, wgPacket []byte) ([]byte, error) {
 
 	// Put nonce.
 	nonce := dst[len(dst)-chacha20poly1305.NonceSizeX:]
-	if _, err := rand.Read(nonce); err != nil {
-		return nil, err
-	}
+	rand.Read(nonce)
 
 	// Seal the remainder in-place.
 	plaintextEnd := len(dst) - chacha20poly1305.NonceSizeX - chacha20poly1305.Overhead

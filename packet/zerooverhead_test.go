@@ -11,9 +11,7 @@ func newZeroOverheadHandler(t *testing.T) Handler {
 	t.Helper()
 
 	psk := make([]byte, 32)
-	if _, err := rand.Read(psk); err != nil {
-		t.Fatal(err)
-	}
+	rand.Read(psk)
 
 	h, err := NewZeroOverheadHandler(psk, 1452)
 	if err != nil {

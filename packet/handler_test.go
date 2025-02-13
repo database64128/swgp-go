@@ -12,9 +12,7 @@ var rng *mrand.ChaCha8
 
 func init() {
 	var seed [32]byte
-	if _, err := rand.Read(seed[:]); err != nil {
-		panic(err)
-	}
+	rand.Read(seed[:])
 	rng = mrand.NewChaCha8(seed)
 }
 
