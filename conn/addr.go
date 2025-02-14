@@ -224,9 +224,13 @@ func (a Addr) MarshalText() ([]byte, error) {
 	}
 }
 
-// UnmarshalText implements the encoding.TextUnmarshaler UnmarshalText method.
+// UnmarshalText implements [encoding.TextUnmarshaler].
 func (a *Addr) UnmarshalText(text []byte) error {
-	addr, err := ParseAddr(text)
+	if len(text) == 0 {
+		*a = Addr{}
+		return nil
+	}
+	addr, err := ParseAddr(string(text))
 	if err != nil {
 		return err
 	}
@@ -281,8 +285,8 @@ func AddrFromHostPort(host string, port uint16) (Addr, error) {
 
 // ParseAddr parses the provided string representation of an address
 // and returns the parsed address or an error.
-func ParseAddr[T ~[]byte | ~string](s T) (Addr, error) {
-	host, portString, err := net.SplitHostPort(*(*string)(unsafe.Pointer(&s)))
+func ParseAddr(s string) (Addr, error) {
+	host, portString, err := net.SplitHostPort(s)
 	if err != nil {
 		return Addr{}, err
 	}
