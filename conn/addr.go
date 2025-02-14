@@ -212,7 +212,12 @@ func (a Addr) AppendTo(b []byte) []byte {
 	}
 }
 
-// MarshalText implements the encoding.TextMarshaler MarshalText method.
+// AppendText implements [encoding.TextAppender].
+func (a Addr) AppendText(b []byte) ([]byte, error) {
+	return a.AppendTo(b), nil
+}
+
+// MarshalText implements [encoding.TextMarshaler].
 func (a Addr) MarshalText() ([]byte, error) {
 	switch a.af {
 	case addressFamilyNetip:
