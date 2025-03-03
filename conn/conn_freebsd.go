@@ -15,7 +15,6 @@ func setFwmark(fd, fwmark int) error {
 
 func (lso ListenerSocketOptions) buildSetFns() setFuncSlice {
 	return setFuncSlice{}.
-		appendGetIPv6Only().
 		appendSetSendBufferSize(lso.SendBufferSize).
 		appendSetRecvBufferSize(lso.ReceiveBufferSize).
 		appendSetFwmarkFunc(lso.Fwmark).

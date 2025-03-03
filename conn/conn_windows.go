@@ -6,18 +6,6 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func getIPv6Only(fd int, network string, info *SocketInfo) error {
-	switch network {
-	case "tcp6", "udp6":
-		v6only, err := windows.GetsockoptInt(windows.Handle(fd), windows.IPPROTO_IPV6, windows.IPV6_V6ONLY)
-		if err != nil {
-			return fmt.Errorf("failed to get socket option IPV6_V6ONLY: %w", err)
-		}
-		info.IPv6Only = v6only != 0
-	}
-	return nil
-}
-
 func setSendBufferSize(fd, size int) error {
 	if err := windows.SetsockoptInt(windows.Handle(fd), windows.SOL_SOCKET, windows.SO_SNDBUF, size); err != nil {
 		return fmt.Errorf("failed to set socket option SO_SNDBUF: %w", err)
@@ -46,17 +34,17 @@ const (
 	IP_PMTUDISC_MAX
 )
 
-func setPMTUD(fd int, network string, info *SocketInfo) error {
+func setPMTUD(fd int, network string) error {
 	switch network {
 	case "tcp4", "udp4":
 		if err := windows.SetsockoptInt(windows.Handle(fd), windows.IPPROTO_IP, IP_MTU_DISCOVER, IP_PMTUDISC_DO); err != nil {
 			return fmt.Errorf("failed to set socket option IP_MTU_DISCOVER: %w", err)
 		}
 	case "tcp6", "udp6":
-		if !info.IPv6Only {
-			if err := windows.SetsockoptInt(windows.Handle(fd), windows.IPPROTO_IP, IP_MTU_DISCOVER, IP_PMTUDISC_DO); err != nil {
-				return fmt.Errorf("failed to set socket option IP_MTU_DISCOVER: %w", err)
-			}
+		// For dual-stack IPv6 sockets, both IP_MTU_DISCOVER and IPV6_MTU_DISCOVER need to be set.
+		// However, if IPV6_V6ONLY is set to true, setting IP_MTU_DISCOVER will fail with WSAEINVAL.
+		if err := windows.SetsockoptInt(windows.Handle(fd), windows.IPPROTO_IP, IP_MTU_DISCOVER, IP_PMTUDISC_DO); err != nil && err != windows.WSAEINVAL {
+			return fmt.Errorf("failed to set socket option IP_MTU_DISCOVER: %w", err)
 		}
 		if err := windows.SetsockoptInt(windows.Handle(fd), windows.IPPROTO_IPV6, IPV6_MTU_DISCOVER, IP_PMTUDISC_DO); err != nil {
 			return fmt.Errorf("failed to set socket option IPV6_MTU_DISCOVER: %w", err)
@@ -85,17 +73,16 @@ func setUDPGenericReceiveOffload(fd int, info *SocketInfo) {
 	}
 }
 
-func setRecvPktinfo(fd int, network string, info *SocketInfo) error {
+func setRecvPktinfo(fd int, network string) error {
 	switch network {
 	case "udp4":
 		if err := windows.SetsockoptInt(windows.Handle(fd), windows.IPPROTO_IP, windows.IP_PKTINFO, 1); err != nil {
 			return fmt.Errorf("failed to set socket option IP_PKTINFO: %w", err)
 		}
 	case "udp6":
-		if !info.IPv6Only {
-			if err := windows.SetsockoptInt(windows.Handle(fd), windows.IPPROTO_IP, windows.IP_PKTINFO, 1); err != nil {
-				return fmt.Errorf("failed to set socket option IP_PKTINFO: %w", err)
-			}
+		// This behaves just like IP_MTU_DISCOVER. See comments above for more details.
+		if err := windows.SetsockoptInt(windows.Handle(fd), windows.IPPROTO_IP, windows.IP_PKTINFO, 1); err != nil && err != windows.WSAEINVAL {
+			return fmt.Errorf("failed to set socket option IP_PKTINFO: %w", err)
 		}
 		if err := windows.SetsockoptInt(windows.Handle(fd), windows.IPPROTO_IPV6, windows.IPV6_PKTINFO, 1); err != nil {
 			return fmt.Errorf("failed to set socket option IPV6_PKTINFO: %w", err)
@@ -109,7 +96,6 @@ func setRecvPktinfo(fd int, network string, info *SocketInfo) error {
 
 func (lso ListenerSocketOptions) buildSetFns() setFuncSlice {
 	return setFuncSlice{}.
-		appendGetIPv6Only().
 		appendSetSendBufferSize(lso.SendBufferSize).
 		appendSetRecvBufferSize(lso.ReceiveBufferSize).
 		appendSetPMTUDFunc(lso.PathMTUDiscovery).

@@ -48,7 +48,7 @@ func setTrafficClass(fd int, network string, trafficClass int) error {
 	return nil
 }
 
-func setPMTUD(fd int, network string, _ *SocketInfo) error {
+func setPMTUD(fd int, network string) error {
 	// Set IP_MTU_DISCOVER for both v4 and v6.
 	if err := unix.SetsockoptInt(fd, unix.IPPROTO_IP, unix.IP_MTU_DISCOVER, unix.IP_PMTUDISC_DO); err != nil {
 		return fmt.Errorf("failed to set socket option IP_MTU_DISCOVER: %w", err)
@@ -82,7 +82,7 @@ func setUDPGenericReceiveOffload(fd int, info *SocketInfo) {
 	}
 }
 
-func setRecvPktinfo(fd int, network string, _ *SocketInfo) error {
+func setRecvPktinfo(fd int, network string) error {
 	switch network {
 	case "udp4":
 		if err := unix.SetsockoptInt(fd, unix.IPPROTO_IP, unix.IP_PKTINFO, 1); err != nil {
@@ -100,7 +100,6 @@ func setRecvPktinfo(fd int, network string, _ *SocketInfo) error {
 
 func (lso ListenerSocketOptions) buildSetFns() setFuncSlice {
 	return setFuncSlice{}.
-		appendGetIPv6Only().
 		appendSetSendBufferSize(lso.SendBufferSize).
 		appendSetRecvBufferSize(lso.ReceiveBufferSize).
 		appendSetFwmarkFunc(lso.Fwmark).
