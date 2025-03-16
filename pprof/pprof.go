@@ -86,5 +86,9 @@ func (s *Service) Start(ctx context.Context) error {
 
 // Stop implements [service.Service.Stop].
 func (s *Service) Stop() error {
-	return s.server.Close()
+	if err := s.server.Close(); err != nil {
+		return err
+	}
+	s.logger.Info("Stopped pprof")
+	return nil
 }

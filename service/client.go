@@ -892,7 +892,7 @@ func (c *client) putPacketBuf(packetBuf []byte) {
 // Stop implements [Service.Stop].
 func (c *client) Stop() error {
 	if err := c.wgConn.SetReadDeadline(conn.ALongTimeAgo); err != nil {
-		return err
+		return fmt.Errorf("failed to SetReadDeadline on wgConn: %w", err)
 	}
 
 	// Wait for wgConn receive goroutines to exit,
@@ -907,7 +907,7 @@ func (c *client) Stop() error {
 		}
 
 		if err := proxyConn.SetReadDeadline(conn.ALongTimeAgo); err != nil {
-			c.logger.Warn("Failed to SetReadDeadline on proxyConn",
+			c.logger.Error("Failed to SetReadDeadline on proxyConn",
 				slog.String("client", c.name),
 				slog.String("listenAddress", c.wgListenAddress),
 				tslog.AddrPort("clientAddress", clientAddrPort),
@@ -922,5 +922,10 @@ func (c *client) Stop() error {
 	// so in-flight packets can be written out.
 	c.wg.Wait()
 
-	return c.wgConn.Close()
+	if err := c.wgConn.Close(); err != nil {
+		return fmt.Errorf("failed to close wgConn: %w", err)
+	}
+
+	c.logger.Info("Stopped service", slog.String("client", c.name))
+	return nil
 }

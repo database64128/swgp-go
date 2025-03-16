@@ -204,27 +204,60 @@ type Manager struct {
 	logger   *tslog.Logger
 }
 
-// Start starts all configured server (interface) and client (peer) services.
-func (m *Manager) Start(ctx context.Context) error {
+// Run starts all services. If any service fails to start, it stops all running services and
+// returns an error. On success, it blocks until the context is canceled. The returned error
+// can be unwrapped to a slice of [*ManagerError].
+func (m *Manager) Run(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	var errs []error
+	runningSvcs := make([]Service, 0, len(m.services))
+
 	for _, s := range m.services {
 		if err := s.Start(ctx); err != nil {
-			return fmt.Errorf("failed to start %s: %w", s.SlogAttr().String(), err)
+			m.logger.Error("Failed to start service", s.SlogAttr(), tslog.Err(err))
+			errs = append(errs, newManagerError("start", s, err))
+			cancel()
+			break
+		}
+		runningSvcs = append(runningSvcs, s)
+	}
+
+	<-ctx.Done()
+
+	for _, s := range runningSvcs {
+		if err := s.Stop(); err != nil {
+			m.logger.Error("Failed to stop service", s.SlogAttr(), tslog.Err(err))
+			errs = append(errs, newManagerError("stop", s, err))
 		}
 	}
-	return nil
+
+	return errors.Join(errs...)
 }
 
-// Stop stops all running services.
-func (m *Manager) Stop() {
-	for _, s := range m.services {
-		if err := s.Stop(); err != nil {
-			m.logger.Warn("Failed to stop service",
-				s.SlogAttr(),
-				tslog.Err(err),
-			)
-		}
-		m.logger.Info("Stopped service", s.SlogAttr())
-	}
+// ManagerError is the error type returned by [Manager].
+type ManagerError struct {
+	// Action is one of "start" or "stop".
+	Action string
+
+	// Svc is the service that failed.
+	Svc Service
+
+	// Err is the error returned by starting or stopping the service.
+	Err error
+}
+
+func newManagerError(action string, svc Service, err error) *ManagerError {
+	return &ManagerError{action, svc, err}
+}
+
+func (me *ManagerError) Error() string {
+	return fmt.Sprintf("failed to %s %s: %v", me.Action, me.Svc.SlogAttr().String(), me.Err)
+}
+
+func (me *ManagerError) Unwrap() error {
+	return me.Err
 }
 
 func newPacketHandler(proxyMode string, proxyPSK []byte, maxPacketSize int) (packet.Handler, error) {

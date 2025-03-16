@@ -89,11 +89,7 @@ func main() {
 		cancel()
 	}()
 
-	if err = m.Start(ctx); err != nil {
-		logger.Error("Failed to start services", tslog.Err(err))
+	if err = m.Run(ctx); err != nil {
 		os.Exit(1)
 	}
-
-	<-ctx.Done()
-	m.Stop()
 }
