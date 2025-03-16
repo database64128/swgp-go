@@ -152,7 +152,7 @@ func (s *server) recvFromProxyConnRecvmmsg(ctx context.Context, logger *tslog.Lo
 
 			clientAddrPort, err := conn.SockaddrToAddrPort(msg.Msghdr.Name, msg.Msghdr.Namelen)
 			if err != nil {
-				logger.Warn("Failed to parse sockaddr of packet from proxyConn", tslog.Err(err))
+				logger.Error("Failed to parse sockaddr of packet from proxyConn", tslog.Err(err))
 				continue
 			}
 
@@ -168,7 +168,7 @@ func (s *server) recvFromProxyConnRecvmmsg(ctx context.Context, logger *tslog.Lo
 
 			rscm, err := conn.ParseSocketControlMessage(cmsg)
 			if err != nil {
-				logger.Warn("Failed to parse socket control message from proxyConn",
+				logger.Error("Failed to parse socket control message from proxyConn",
 					tslog.AddrPort("clientAddress", clientAddrPort),
 					slog.Int("cmsgLength", len(cmsg)),
 					tslog.Err(err),
@@ -342,7 +342,7 @@ func (s *server) recvFromProxyConnRecvmmsg(ctx context.Context, logger *tslog.Lo
 					wgConnListenAddrPort := wgConn.LocalAddr().(*net.UDPAddr).AddrPort()
 
 					if err = wgConn.SetReadDeadline(time.Now().Add(RejectAfterTime)); err != nil {
-						logger.Warn("Failed to SetReadDeadline on wgConn",
+						logger.Error("Failed to SetReadDeadline on wgConn",
 							tslog.AddrPort("clientAddress", clientAddrPort),
 							tslog.AddrPort("wgConnListenAddress", wgConnListenAddrPort),
 							tslog.Err(err),
@@ -574,7 +574,7 @@ func (s *server) relayProxyToWgSendmmsg(uplink serverNatUplinkMmsg) {
 
 		if isHandshake {
 			if err := uplink.wgConn.SetReadDeadline(time.Now().Add(RejectAfterTime)); err != nil {
-				uplink.logger.Warn("Failed to SetReadDeadline on wgConn", tslog.Err(err))
+				uplink.logger.Error("Failed to SetReadDeadline on wgConn", tslog.Err(err))
 			}
 		}
 
@@ -683,7 +683,7 @@ func (s *server) relayWgToProxySendmmsg(downlink serverNatDownlinkMmsg) {
 
 			packetSourceAddrPort, err := conn.SockaddrToAddrPort(msg.Msghdr.Name, msg.Msghdr.Namelen)
 			if err != nil {
-				downlink.logger.Warn("Failed to parse sockaddr of packet from wgConn", tslog.Err(err))
+				downlink.logger.Error("Failed to parse sockaddr of packet from wgConn", tslog.Err(err))
 				continue
 			}
 			if !conn.AddrPortMappedEqual(packetSourceAddrPort, downlink.wgAddrPort) {
@@ -706,7 +706,7 @@ func (s *server) relayWgToProxySendmmsg(downlink serverNatDownlinkMmsg) {
 
 			rscm, err := conn.ParseSocketControlMessage(cmsg)
 			if err != nil {
-				downlink.logger.Warn("Failed to parse socket control message from wgConn",
+				downlink.logger.Error("Failed to parse socket control message from wgConn",
 					tslog.AddrPort("packetSourceAddress", packetSourceAddrPort),
 					slog.Int("cmsgLength", len(cmsg)),
 					tslog.Err(err),

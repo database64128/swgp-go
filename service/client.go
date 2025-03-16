@@ -300,7 +300,7 @@ func (c *client) recvFromWgConnGeneric(ctx context.Context, logger *tslog.Logger
 
 		rscm, err := conn.ParseSocketControlMessage(cmsgBuf[:cmsgn])
 		if err != nil {
-			logger.Warn("Failed to parse socket control message from wgConn",
+			logger.Error("Failed to parse socket control message from wgConn",
 				tslog.AddrPort("clientAddress", clientAddrPort),
 				slog.Int("cmsgLength", cmsgn),
 				tslog.Err(err),
@@ -402,7 +402,7 @@ func (c *client) recvFromWgConnGeneric(ctx context.Context, logger *tslog.Logger
 				proxyConnListenAddrPort := proxyConn.LocalAddr().(*net.UDPAddr).AddrPort()
 
 				if err = proxyConn.SetReadDeadline(time.Now().Add(RejectAfterTime)); err != nil {
-					logger.Warn("Failed to SetReadDeadline on proxyConn",
+					logger.Error("Failed to SetReadDeadline on proxyConn",
 						tslog.AddrPort("clientAddress", clientAddrPort),
 						tslog.AddrPort("proxyConnListenAddress", proxyConnListenAddrPort),
 						tslog.Err(err),
@@ -648,7 +648,7 @@ func (c *client) relayWgToProxyGeneric(uplink clientNatUplinkGeneric) {
 
 		if isHandshake {
 			if err := uplink.proxyConn.SetReadDeadline(time.Now().Add(RejectAfterTime)); err != nil {
-				uplink.logger.Warn("Failed to SetReadDeadline on proxyConn", tslog.Err(err))
+				uplink.logger.Error("Failed to SetReadDeadline on proxyConn", tslog.Err(err))
 			}
 		}
 	}
@@ -719,7 +719,7 @@ func (c *client) relayProxyToWgGeneric(downlink clientNatDownlinkGeneric) {
 
 		rscm, err := conn.ParseSocketControlMessage(recvCmsgBuf[:cmsgn])
 		if err != nil {
-			downlink.logger.Warn("Failed to parse socket control message from proxyConn",
+			downlink.logger.Error("Failed to parse socket control message from proxyConn",
 				tslog.AddrPort("packetSourceAddress", packetSourceAddrPort),
 				slog.Int("cmsgLength", cmsgn),
 				tslog.Err(err),
