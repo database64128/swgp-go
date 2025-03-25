@@ -250,6 +250,15 @@ func AddrFromIPPort(addrPort netip.AddrPort) (addr Addr) {
 	return
 }
 
+// AddrFromIPAndPort returns an Addr from the provided IP address and port number.
+func AddrFromIPAndPort(ip netip.Addr, port uint16) Addr {
+	return Addr{
+		addr: *(*netipAddrHeader)(unsafe.Pointer(&ip)),
+		port: port,
+		af:   addressFamilyNetip,
+	}
+}
+
 // AddrFromDomainPort returns an Addr from the provided domain name and port number.
 func AddrFromDomainPort(domain string, port uint16) (Addr, error) {
 	if len(domain) == 0 || len(domain) > 255 {
@@ -278,11 +287,11 @@ func MustAddrFromDomainPort(domain string, port uint16) Addr {
 // The host string may be a string representation of an IP address or a domain name.
 func AddrFromHostPort(host string, port uint16) (Addr, error) {
 	if host == "" {
-		host = "::"
+		return AddrFromIPAndPort(netip.IPv6Unspecified(), port), nil
 	}
 
 	if ip, err := netip.ParseAddr(host); err == nil {
-		return Addr{addr: *(*netipAddrHeader)(unsafe.Pointer(&ip)), port: port, af: addressFamilyNetip}, nil
+		return AddrFromIPAndPort(ip, port), nil
 	}
 
 	return AddrFromDomainPort(host, port)

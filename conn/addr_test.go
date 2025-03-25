@@ -35,7 +35,7 @@ var (
 )
 
 func TestAddrEquals(t *testing.T) {
-	addrIP443 := AddrFromIPPort(netip.AddrPortFrom(addrIPAddr, 443))
+	addrIP443 := AddrFromIPAndPort(addrIPAddr, 443)
 	addrDomain80 := MustAddrFromDomainPort(addrDomainHost, 80)
 
 	for _, c := range []struct {
