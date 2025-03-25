@@ -286,14 +286,9 @@ func MustAddrFromDomainPort(domain string, port uint16) Addr {
 // AddrFromHostPort returns an Addr from the provided host string and port number.
 // The host string may be a string representation of an IP address or a domain name.
 func AddrFromHostPort(host string, port uint16) (Addr, error) {
-	if host == "" {
-		return AddrFromIPAndPort(netip.IPv6Unspecified(), port), nil
-	}
-
 	if ip, err := netip.ParseAddr(host); err == nil {
 		return AddrFromIPAndPort(ip, port), nil
 	}
-
 	return AddrFromDomainPort(host, port)
 }
 
