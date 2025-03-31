@@ -40,5 +40,5 @@ jobs:
       - name: Upload Binaries
         uses: actions/upload-artifact@v4
         with:
-          name: swgp-go-${{ github.sha }}-${{ matrix.os }}-x86-64
+          name: swgp-go-${{ github.sha }}-${{ matrix.os }}-${{ runner.arch }}
           path: swgp-go*
