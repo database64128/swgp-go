@@ -1,5 +1,5 @@
-github.com/database64128/netx-go v0.0.0-20250306235753-cadc9cd97ae4 h1:CkuV4WUfq3vdPwmMaMZOM+tyQNuDoQg1N/Q6+OKsGwA=
-github.com/database64128/netx-go v0.0.0-20250306235753-cadc9cd97ae4/go.mod h1:zFH+5cDvDiXmjPsd8QDsAC699LQwgNepfPmxR2729uQ=
+github.com/database64128/netx-go v0.0.0-20250402041831-49f4a487d5cf h1:RI8/wo0Gn6ZlhZXiBd/YNQUcHRdt4vk8w3konx+saQY=
+github.com/database64128/netx-go v0.0.0-20250402041831-49f4a487d5cf/go.mod h1:hX7u05nphBBhV1fcHmxfgcKvMNksNQEbnT6IEi1Bgs0=
 github.com/lmittmann/tint v1.0.7 h1:D/0OqWZ0YOGZ6AyC+5Y2kD8PBEzBk6rFHVSfOqCkF9Y=
 github.com/lmittmann/tint v1.0.7/go.mod h1:HIS3gSy7qNwGCj+5oRjAutErFBl4BzdQP6cJZ0NfMwE=
 golang.org/x/crypto v0.36.0 h1:AnAEvhDddvBdpY+uR+MyHmuZzzNqXSe/GvuDeob5L34=
