@@ -20,33 +20,19 @@ func setRecvBufferSize(fd, size int) error {
 	return nil
 }
 
-const (
-	IP_MTU_DISCOVER   = 71
-	IPV6_MTU_DISCOVER = 71
-)
-
-// enum PMTUD_STATE from ws2ipdef.h
-const (
-	IP_PMTUDISC_NOT_SET = iota
-	IP_PMTUDISC_DO
-	IP_PMTUDISC_DONT
-	IP_PMTUDISC_PROBE
-	IP_PMTUDISC_MAX
-)
-
 func setPMTUD(fd int, network string) error {
 	switch network {
 	case "tcp4", "udp4":
-		if err := windows.SetsockoptInt(windows.Handle(fd), windows.IPPROTO_IP, IP_MTU_DISCOVER, IP_PMTUDISC_DO); err != nil {
+		if err := windows.SetsockoptInt(windows.Handle(fd), windows.IPPROTO_IP, windows.IP_MTU_DISCOVER, windows.IP_PMTUDISC_DO); err != nil {
 			return fmt.Errorf("failed to set socket option IP_MTU_DISCOVER: %w", err)
 		}
 	case "tcp6", "udp6":
 		// For dual-stack IPv6 sockets, both IP_MTU_DISCOVER and IPV6_MTU_DISCOVER need to be set.
 		// However, if IPV6_V6ONLY is set to true, setting IP_MTU_DISCOVER will fail with WSAEINVAL.
-		if err := windows.SetsockoptInt(windows.Handle(fd), windows.IPPROTO_IP, IP_MTU_DISCOVER, IP_PMTUDISC_DO); err != nil && err != windows.WSAEINVAL {
+		if err := windows.SetsockoptInt(windows.Handle(fd), windows.IPPROTO_IP, windows.IP_MTU_DISCOVER, windows.IP_PMTUDISC_DO); err != nil && err != windows.WSAEINVAL {
 			return fmt.Errorf("failed to set socket option IP_MTU_DISCOVER: %w", err)
 		}
-		if err := windows.SetsockoptInt(windows.Handle(fd), windows.IPPROTO_IPV6, IPV6_MTU_DISCOVER, IP_PMTUDISC_DO); err != nil {
+		if err := windows.SetsockoptInt(windows.Handle(fd), windows.IPPROTO_IPV6, windows.IPV6_MTU_DISCOVER, windows.IP_PMTUDISC_DO); err != nil {
 			return fmt.Errorf("failed to set socket option IPV6_MTU_DISCOVER: %w", err)
 		}
 	default:
