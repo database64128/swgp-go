@@ -3,9 +3,9 @@ package conn
 import (
 	"fmt"
 	"net/netip"
+	"slices"
 	"unsafe"
 
-	"github.com/database64128/swgp-go/slicehelper"
 	"golang.org/x/sys/windows"
 )
 
@@ -76,8 +76,9 @@ const (
 func (m SocketControlMessage) appendTo(b []byte) []byte {
 	switch {
 	case m.PktinfoAddr.Is4():
-		var msgBuf []byte
-		b, msgBuf = slicehelper.Extend(b, sizeofCmsghdr+alignedSizeofInet4Pktinfo)
+		bLen := len(b)
+		b = slices.Grow(b, sizeofCmsghdr+alignedSizeofInet4Pktinfo)[:bLen+sizeofCmsghdr+alignedSizeofInet4Pktinfo]
+		msgBuf := b[bLen:]
 		cmsghdr := (*windows.WSACMSGHDR)(unsafe.Pointer(unsafe.SliceData(msgBuf)))
 		*cmsghdr = windows.WSACMSGHDR{
 			Len:   uintptr(sizeofCmsghdr + sizeofInet4Pktinfo),
@@ -91,8 +92,9 @@ func (m SocketControlMessage) appendTo(b []byte) []byte {
 		_ = copy(msgBuf[sizeofCmsghdr:], unsafe.Slice((*byte)(unsafe.Pointer(&pktinfo)), sizeofInet4Pktinfo))
 
 	case m.PktinfoAddr.Is6():
-		var msgBuf []byte
-		b, msgBuf = slicehelper.Extend(b, sizeofCmsghdr+alignedSizeofInet6Pktinfo)
+		bLen := len(b)
+		b = slices.Grow(b, sizeofCmsghdr+alignedSizeofInet6Pktinfo)[:bLen+sizeofCmsghdr+alignedSizeofInet6Pktinfo]
+		msgBuf := b[bLen:]
 		cmsghdr := (*windows.WSACMSGHDR)(unsafe.Pointer(unsafe.SliceData(msgBuf)))
 		*cmsghdr = windows.WSACMSGHDR{
 			Len:   uintptr(sizeofCmsghdr + sizeofInet6Pktinfo),
@@ -107,8 +109,9 @@ func (m SocketControlMessage) appendTo(b []byte) []byte {
 	}
 
 	if m.SegmentSize > 0 {
-		var msgBuf []byte
-		b, msgBuf = slicehelper.Extend(b, sizeofCmsghdr+alignedSizeofSendMsgSize)
+		bLen := len(b)
+		b = slices.Grow(b, sizeofCmsghdr+alignedSizeofSendMsgSize)[:bLen+sizeofCmsghdr+alignedSizeofSendMsgSize]
+		msgBuf := b[bLen:]
 		cmsghdr := (*windows.WSACMSGHDR)(unsafe.Pointer(unsafe.SliceData(msgBuf)))
 		*cmsghdr = windows.WSACMSGHDR{
 			Len:   uintptr(sizeofCmsghdr + sizeofSendMsgSize),
