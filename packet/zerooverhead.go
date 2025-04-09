@@ -7,8 +7,8 @@ import (
 	"encoding/binary"
 	"fmt"
 	mrand "math/rand/v2"
+	"slices"
 
-	"github.com/database64128/swgp-go/slicehelper"
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
@@ -71,7 +71,10 @@ func (h *zeroOverheadHandler) Encrypt(dst, wgPacket []byte) ([]byte, error) {
 		return append(dst, wgPacket...), nil
 	}
 
-	dst, b := slicehelper.Extend(dst, len(wgPacket))
+	dstLen := len(dst)
+	dst = slices.Grow(dst, len(wgPacket))[:dstLen+aes.BlockSize]
+	b := dst[dstLen:]
+	plaintextStart := len(dst)
 
 	// Save message type.
 	messageType := wgPacket[0]
@@ -79,8 +82,9 @@ func (h *zeroOverheadHandler) Encrypt(dst, wgPacket []byte) ([]byte, error) {
 	// Encrypt the first AES block.
 	h.cb.Encrypt(b, wgPacket)
 
-	// Copy the remaining bytes.
-	remainingPayloadSize := copy(b[aes.BlockSize:], wgPacket[aes.BlockSize:])
+	// Append the remaining payload.
+	remainingPayload := wgPacket[aes.BlockSize:]
+	dst = append(dst, remainingPayload...)
 
 	// We are done with non-handshake packets.
 	switch messageType {
@@ -90,7 +94,7 @@ func (h *zeroOverheadHandler) Encrypt(dst, wgPacket []byte) ([]byte, error) {
 	}
 
 	paddingHeadroom := h.maxHandshakePacketSize - len(wgPacket)
-	if paddingHeadroom < 0 || remainingPayloadSize > 65535 {
+	if paddingHeadroom < 0 || len(remainingPayload) > 65535 {
 		return nil, fmt.Errorf("handshake packet (type %d) is too large (%d bytes)", messageType, len(wgPacket))
 	}
 
@@ -99,22 +103,22 @@ func (h *zeroOverheadHandler) Encrypt(dst, wgPacket []byte) ([]byte, error) {
 		paddingLen = 1 + mrand.IntN(paddingHeadroom)
 	}
 
-	dst, b = slicehelper.Extend(dst, paddingLen+2+chacha20poly1305.Overhead+chacha20poly1305.NonceSizeX)
+	dstLen = len(dst)
+	dst = slices.Grow(dst, paddingLen+2+chacha20poly1305.Overhead+chacha20poly1305.NonceSizeX)[:dstLen+paddingLen]
 
-	// Put payload length.
-	binary.BigEndian.PutUint16(b[paddingLen:], uint16(remainingPayloadSize))
+	// Append payload length.
+	dst = binary.BigEndian.AppendUint16(dst, uint16(len(remainingPayload)))
 
 	// Put nonce.
-	nonce := dst[len(dst)-chacha20poly1305.NonceSizeX:]
+	nonceStart := len(dst) + chacha20poly1305.Overhead
+	nonceEnd := nonceStart + chacha20poly1305.NonceSizeX
+	nonce := dst[nonceStart:nonceEnd]
 	rand.Read(nonce)
 
 	// Seal the remainder in-place.
-	plaintextEnd := len(dst) - chacha20poly1305.NonceSizeX - chacha20poly1305.Overhead
-	plaintextStart := plaintextEnd - 2 - paddingLen - remainingPayloadSize
-	plaintext := dst[plaintextStart:plaintextEnd]
-	_ = h.aead.Seal(plaintext[:0], nonce, plaintext, nil)
+	dst = h.aead.Seal(dst[:plaintextStart], nonce, dst[plaintextStart:], nil)
 
-	return dst, nil
+	return dst[:len(dst)+chacha20poly1305.NonceSizeX], nil
 }
 
 // Decrypt implements [Handler.Decrypt].
@@ -124,7 +128,9 @@ func (h *zeroOverheadHandler) Decrypt(dst, swgpPacket []byte) ([]byte, error) {
 		return append(dst, swgpPacket...), nil
 	}
 
-	dst, b := slicehelper.Extend(dst, aes.BlockSize)
+	dstLen := len(dst)
+	dst = slices.Grow(dst, aes.BlockSize)[:dstLen+aes.BlockSize]
+	b := dst[dstLen:]
 
 	// Decrypt the first AES block.
 	h.cb.Decrypt(b, swgpPacket)
@@ -140,7 +146,7 @@ func (h *zeroOverheadHandler) Decrypt(dst, swgpPacket []byte) ([]byte, error) {
 		return nil, fmt.Errorf("invalid swgp handshake packet length %d", len(swgpPacket))
 	}
 
-	dstLen := len(dst)
+	dstLen = len(dst)
 
 	// Open the remainder into dst.
 	nonceStart := len(swgpPacket) - chacha20poly1305.NonceSizeX

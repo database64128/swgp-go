@@ -5,8 +5,8 @@ import (
 	"crypto/rand"
 	"encoding/binary"
 	"fmt"
+	"slices"
 
-	"github.com/database64128/swgp-go/slicehelper"
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
@@ -60,9 +60,10 @@ func (h *paranoidHandler) Encrypt(dst, wgPacket []byte) ([]byte, error) {
 		return nil, fmt.Errorf("packet is too large: got %d bytes, want at most %d bytes", len(wgPacket), h.maxPayloadSize)
 	}
 
-	dst, b := slicehelper.Extend(dst, h.maxPacketSize)
-	nonce := b[:chacha20poly1305.NonceSizeX]
-	plaintext := b[chacha20poly1305.NonceSizeX : len(b)-chacha20poly1305.Overhead]
+	dstLen := len(dst)
+	dst = slices.Grow(dst, h.maxPacketSize)[:dstLen+chacha20poly1305.NonceSizeX]
+	nonce := dst[dstLen:]
+	plaintext := dst[len(dst) : dstLen+h.maxPacketSize-chacha20poly1305.Overhead]
 
 	// Put nonce.
 	rand.Read(nonce)
@@ -74,9 +75,7 @@ func (h *paranoidHandler) Encrypt(dst, wgPacket []byte) ([]byte, error) {
 	_ = copy(plaintext[2:], wgPacket)
 
 	// Seal the plaintext in-place.
-	_ = h.aead.Seal(plaintext[:0], nonce, plaintext, nil)
-
-	return dst, nil
+	return h.aead.Seal(dst, nonce, plaintext, nil), nil
 }
 
 // Decrypt implements [Handler.Decrypt].
