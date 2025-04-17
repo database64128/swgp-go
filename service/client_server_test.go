@@ -13,6 +13,7 @@ import (
 	"github.com/database64128/swgp-go/conn"
 	"github.com/database64128/swgp-go/packet"
 	"github.com/database64128/swgp-go/tslog"
+	"github.com/database64128/swgp-go/tslogtest"
 )
 
 var cases = []struct {
@@ -170,7 +171,7 @@ func testClientServerHandshake(t *testing.T, clientConn, serverConn *net.UDPConn
 }
 
 func TestClientServerHandshake(t *testing.T) {
-	logCfg := tslog.Config{Level: slog.LevelDebug}
+	logCfg := tslogtest.Config{Level: slog.LevelDebug}
 	logger := logCfg.NewTestLogger(t)
 
 	for _, c := range cases {
@@ -225,7 +226,7 @@ func testClientServerDataPackets(t *testing.T, clientConn, serverConn *net.UDPCo
 }
 
 func TestClientServerDataPackets(t *testing.T) {
-	logCfg := tslog.Config{Level: slog.LevelDebug}
+	logCfg := tslogtest.Config{Level: slog.LevelDebug}
 	logger := logCfg.NewTestLogger(t)
 
 	for _, c := range cases {

@@ -33,15 +33,12 @@ type Config struct {
 }
 
 // NewLogger creates a new [*Logger] that writes to w.
-func (c *Config) NewLogger(w io.Writer) *Logger {
-	return &Logger{
-		level:   c.Level,
-		noTime:  c.NoTime,
-		handler: c.newHandler(w),
-	}
+func (c Config) NewLogger(w io.Writer) *Logger {
+	return c.NewLoggerWithHandler(c.NewHandler(w))
 }
 
-func (c *Config) newHandler(w io.Writer) slog.Handler {
+// NewHandler creates a new [slog.Handler] that writes to w.
+func (c Config) NewHandler(w io.Writer) slog.Handler {
 	if c.UseTextHandler {
 		return slog.NewTextHandler(w, &slog.HandlerOptions{
 			Level: c.Level,
@@ -59,20 +56,11 @@ func (c *Config) newHandler(w io.Writer) slog.Handler {
 }
 
 // NewLoggerWithHandler creates a new [*Logger] with the given handler.
-func (c *Config) NewLoggerWithHandler(handler slog.Handler) *Logger {
+func (c Config) NewLoggerWithHandler(handler slog.Handler) *Logger {
 	return &Logger{
 		level:   c.Level,
 		noTime:  c.NoTime,
 		handler: handler,
-	}
-}
-
-// NewTestLogger creates a new [*Logger] for use in tests.
-func (c *Config) NewTestLogger(t testingLogger) *Logger {
-	return &Logger{
-		level:   c.Level,
-		noTime:  c.NoTime,
-		handler: c.newHandler(newTestingWriter(t)),
 	}
 }
 
@@ -218,21 +206,4 @@ func AddrPortp(key string, addrPortp *netip.AddrPort) slog.Attr {
 // or the call is guarded by [Logger.Enabled].
 func ConnAddrp(key string, addrp *conn.Addr) slog.Attr {
 	return slog.Any(key, addrp)
-}
-
-type testingLogger interface {
-	Logf(format string, args ...any)
-}
-
-type testingWriter struct {
-	t testingLogger
-}
-
-func newTestingWriter(t testingLogger) *testingWriter {
-	return &testingWriter{t}
-}
-
-func (w *testingWriter) Write(p []byte) (n int, err error) {
-	w.t.Logf("%s", p)
-	return len(p), nil
 }
