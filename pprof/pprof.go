@@ -16,7 +16,7 @@ type Config struct {
 	Enabled bool `json:"enabled"`
 
 	// ListenNetwork is the network to listen on.
-	ListenNetwork string `json:"listenNetwork"`
+	ListenNetwork string `json:"listenNetwork,omitzero"`
 
 	// ListenAddress is the address to listen on.
 	ListenAddress string `json:"listenAddress"`

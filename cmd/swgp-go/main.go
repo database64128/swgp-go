@@ -10,13 +10,14 @@ import (
 	"syscall"
 
 	"github.com/database64128/swgp-go"
-	"github.com/database64128/swgp-go/jsonhelper"
+	"github.com/database64128/swgp-go/jsoncfg"
 	"github.com/database64128/swgp-go/service"
 	"github.com/database64128/swgp-go/tslog"
 )
 
 var (
 	version    bool
+	fmtConf    bool
 	testConf   bool
 	logNoColor bool
 	logNoTime  bool
@@ -28,6 +29,7 @@ var (
 
 func init() {
 	flag.BoolVar(&version, "version", false, "Print version and exit")
+	flag.BoolVar(&fmtConf, "fmtConf", false, "Format the configuration file")
 	flag.BoolVar(&testConf, "testConf", false, "Test the configuration file and exit")
 	flag.BoolVar(&logNoColor, "logNoColor", false, "Disable colors in log output")
 	flag.BoolVar(&logNoTime, "logNoTime", false, "Disable timestamps in log output")
@@ -59,12 +61,23 @@ func main() {
 	logger.Info("swgp-go", slog.String("version", swgp.Version))
 
 	var sc service.Config
-	if err := jsonhelper.OpenAndDecodeDisallowUnknownFields(confPath, &sc); err != nil {
+	if err := jsoncfg.Open(confPath, &sc); err != nil {
 		logger.Error("Failed to load config",
 			slog.String("path", confPath),
 			tslog.Err(err),
 		)
 		os.Exit(1)
+	}
+
+	if fmtConf {
+		if err := jsoncfg.Save(confPath, &sc); err != nil {
+			logger.Error("Failed to save config",
+				slog.String("path", confPath),
+				tslog.Err(err),
+			)
+			os.Exit(1)
+		}
+		logger.Info("Formatted configuration file", slog.String("path", confPath))
 	}
 
 	m, err := sc.Manager(logger)

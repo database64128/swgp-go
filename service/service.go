@@ -74,26 +74,26 @@ type PerfConfig struct {
 	// - "": Platform default.
 	// - "no": Do not receive or send packets in batches.
 	// - "sendmmsg": Use recvmmsg(2) and sendmmsg(2) calls. This is the default on Linux and NetBSD.
-	BatchMode string `json:"batchMode"`
+	BatchMode string `json:"batchMode,omitzero"`
 
 	// RelayBatchSize is the batch size of recvmmsg(2) and sendmmsg(2) calls in relay sessions.
-	RelayBatchSize int `json:"relayBatchSize"`
+	RelayBatchSize int `json:"relayBatchSize,omitzero"`
 
 	// MainRecvBatchSize is the batch size of a relay service's main receive routine.
-	MainRecvBatchSize int `json:"mainRecvBatchSize"`
+	MainRecvBatchSize int `json:"mainRecvBatchSize,omitzero"`
 
 	// SendChannelCapacity is the capacity of a relay session's uplink send channel.
-	SendChannelCapacity int `json:"sendChannelCapacity"`
+	SendChannelCapacity int `json:"sendChannelCapacity,omitzero"`
 
 	// DisableUDPGSO disables UDP Generic Segmentation Offload (GSO) on the listener.
 	//
 	// UDP GSO is enabled by default when available.
-	DisableUDPGSO bool `json:"disableUDPGSO"`
+	DisableUDPGSO bool `json:"disableUDPGSO,omitzero"`
 
 	// DisableUDPGRO disables UDP Generic Receive Offload (GRO) on the listener.
 	//
 	// UDP GRO is enabled by default when available.
-	DisableUDPGRO bool `json:"disableUDPGRO"`
+	DisableUDPGRO bool `json:"disableUDPGRO,omitzero"`
 }
 
 // CheckAndApplyDefaults checks and applies default values to the configuration.
@@ -141,9 +141,9 @@ func (pc *PerfConfig) CheckAndApplyDefaults() error {
 // Config stores configurations for a typical swgp service.
 // It may be marshaled as or unmarshaled from JSON.
 type Config struct {
-	Servers []ServerConfig `json:"servers"`
-	Clients []ClientConfig `json:"clients"`
-	Pprof   pprof.Config   `json:"pprof"`
+	Servers []ServerConfig `json:"servers,omitzero"`
+	Clients []ClientConfig `json:"clients,omitzero"`
+	Pprof   pprof.Config   `json:"pprof,omitzero"`
 }
 
 // Manager initializes the service manager.

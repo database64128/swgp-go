@@ -22,17 +22,17 @@ import (
 // It may be marshaled as or unmarshaled from JSON.
 type ServerConfig struct {
 	Name                string    `json:"name"`
-	ProxyListenNetwork  string    `json:"proxyListenNetwork"`
+	ProxyListenNetwork  string    `json:"proxyListenNetwork,omitzero"`
 	ProxyListenAddress  string    `json:"proxyListen"`
 	ProxyMode           string    `json:"proxyMode"`
 	ProxyPSK            []byte    `json:"proxyPSK"`
-	ProxyFwmark         int       `json:"proxyFwmark"`
-	ProxyTrafficClass   int       `json:"proxyTrafficClass"`
-	WgEndpointNetwork   string    `json:"wgEndpointNetwork"`
+	ProxyFwmark         int       `json:"proxyFwmark,omitzero"`
+	ProxyTrafficClass   int       `json:"proxyTrafficClass,omitzero"`
+	WgEndpointNetwork   string    `json:"wgEndpointNetwork,omitzero"`
 	WgEndpointAddress   conn.Addr `json:"wgEndpoint"`
-	WgConnListenAddress string    `json:"wgConnListenAddress"`
-	WgFwmark            int       `json:"wgFwmark"`
-	WgTrafficClass      int       `json:"wgTrafficClass"`
+	WgConnListenAddress string    `json:"wgConnListenAddress,omitzero"`
+	WgFwmark            int       `json:"wgFwmark,omitzero"`
+	WgTrafficClass      int       `json:"wgTrafficClass,omitzero"`
 	MTU                 int       `json:"mtu"`
 	PerfConfig
 }
