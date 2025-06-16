@@ -119,14 +119,11 @@ func TestAddrIsDomain(t *testing.T) {
 	}
 }
 
-func assertPanic(t *testing.T, f func()) {
+func mustPanic(t *testing.T, f func(), name string) {
 	t.Helper()
-	defer func() {
-		if r := recover(); r == nil {
-			t.Error("Expected panic, got none.")
-		}
-	}()
+	defer func() { _ = recover() }()
 	f()
+	t.Errorf("%s did not panic", name)
 }
 
 func TestAddrIP(t *testing.T) {
@@ -134,8 +131,8 @@ func TestAddrIP(t *testing.T) {
 		t.Errorf("%q.IP() = %q, want %q", addrIP, ip, addrIPAddr)
 	}
 
-	assertPanic(t, func() { addrZero.IP() })
-	assertPanic(t, func() { addrDomain.IP() })
+	mustPanic(t, func() { _ = addrZero.IP() }, "addrZero.IP()")
+	mustPanic(t, func() { _ = addrDomain.IP() }, "addrDomain.IP()")
 }
 
 func TestAddrDomain(t *testing.T) {
@@ -143,8 +140,8 @@ func TestAddrDomain(t *testing.T) {
 		t.Errorf("%q.Domain() = %q, want %q", addrDomain, domain, addrDomainHost)
 	}
 
-	assertPanic(t, func() { addrZero.Domain() })
-	assertPanic(t, func() { addrIP.Domain() })
+	mustPanic(t, func() { _ = addrZero.Domain() }, "addrZero.Domain()")
+	mustPanic(t, func() { _ = addrIP.Domain() }, "addrIP.Domain()")
 }
 
 func TestAddrPort(t *testing.T) {
@@ -167,8 +164,8 @@ func TestAddrIPPort(t *testing.T) {
 		t.Errorf("%q.IPPort() = %q, want %q", addrIP, ap, addrIPAddrPort)
 	}
 
-	assertPanic(t, func() { addrZero.IPPort() })
-	assertPanic(t, func() { addrDomain.IPPort() })
+	mustPanic(t, func() { _ = addrZero.IPPort() }, "addrZero.IPPort()")
+	mustPanic(t, func() { _ = addrDomain.IPPort() }, "addrDomain.IPPort()")
 }
 
 func TestAddrResolveIP(t *testing.T) {
@@ -190,7 +187,7 @@ func TestAddrResolveIP(t *testing.T) {
 		t.Errorf("%q.ResolveIP().IsValid() = false, want true", addrDomain)
 	}
 
-	assertPanic(t, func() { addrZero.ResolveIP(ctx, "ip") })
+	mustPanic(t, func() { _, _ = addrZero.ResolveIP(ctx, "ip") }, "addrZero.ResolveIP()")
 }
 
 func TestAddrResolveIPPort(t *testing.T) {
@@ -215,7 +212,7 @@ func TestAddrResolveIPPort(t *testing.T) {
 		t.Errorf("%q.ResolveIPPort() = %q, want port %d", addrDomain, ipPort, addrDomainPort)
 	}
 
-	assertPanic(t, func() { addrZero.ResolveIPPort(ctx, "ip") })
+	mustPanic(t, func() { _, _ = addrZero.ResolveIPPort(ctx, "ip") }, "addrZero.ResolveIPPort()")
 }
 
 func TestAddrHost(t *testing.T) {
@@ -227,7 +224,7 @@ func TestAddrHost(t *testing.T) {
 		t.Errorf("%q.Host() = %q, want %q", addrDomain, host, addrDomainHost)
 	}
 
-	assertPanic(t, func() { addrZero.Host() })
+	mustPanic(t, func() { _ = addrZero.Host() }, "addrZero.Host()")
 }
 
 func TestAddrString(t *testing.T) {
