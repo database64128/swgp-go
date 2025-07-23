@@ -130,7 +130,10 @@ func ResolveIP(ctx context.Context, network, host string) (netip.Addr, error) {
 	if err != nil {
 		return netip.Addr{}, err
 	}
-	return ips[0], nil
+	// FreeBSD always returns IPv4 addresses as IPv4-mapped IPv6 addresses, even
+	// if network is "ip4". Pure IPv4 and IPv6 addresses won't be affected by
+	// unmapping.
+	return ips[0].Unmap(), nil
 }
 
 // ResolveIP returns the IP address itself or the resolved IP address of the domain name.
