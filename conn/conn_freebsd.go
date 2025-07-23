@@ -14,9 +14,13 @@ func setFwmark(fd, fwmark int) error {
 }
 
 func (lso ListenerSocketOptions) buildSetFns() setFuncSlice {
+	// a buffer size(1 MiB) that fits nicely with the default limit of the sysctl
+	// option kern.ipc.maxsockbuf(2 MiB) in FreeBSD
+	const bufSize = 1 << 20
+
 	return setFuncSlice{}.
-		appendSetSendBufferSize(lso.SendBufferSize).
-		appendSetRecvBufferSize(lso.ReceiveBufferSize).
+		appendSetSendBufferSize(bufSize).
+		appendSetRecvBufferSize(bufSize).
 		appendSetFwmarkFunc(lso.Fwmark).
 		appendSetTrafficClassFunc(lso.TrafficClass).
 		appendSetPMTUDFunc(lso.PathMTUDiscovery)
