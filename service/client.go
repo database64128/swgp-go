@@ -386,6 +386,11 @@ func (c *client) recvFromWgConnGeneric(ctx context.Context, logger *tslog.Logger
 					return
 				}
 
+				// Work around https://github.com/golang/go/issues/74737.
+				if proxyAddrPort.Addr().Is4In6() {
+					proxyAddrPort = netip.AddrPortFrom(proxyAddrPort.Addr().Unmap(), proxyAddrPort.Port())
+				}
+
 				proxyConnListenNetwork := listenUDPNetworkForRemoteAddr(proxyAddrPort.Addr())
 
 				proxyConn, proxyConnInfo, err := c.proxyConnListenConfig.ListenUDP(ctx, proxyConnListenNetwork, c.proxyConnListenAddress)
