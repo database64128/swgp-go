@@ -63,10 +63,14 @@ func (lc *ListenConfig) ListenUDP(ctx context.Context, network, address string) 
 type ListenerSocketOptions struct {
 	// SendBufferSize sets the send buffer size of the listener.
 	//
+	// This is best-effort and does not return an error if the operation fails.
+	//
 	// Available on POSIX systems.
 	SendBufferSize int
 
 	// ReceiveBufferSize sets the receive buffer size of the listener.
+	//
+	// This is best-effort and does not return an error if the operation fails.
 	//
 	// Available on POSIX systems.
 	ReceiveBufferSize int
@@ -114,6 +118,9 @@ func (lso ListenerSocketOptions) ListenConfig() ListenConfig {
 //
 // We use the same value of 7 MiB as wireguard-go:
 // https://github.com/WireGuard/wireguard-go/blob/12269c2761734b15625017d8565745096325392f/conn/controlfns.go#L13-L18
+//
+// Some platforms will silently clamp the value to other maximums, such as Linux clamping to net.core.{r,w}mem_max.
+// Other platforms may return an error, which we simply ignore.
 const DefaultUDPSocketBufferSize = 7 << 20
 
 var (
