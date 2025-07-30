@@ -1,3 +1,5 @@
+//go:build darwin || solaris || zos
+
 package conn
 
 import (
@@ -9,38 +11,37 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const socketControlMessageBufferSize = unix.SizeofCmsghdr + alignedSizeofInet6Pktinfo
+const (
+	socketControlMessageBufferSize = alignedSizeofCmsghdr + max(alignedSizeofInet4Pktinfo, alignedSizeofInet6Pktinfo)
 
-const cmsgAlignTo = 4
-
-func cmsgAlign(n uint32) uint32 {
-	return (n + cmsgAlignTo - 1) & ^uint32(cmsgAlignTo-1)
-}
+	alignedSizeofInet4Pktinfo = (unix.SizeofInet4Pktinfo + cmsgAlignTo - 1) & ^(cmsgAlignTo - 1)
+	alignedSizeofInet6Pktinfo = (unix.SizeofInet6Pktinfo + cmsgAlignTo - 1) & ^(cmsgAlignTo - 1)
+)
 
 func parseSocketControlMessage(cmsg []byte) (m SocketControlMessage, err error) {
 	for len(cmsg) >= unix.SizeofCmsghdr {
 		cmsghdr := (*unix.Cmsghdr)(unsafe.Pointer(unsafe.SliceData(cmsg)))
-		msgSize := cmsgAlign(cmsghdr.Len)
-		if cmsghdr.Len < unix.SizeofCmsghdr || int(msgSize) > len(cmsg) {
+		msgSize := cmsgAlign(int(cmsghdr.Len))
+		if cmsghdr.Len < unix.SizeofCmsghdr || msgSize > len(cmsg) {
 			return m, fmt.Errorf("invalid control message length %d", cmsghdr.Len)
 		}
 
 		switch {
 		case cmsghdr.Level == unix.IPPROTO_IP && cmsghdr.Type == unix.IP_PKTINFO:
-			if len(cmsg) < unix.SizeofCmsghdr+unix.SizeofInet4Pktinfo {
+			if len(cmsg) < alignedSizeofCmsghdr+unix.SizeofInet4Pktinfo {
 				return m, fmt.Errorf("invalid IP_PKTINFO control message length %d", cmsghdr.Len)
 			}
 			var pktinfo unix.Inet4Pktinfo
-			_ = copy(unsafe.Slice((*byte)(unsafe.Pointer(&pktinfo)), unix.SizeofInet4Pktinfo), cmsg[unix.SizeofCmsghdr:])
+			_ = copy(unsafe.Slice((*byte)(unsafe.Pointer(&pktinfo)), unix.SizeofInet4Pktinfo), cmsg[alignedSizeofCmsghdr:])
 			m.PktinfoAddr = netip.AddrFrom4(pktinfo.Spec_dst)
 			m.PktinfoIfindex = pktinfo.Ifindex
 
 		case cmsghdr.Level == unix.IPPROTO_IPV6 && cmsghdr.Type == unix.IPV6_PKTINFO:
-			if len(cmsg) < unix.SizeofCmsghdr+unix.SizeofInet6Pktinfo {
+			if len(cmsg) < alignedSizeofCmsghdr+unix.SizeofInet6Pktinfo {
 				return m, fmt.Errorf("invalid IPV6_PKTINFO control message length %d", cmsghdr.Len)
 			}
 			var pktinfo unix.Inet6Pktinfo
-			_ = copy(unsafe.Slice((*byte)(unsafe.Pointer(&pktinfo)), unix.SizeofInet6Pktinfo), cmsg[unix.SizeofCmsghdr:])
+			_ = copy(unsafe.Slice((*byte)(unsafe.Pointer(&pktinfo)), unix.SizeofInet6Pktinfo), cmsg[alignedSizeofCmsghdr:])
 			m.PktinfoAddr = netip.AddrFrom16(pktinfo.Addr)
 			m.PktinfoIfindex = pktinfo.Ifindex
 		}
@@ -51,20 +52,15 @@ func parseSocketControlMessage(cmsg []byte) (m SocketControlMessage, err error) 
 	return m, nil
 }
 
-const (
-	alignedSizeofInet4Pktinfo = (unix.SizeofInet4Pktinfo + unix.SizeofPtr - 1) & ^(unix.SizeofPtr - 1)
-	alignedSizeofInet6Pktinfo = (unix.SizeofInet6Pktinfo + unix.SizeofPtr - 1) & ^(unix.SizeofPtr - 1)
-)
-
 func (m SocketControlMessage) appendTo(b []byte) []byte {
 	switch {
 	case m.PktinfoAddr.Is4():
 		bLen := len(b)
-		b = slices.Grow(b, unix.SizeofCmsghdr+alignedSizeofInet4Pktinfo)[:bLen+unix.SizeofCmsghdr+alignedSizeofInet4Pktinfo]
+		b = slices.Grow(b, alignedSizeofCmsghdr+alignedSizeofInet4Pktinfo)[:bLen+alignedSizeofCmsghdr+alignedSizeofInet4Pktinfo]
 		msgBuf := b[bLen:]
 		cmsghdr := (*unix.Cmsghdr)(unsafe.Pointer(unsafe.SliceData(msgBuf)))
 		*cmsghdr = unix.Cmsghdr{
-			Len:   unix.SizeofCmsghdr + unix.SizeofInet4Pktinfo,
+			Len:   alignedSizeofCmsghdr + unix.SizeofInet4Pktinfo,
 			Level: unix.IPPROTO_IP,
 			Type:  unix.IP_PKTINFO,
 		}
@@ -72,15 +68,15 @@ func (m SocketControlMessage) appendTo(b []byte) []byte {
 			Ifindex:  m.PktinfoIfindex,
 			Spec_dst: m.PktinfoAddr.As4(),
 		}
-		_ = copy(msgBuf[unix.SizeofCmsghdr:], unsafe.Slice((*byte)(unsafe.Pointer(&pktinfo)), unix.SizeofInet4Pktinfo))
+		_ = copy(msgBuf[alignedSizeofCmsghdr:], unsafe.Slice((*byte)(unsafe.Pointer(&pktinfo)), unix.SizeofInet4Pktinfo))
 
 	case m.PktinfoAddr.Is6():
 		bLen := len(b)
-		b = slices.Grow(b, unix.SizeofCmsghdr+alignedSizeofInet6Pktinfo)[:bLen+unix.SizeofCmsghdr+alignedSizeofInet6Pktinfo]
+		b = slices.Grow(b, alignedSizeofCmsghdr+alignedSizeofInet6Pktinfo)[:bLen+alignedSizeofCmsghdr+alignedSizeofInet6Pktinfo]
 		msgBuf := b[bLen:]
 		cmsghdr := (*unix.Cmsghdr)(unsafe.Pointer(unsafe.SliceData(msgBuf)))
 		*cmsghdr = unix.Cmsghdr{
-			Len:   unix.SizeofCmsghdr + unix.SizeofInet6Pktinfo,
+			Len:   alignedSizeofCmsghdr + unix.SizeofInet6Pktinfo,
 			Level: unix.IPPROTO_IPV6,
 			Type:  unix.IPV6_PKTINFO,
 		}
@@ -88,7 +84,7 @@ func (m SocketControlMessage) appendTo(b []byte) []byte {
 			Addr:    m.PktinfoAddr.As16(),
 			Ifindex: m.PktinfoIfindex,
 		}
-		_ = copy(msgBuf[unix.SizeofCmsghdr:], unsafe.Slice((*byte)(unsafe.Pointer(&pktinfo)), unix.SizeofInet6Pktinfo))
+		_ = copy(msgBuf[alignedSizeofCmsghdr:], unsafe.Slice((*byte)(unsafe.Pointer(&pktinfo)), unix.SizeofInet6Pktinfo))
 	}
 
 	return b

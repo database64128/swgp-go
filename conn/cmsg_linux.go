@@ -9,17 +9,26 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const socketControlMessageBufferSize = unix.SizeofCmsghdr + alignedSizeofInet6Pktinfo +
-	unix.SizeofCmsghdr + alignedSizeofGROSegmentSize
+// Linux is the only platform where it asserts that:
+//
+//	sizeof(struct cmsghdr) == CMSG_ALIGN(sizeof(struct cmsghdr))
+//
+// Kernel code only ever uses sizeof(struct cmsghdr) directly.
+//
+// Here we follow that convention and use [unix.SizeofCmsghdr] directly.
 
 const (
+	socketControlMessageBufferSize = unix.SizeofCmsghdr + max(alignedSizeofInet4Pktinfo, alignedSizeofInet6Pktinfo) +
+		unix.SizeofCmsghdr + max(alignedSizeofGSOSegmentSize, alignedSizeofGROSegmentSize)
+
+	alignedSizeofInet4Pktinfo   = (unix.SizeofInet4Pktinfo + cmsgAlignTo - 1) & ^(cmsgAlignTo - 1)
+	alignedSizeofInet6Pktinfo   = (unix.SizeofInet6Pktinfo + cmsgAlignTo - 1) & ^(cmsgAlignTo - 1)
+	alignedSizeofGSOSegmentSize = (sizeofGSOSegmentSize + cmsgAlignTo - 1) & ^(cmsgAlignTo - 1)
+	alignedSizeofGROSegmentSize = (sizeofGROSegmentSize + cmsgAlignTo - 1) & ^(cmsgAlignTo - 1)
+
 	sizeofGSOSegmentSize = 2 // int(unsafe.Sizeof(uint16(0)))
 	sizeofGROSegmentSize = 4 // int(unsafe.Sizeof(int32(0)))
 )
-
-func cmsgAlign(n int) int {
-	return (n + unix.SizeofPtr - 1) & ^(unix.SizeofPtr - 1)
-}
 
 func parseSocketControlMessage(cmsg []byte) (m SocketControlMessage, err error) {
 	for len(cmsg) >= unix.SizeofCmsghdr {
@@ -60,13 +69,6 @@ func parseSocketControlMessage(cmsg []byte) (m SocketControlMessage, err error) 
 
 	return m, nil
 }
-
-const (
-	alignedSizeofInet4Pktinfo   = (unix.SizeofInet4Pktinfo + unix.SizeofPtr - 1) & ^(unix.SizeofPtr - 1)
-	alignedSizeofInet6Pktinfo   = (unix.SizeofInet6Pktinfo + unix.SizeofPtr - 1) & ^(unix.SizeofPtr - 1)
-	alignedSizeofGSOSegmentSize = (sizeofGSOSegmentSize + unix.SizeofPtr - 1) & ^(unix.SizeofPtr - 1)
-	alignedSizeofGROSegmentSize = (sizeofGROSegmentSize + unix.SizeofPtr - 1) & ^(unix.SizeofPtr - 1)
-)
 
 func (m SocketControlMessage) appendTo(b []byte) []byte {
 	switch {

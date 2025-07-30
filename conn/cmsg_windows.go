@@ -9,21 +9,23 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-const socketControlMessageBufferSize = sizeofCmsghdr + alignedSizeofInet6Pktinfo +
-	sizeofCmsghdr + alignedSizeofCoalescedInfo
-
 const (
-	sizeofPtr           = int(unsafe.Sizeof(uintptr(0)))
+	socketControlMessageBufferSize = alignedSizeofCmsghdr + max(alignedSizeofInet4Pktinfo, alignedSizeofInet6Pktinfo) +
+		alignedSizeofCmsghdr + max(alignedSizeofSendMsgSize, alignedSizeofCoalescedInfo)
+
+	alignedSizeofCmsghdr       = (sizeofCmsghdr + cmsgAlignTo - 1) & ^(cmsgAlignTo - 1)
+	alignedSizeofInet4Pktinfo  = (sizeofInet4Pktinfo + cmsgAlignTo - 1) & ^(cmsgAlignTo - 1)
+	alignedSizeofInet6Pktinfo  = (sizeofInet6Pktinfo + cmsgAlignTo - 1) & ^(cmsgAlignTo - 1)
+	alignedSizeofSendMsgSize   = (sizeofSendMsgSize + cmsgAlignTo - 1) & ^(cmsgAlignTo - 1)
+	alignedSizeofCoalescedInfo = (sizeofCoalescedInfo + cmsgAlignTo - 1) & ^(cmsgAlignTo - 1)
+
+	cmsgAlignTo         = int(unsafe.Sizeof(uintptr(0)))
 	sizeofCmsghdr       = int(unsafe.Sizeof(windows.WSACMSGHDR{}))
 	sizeofInet4Pktinfo  = int(unsafe.Sizeof(windows.IN_PKTINFO{}))
 	sizeofInet6Pktinfo  = int(unsafe.Sizeof(windows.IN6_PKTINFO{}))
 	sizeofSendMsgSize   = int(unsafe.Sizeof(uint32(0)))
 	sizeofCoalescedInfo = int(unsafe.Sizeof(uint32(0)))
 )
-
-func cmsgAlign(n int) int {
-	return (n + sizeofPtr - 1) & ^(sizeofPtr - 1)
-}
 
 func parseSocketControlMessage(cmsg []byte) (m SocketControlMessage, err error) {
 	for len(cmsg) >= sizeofCmsghdr {
@@ -36,28 +38,28 @@ func parseSocketControlMessage(cmsg []byte) (m SocketControlMessage, err error) 
 
 		switch {
 		case cmsghdr.Level == windows.IPPROTO_IP && cmsghdr.Type == windows.IP_PKTINFO:
-			if len(cmsg) < sizeofCmsghdr+sizeofInet4Pktinfo {
+			if len(cmsg) < alignedSizeofCmsghdr+sizeofInet4Pktinfo {
 				return m, fmt.Errorf("invalid IP_PKTINFO control message length %d", cmsghdr.Len)
 			}
 			var pktinfo windows.IN_PKTINFO
-			_ = copy(unsafe.Slice((*byte)(unsafe.Pointer(&pktinfo)), sizeofInet4Pktinfo), cmsg[sizeofCmsghdr:])
+			_ = copy(unsafe.Slice((*byte)(unsafe.Pointer(&pktinfo)), sizeofInet4Pktinfo), cmsg[alignedSizeofCmsghdr:])
 			m.PktinfoAddr = netip.AddrFrom4(pktinfo.Addr)
 			m.PktinfoIfindex = pktinfo.Ifindex
 
 		case cmsghdr.Level == windows.IPPROTO_IPV6 && cmsghdr.Type == windows.IPV6_PKTINFO:
-			if len(cmsg) < sizeofCmsghdr+sizeofInet6Pktinfo {
+			if len(cmsg) < alignedSizeofCmsghdr+sizeofInet6Pktinfo {
 				return m, fmt.Errorf("invalid IPV6_PKTINFO control message length %d", cmsghdr.Len)
 			}
 			var pktinfo windows.IN6_PKTINFO
-			_ = copy(unsafe.Slice((*byte)(unsafe.Pointer(&pktinfo)), sizeofInet6Pktinfo), cmsg[sizeofCmsghdr:])
+			_ = copy(unsafe.Slice((*byte)(unsafe.Pointer(&pktinfo)), sizeofInet6Pktinfo), cmsg[alignedSizeofCmsghdr:])
 			m.PktinfoAddr = netip.AddrFrom16(pktinfo.Addr)
 			m.PktinfoIfindex = pktinfo.Ifindex
 
 		case cmsghdr.Level == windows.IPPROTO_UDP && cmsghdr.Type == windows.UDP_COALESCED_INFO:
-			if len(cmsg) < sizeofCmsghdr+sizeofCoalescedInfo {
+			if len(cmsg) < alignedSizeofCmsghdr+sizeofCoalescedInfo {
 				return m, fmt.Errorf("invalid UDP_COALESCED_INFO control message length %d", cmsghdr.Len)
 			}
-			_ = copy(unsafe.Slice((*byte)(unsafe.Pointer(&m.SegmentSize)), sizeofCoalescedInfo), cmsg[sizeofCmsghdr:])
+			_ = copy(unsafe.Slice((*byte)(unsafe.Pointer(&m.SegmentSize)), sizeofCoalescedInfo), cmsg[alignedSizeofCmsghdr:])
 		}
 
 		cmsg = cmsg[msgSize:]
@@ -66,22 +68,15 @@ func parseSocketControlMessage(cmsg []byte) (m SocketControlMessage, err error) 
 	return m, nil
 }
 
-const (
-	alignedSizeofInet4Pktinfo  = (sizeofInet4Pktinfo + sizeofPtr - 1) & ^(sizeofPtr - 1)
-	alignedSizeofInet6Pktinfo  = (sizeofInet6Pktinfo + sizeofPtr - 1) & ^(sizeofPtr - 1)
-	alignedSizeofSendMsgSize   = (sizeofSendMsgSize + sizeofPtr - 1) & ^(sizeofPtr - 1)
-	alignedSizeofCoalescedInfo = (sizeofCoalescedInfo + sizeofPtr - 1) & ^(sizeofPtr - 1)
-)
-
 func (m SocketControlMessage) appendTo(b []byte) []byte {
 	switch {
 	case m.PktinfoAddr.Is4():
 		bLen := len(b)
-		b = slices.Grow(b, sizeofCmsghdr+alignedSizeofInet4Pktinfo)[:bLen+sizeofCmsghdr+alignedSizeofInet4Pktinfo]
+		b = slices.Grow(b, alignedSizeofCmsghdr+alignedSizeofInet4Pktinfo)[:bLen+alignedSizeofCmsghdr+alignedSizeofInet4Pktinfo]
 		msgBuf := b[bLen:]
 		cmsghdr := (*windows.WSACMSGHDR)(unsafe.Pointer(unsafe.SliceData(msgBuf)))
 		*cmsghdr = windows.WSACMSGHDR{
-			Len:   uintptr(sizeofCmsghdr + sizeofInet4Pktinfo),
+			Len:   uintptr(alignedSizeofCmsghdr + sizeofInet4Pktinfo),
 			Level: windows.IPPROTO_IP,
 			Type:  windows.IP_PKTINFO,
 		}
@@ -89,15 +84,15 @@ func (m SocketControlMessage) appendTo(b []byte) []byte {
 			Addr:    m.PktinfoAddr.As4(),
 			Ifindex: m.PktinfoIfindex,
 		}
-		_ = copy(msgBuf[sizeofCmsghdr:], unsafe.Slice((*byte)(unsafe.Pointer(&pktinfo)), sizeofInet4Pktinfo))
+		_ = copy(msgBuf[alignedSizeofCmsghdr:], unsafe.Slice((*byte)(unsafe.Pointer(&pktinfo)), sizeofInet4Pktinfo))
 
 	case m.PktinfoAddr.Is6():
 		bLen := len(b)
-		b = slices.Grow(b, sizeofCmsghdr+alignedSizeofInet6Pktinfo)[:bLen+sizeofCmsghdr+alignedSizeofInet6Pktinfo]
+		b = slices.Grow(b, alignedSizeofCmsghdr+alignedSizeofInet6Pktinfo)[:bLen+alignedSizeofCmsghdr+alignedSizeofInet6Pktinfo]
 		msgBuf := b[bLen:]
 		cmsghdr := (*windows.WSACMSGHDR)(unsafe.Pointer(unsafe.SliceData(msgBuf)))
 		*cmsghdr = windows.WSACMSGHDR{
-			Len:   uintptr(sizeofCmsghdr + sizeofInet6Pktinfo),
+			Len:   uintptr(alignedSizeofCmsghdr + sizeofInet6Pktinfo),
 			Level: windows.IPPROTO_IPV6,
 			Type:  windows.IPV6_PKTINFO,
 		}
@@ -105,20 +100,20 @@ func (m SocketControlMessage) appendTo(b []byte) []byte {
 			Addr:    m.PktinfoAddr.As16(),
 			Ifindex: m.PktinfoIfindex,
 		}
-		_ = copy(msgBuf[sizeofCmsghdr:], unsafe.Slice((*byte)(unsafe.Pointer(&pktinfo)), sizeofInet6Pktinfo))
+		_ = copy(msgBuf[alignedSizeofCmsghdr:], unsafe.Slice((*byte)(unsafe.Pointer(&pktinfo)), sizeofInet6Pktinfo))
 	}
 
 	if m.SegmentSize > 0 {
 		bLen := len(b)
-		b = slices.Grow(b, sizeofCmsghdr+alignedSizeofSendMsgSize)[:bLen+sizeofCmsghdr+alignedSizeofSendMsgSize]
+		b = slices.Grow(b, alignedSizeofCmsghdr+alignedSizeofSendMsgSize)[:bLen+alignedSizeofCmsghdr+alignedSizeofSendMsgSize]
 		msgBuf := b[bLen:]
 		cmsghdr := (*windows.WSACMSGHDR)(unsafe.Pointer(unsafe.SliceData(msgBuf)))
 		*cmsghdr = windows.WSACMSGHDR{
-			Len:   uintptr(sizeofCmsghdr + sizeofSendMsgSize),
+			Len:   uintptr(alignedSizeofCmsghdr + sizeofSendMsgSize),
 			Level: windows.IPPROTO_UDP,
 			Type:  windows.UDP_SEND_MSG_SIZE,
 		}
-		_ = copy(msgBuf[sizeofCmsghdr:], unsafe.Slice((*byte)(unsafe.Pointer(&m.SegmentSize)), sizeofSendMsgSize))
+		_ = copy(msgBuf[alignedSizeofCmsghdr:], unsafe.Slice((*byte)(unsafe.Pointer(&m.SegmentSize)), sizeofSendMsgSize))
 	}
 
 	return b
