@@ -126,10 +126,12 @@ const DefaultUDPSocketBufferSize = 7 << 20
 var (
 	// DefaultUDPServerSocketOptions is the default [ListenerSocketOptions] for UDP servers.
 	DefaultUDPServerSocketOptions = ListenerSocketOptions{
-		SendBufferSize:    DefaultUDPSocketBufferSize,
-		ReceiveBufferSize: DefaultUDPSocketBufferSize,
-		PathMTUDiscovery:  true,
-		ReceivePacketInfo: true,
+		SendBufferSize:           DefaultUDPSocketBufferSize,
+		ReceiveBufferSize:        DefaultUDPSocketBufferSize,
+		PathMTUDiscovery:         true,
+		ProbeUDPGSOSupport:       true,
+		UDPGenericReceiveOffload: true,
+		ReceivePacketInfo:        true,
 	}
 
 	// DefaultUDPServerListenConfig is the default [ListenConfig] for UDP servers.
@@ -137,9 +139,11 @@ var (
 
 	// DefaultUDPClientSocketOptions is the default [ListenerSocketOptions] for UDP clients.
 	DefaultUDPClientSocketOptions = ListenerSocketOptions{
-		SendBufferSize:    DefaultUDPSocketBufferSize,
-		ReceiveBufferSize: DefaultUDPSocketBufferSize,
-		PathMTUDiscovery:  true,
+		SendBufferSize:           DefaultUDPSocketBufferSize,
+		ReceiveBufferSize:        DefaultUDPSocketBufferSize,
+		PathMTUDiscovery:         true,
+		ProbeUDPGSOSupport:       true,
+		UDPGenericReceiveOffload: true,
 	}
 
 	// DefaultUDPClientListenConfig is the default [ListenConfig] for UDP clients.
