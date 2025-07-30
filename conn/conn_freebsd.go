@@ -19,5 +19,6 @@ func (lso ListenerSocketOptions) buildSetFns() setFuncSlice {
 		appendSetRecvBufferSize(lso.ReceiveBufferSize).
 		appendSetFwmarkFunc(lso.Fwmark).
 		appendSetTrafficClassFunc(lso.TrafficClass).
-		appendSetPMTUDFunc(lso.PathMTUDiscovery)
+		appendSetPMTUDFunc(lso.PathMTUDiscovery).
+		appendSetRecvPktinfoFunc(lso.ReceivePacketInfo)
 }

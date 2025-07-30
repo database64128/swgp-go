@@ -103,7 +103,7 @@ type ListenerSocketOptions struct {
 
 	// ReceivePacketInfo enables the reception of packet information control messages on the listener.
 	//
-	// Available on Linux, macOS, and Windows.
+	// Available on POSIX systems.
 	ReceivePacketInfo bool
 }
 
