@@ -5,3 +5,7 @@ package conn
 func (lso ListenerSocketOptions) buildSetFns() setFuncSlice {
 	return setFuncSlice{}
 }
+
+func (dso DialerSocketOptions) buildSetFns() setFuncSlice {
+	return setFuncSlice{}
+}

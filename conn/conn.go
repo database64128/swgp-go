@@ -23,6 +23,24 @@ type setFunc = func(fd int, network string, info *SocketInfo) error
 
 type setFuncSlice []setFunc
 
+func (fns setFuncSlice) controlContextFunc(info *SocketInfo) func(ctx context.Context, network, address string, c syscall.RawConn) error {
+	if len(fns) == 0 {
+		return nil
+	}
+	return func(ctx context.Context, network, address string, c syscall.RawConn) (err error) {
+		if cerr := c.Control(func(fd uintptr) {
+			for _, fn := range fns {
+				if err = fn(int(fd), network, info); err != nil {
+					return
+				}
+			}
+		}); cerr != nil {
+			return cerr
+		}
+		return
+	}
+}
+
 func (fns setFuncSlice) controlFunc(info *SocketInfo) func(network, address string, c syscall.RawConn) error {
 	if len(fns) == 0 {
 		return nil
@@ -150,6 +168,88 @@ var (
 	DefaultUDPClientListenConfig = DefaultUDPClientSocketOptions.ListenConfig()
 )
 
+// Dialer is like [net.Dialer] but provides a subjectively nicer API.
+type Dialer struct {
+	fns setFuncSlice
+}
+
+// DialUDP wraps [net.Dialer.DialContext] and returns a [*net.UDPConn] directly.
+func (d *Dialer) DialUDP(ctx context.Context, network, address string) (uc *net.UDPConn, info SocketInfo, err error) {
+	info.MaxUDPGSOSegments = 1
+	nd := net.Dialer{
+		ControlContext: d.fns.controlContextFunc(&info),
+	}
+	c, err := nd.DialContext(ctx, network, address)
+	if err != nil {
+		return nil, info, err
+	}
+	return c.(*net.UDPConn), info, nil
+}
+
+// DialerSocketOptions contains dialer-specific socket options.
+type DialerSocketOptions struct {
+	// SendBufferSize sets the send buffer size of the dialer.
+	//
+	// This is best-effort and does not return an error if the operation fails.
+	//
+	// Available on POSIX systems.
+	SendBufferSize int
+
+	// ReceiveBufferSize sets the receive buffer size of the dialer.
+	//
+	// This is best-effort and does not return an error if the operation fails.
+	//
+	// Available on POSIX systems.
+	ReceiveBufferSize int
+
+	// Fwmark sets the dialer's fwmark on Linux, or user cookie on FreeBSD.
+	//
+	// Available on Linux and FreeBSD.
+	Fwmark int
+
+	// TrafficClass sets the traffic class of the dialer.
+	//
+	// Available on most platforms except Windows.
+	TrafficClass int
+
+	// PathMTUDiscovery enables Path MTU Discovery on the dialer.
+	//
+	// Available on Linux, macOS, FreeBSD, and Windows.
+	PathMTUDiscovery bool
+
+	// ProbeUDPGSOSupport enables best-effort probing of
+	// UDP Generic Segmentation Offload (GSO) support on the dialer.
+	//
+	// Available on Linux and Windows.
+	ProbeUDPGSOSupport bool
+
+	// UDPGenericReceiveOffload enables UDP Generic Receive Offload (GRO) on the dialer.
+	//
+	// Available on Linux and Windows.
+	UDPGenericReceiveOffload bool
+}
+
+// Dialer returns a [Dialer] that sets the socket options.
+func (dso DialerSocketOptions) Dialer() Dialer {
+	return Dialer{
+		fns: dso.buildSetFns(),
+	}
+}
+
+var (
+	// DefaultUDPDialerSocketOptions is the default [DialerSocketOptions] for UDP clients.
+	DefaultUDPDialerSocketOptions = DialerSocketOptions{
+		SendBufferSize:           DefaultUDPSocketBufferSize,
+		ReceiveBufferSize:        DefaultUDPSocketBufferSize,
+		PathMTUDiscovery:         true,
+		ProbeUDPGSOSupport:       true,
+		UDPGenericReceiveOffload: true,
+	}
+
+	// DefaultUDPDialer is the default [Dialer] for UDP clients.
+	DefaultUDPDialer = DefaultUDPDialerSocketOptions.Dialer()
+)
+
 // ListenConfigCache is a map of [ListenerSocketOptions] to [ListenConfig].
 type ListenConfigCache map[ListenerSocketOptions]ListenConfig
 
@@ -169,5 +269,26 @@ func (cache ListenConfigCache) Get(lso ListenerSocketOptions) (lc ListenConfig) 
 	}
 	lc = lso.ListenConfig()
 	cache[lso] = lc
+	return
+}
+
+// DialerCache is a map of [DialerSocketOptions] to [Dialer].
+type DialerCache map[DialerSocketOptions]Dialer
+
+// NewDialerCache creates a new cache for [Dialer] with a few default entries.
+func NewDialerCache() DialerCache {
+	return DialerCache{
+		DefaultUDPDialerSocketOptions: DefaultUDPDialer,
+	}
+}
+
+// Get returns a [Dialer] for the given [DialerSocketOptions].
+func (cache DialerCache) Get(dso DialerSocketOptions) (d Dialer) {
+	d, ok := cache[dso]
+	if ok {
+		return
+	}
+	d = dso.Dialer()
+	cache[dso] = d
 	return
 }

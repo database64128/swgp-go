@@ -6,3 +6,10 @@ func (lso ListenerSocketOptions) buildSetFns() setFuncSlice {
 		appendSetRecvBufferSize(lso.ReceiveBufferSize).
 		appendSetTrafficClassFunc(lso.TrafficClass)
 }
+
+func (dso DialerSocketOptions) buildSetFns() setFuncSlice {
+	return setFuncSlice{}.
+		appendSetSendBufferSize(dso.SendBufferSize).
+		appendSetRecvBufferSize(dso.ReceiveBufferSize).
+		appendSetTrafficClassFunc(dso.TrafficClass)
+}
