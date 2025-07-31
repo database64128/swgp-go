@@ -16,61 +16,193 @@ import (
 	"github.com/database64128/swgp-go/tslogtest"
 )
 
-var cases = []struct {
-	name         string
-	serverConfig ServerConfig
-	clientConfig ClientConfig
+var proxyModeCases = [...]struct {
+	name        string
+	proxyMode   string
+	generatePSK func() []byte
 }{
 	{
-		name: "ZeroOverhead",
-		serverConfig: ServerConfig{
-			Name:               "wg0",
-			ProxyListenAddress: "[::1]:",
-			ProxyMode:          "zero-overhead",
-			WgEndpointAddress:  conn.AddrFromIPAndPort(netip.IPv6Loopback(), 0),
-			MTU:                1500,
-		},
-		clientConfig: ClientConfig{
-			Name:                 "wg0",
-			WgListenAddress:      "[::1]:",
-			ProxyEndpointAddress: conn.AddrFromIPAndPort(netip.IPv6Loopback(), 0),
-			ProxyMode:            "zero-overhead",
-			MTU:                  1500,
+		name:      "ZeroOverhead",
+		proxyMode: "zero-overhead",
+		generatePSK: func() []byte {
+			psk := make([]byte, 32)
+			rand.Read(psk)
+			return psk
 		},
 	},
 	{
-		name: "Paranoid",
-		serverConfig: ServerConfig{
-			Name:               "wg0",
-			ProxyListenAddress: "[::1]:",
-			ProxyMode:          "paranoid",
-			WgEndpointAddress:  conn.AddrFromIPAndPort(netip.IPv6Loopback(), 0),
-			MTU:                1500,
-		},
-		clientConfig: ClientConfig{
-			Name:                 "wg0",
-			WgListenAddress:      "[::1]:",
-			ProxyEndpointAddress: conn.AddrFromIPAndPort(netip.IPv6Loopback(), 0),
-			ProxyMode:            "paranoid",
-			MTU:                  1500,
+		name:      "Paranoid",
+		proxyMode: "paranoid",
+		generatePSK: func() []byte {
+			psk := make([]byte, 32)
+			rand.Read(psk)
+			return psk
 		},
 	},
 }
 
-func testClientServerConn(
-	t *testing.T,
-	logger *tslog.Logger,
-	serverConfig ServerConfig,
-	clientConfig ClientConfig,
-	f func(t *testing.T, clientConn, serverConn *net.UDPConn),
-) {
-	psk := make([]byte, 32)
-	rand.Read(psk)
-	serverConfig.ProxyPSK = psk
-	clientConfig.ProxyPSK = psk
+var addressFamilyCases = [...]struct {
+	name                string
+	listenNetwork       string
+	listenAddress       string
+	endpointNetwork     string
+	connectLocalAddress conn.Addr
+}{
+	{
+		name:            "IPv4Implicit",
+		listenNetwork:   "udp",
+		listenAddress:   "127.0.0.1:",
+		endpointNetwork: "ip",
+	},
+	{
+		name:            "IPv6Implicit",
+		listenNetwork:   "udp",
+		listenAddress:   "[::1]:",
+		endpointNetwork: "ip",
+	},
+	{
+		name:                "IPv4Explicit",
+		listenNetwork:       "udp4",
+		listenAddress:       "127.0.0.1:",
+		endpointNetwork:     "ip4",
+		connectLocalAddress: conn.AddrFromIPAndPort(netip.AddrFrom4([4]byte{127, 0, 0, 1}), 0),
+	},
+	{
+		name:                "IPv6Explicit",
+		listenNetwork:       "udp6",
+		listenAddress:       "[::1]:",
+		endpointNetwork:     "ip6",
+		connectLocalAddress: conn.AddrFromIPAndPort(netip.IPv6Loopback(), 0),
+	},
+	{
+		name:                "localhost4",
+		listenNetwork:       "udp4",
+		listenAddress:       "localhost:",
+		endpointNetwork:     "ip4",
+		connectLocalAddress: conn.MustAddrFromDomainPort("localhost", 0),
+	},
+	{
+		name:                "localhost6",
+		listenNetwork:       "udp6",
+		listenAddress:       "localhost:",
+		endpointNetwork:     "ip6",
+		connectLocalAddress: conn.MustAddrFromDomainPort("localhost", 0),
+	},
+}
 
-	listenConfigCache := conn.NewListenConfigCache()
+var mtuCases = [...]struct {
+	name string
+	mtu  int
+}{
+	{
+		name: "1492",
+		mtu:  1492,
+	},
+	{
+		name: "1500",
+		mtu:  1500,
+	},
+	{
+		name: "9000",
+		mtu:  9000,
+	},
+	{
+		name: "65535",
+		mtu:  65535,
+	},
+}
+
+func TestClientServer(t *testing.T) {
+	logCfg := tslogtest.Config{Level: slog.LevelDebug}
+	logger := logCfg.NewTestLogger(t)
+
+	for _, proxyModeCase := range proxyModeCases {
+		t.Run(proxyModeCase.name, func(t *testing.T) {
+			t.Parallel()
+			for _, afCase := range addressFamilyCases {
+				t.Run(afCase.name, func(t *testing.T) {
+					t.Parallel()
+					for _, mtuCase := range mtuCases {
+						t.Run(mtuCase.name, func(t *testing.T) {
+							t.Parallel()
+
+							t.Run("Handshake", func(t *testing.T) {
+								testClientServerConn(
+									t,
+									logger,
+									proxyModeCase.proxyMode,
+									proxyModeCase.generatePSK,
+									afCase.listenNetwork,
+									afCase.listenAddress,
+									afCase.endpointNetwork,
+									afCase.connectLocalAddress,
+									mtuCase.mtu,
+									func(clientConn, serverConn *net.UDPConn) {
+										testClientServerHandshake(t, clientConn, serverConn)
+									},
+								)
+							})
+
+							t.Run("DataPackets", func(t *testing.T) {
+								testClientServerConn(
+									t,
+									logger,
+									proxyModeCase.proxyMode,
+									proxyModeCase.generatePSK,
+									afCase.listenNetwork,
+									afCase.listenAddress,
+									afCase.endpointNetwork,
+									afCase.connectLocalAddress,
+									mtuCase.mtu,
+									func(clientConn, serverConn *net.UDPConn) {
+										testClientServerDataPackets(t, clientConn, serverConn)
+									},
+								)
+							})
+						})
+					}
+				})
+			}
+		})
+	}
+}
+
+func testClientServerConn(
+	t testing.TB,
+	logger *tslog.Logger,
+	proxyMode string,
+	generatePSK func() []byte,
+	listenNetwork string,
+	listenAddress string,
+	endpointNetwork string,
+	connectLocalAddress conn.Addr,
+	mtu int,
+	f func(clientConn, serverConn *net.UDPConn),
+) {
 	ctx := t.Context()
+	listenConfigCache := conn.NewListenConfigCache()
+
+	serverConn, _, err := conn.DefaultUDPServerListenConfig.ListenUDP(ctx, listenNetwork, listenAddress)
+	if err != nil {
+		t.Fatalf("Failed to listen server connection: %v", err)
+	}
+	defer serverConn.Close()
+
+	serverWgAddrPort := serverConn.LocalAddr().(*net.UDPAddr).AddrPort()
+
+	psk := generatePSK()
+	connectListenAddress := connectLocalAddress.String()
+	serverConfig := ServerConfig{
+		Name:                "wg0",
+		ProxyListenNetwork:  listenNetwork,
+		ProxyListenAddress:  listenAddress,
+		ProxyMode:           proxyMode,
+		ProxyPSK:            psk,
+		WgEndpointNetwork:   endpointNetwork,
+		WgEndpointAddress:   conn.AddrFromIPPort(serverWgAddrPort),
+		WgConnListenAddress: connectListenAddress,
+		MTU:                 mtu,
+	}
 
 	s, err := serverConfig.Server(logger, listenConfigCache)
 	if err != nil {
@@ -82,7 +214,18 @@ func testClientServerConn(
 	defer s.Stop()
 
 	proxyAddrPort := s.proxyConn.LocalAddr().(*net.UDPAddr).AddrPort()
-	clientConfig.ProxyEndpointAddress = conn.AddrFromIPPort(proxyAddrPort)
+
+	clientConfig := ClientConfig{
+		Name:                   "wg0",
+		WgListenNetwork:        listenNetwork,
+		WgListenAddress:        listenAddress,
+		ProxyEndpointNetwork:   endpointNetwork,
+		ProxyEndpointAddress:   conn.AddrFromIPPort(proxyAddrPort),
+		ProxyConnListenAddress: connectListenAddress,
+		ProxyMode:              proxyMode,
+		ProxyPSK:               psk,
+		MTU:                    mtu,
+	}
 
 	c, err := clientConfig.Client(logger, listenConfigCache)
 	if err != nil {
@@ -93,20 +236,11 @@ func testClientServerConn(
 	}
 	defer c.Stop()
 
-	clientConn, err := net.Dial("udp", c.wgListenAddress)
+	clientConn, _, err := conn.DefaultUDPDialer.DialUDP(ctx, listenNetwork, c.wgListenAddress)
 	if err != nil {
 		t.Fatalf("Failed to dial client connection: %v", err)
 	}
 	defer clientConn.Close()
-
-	serverConn, _, err := conn.DefaultUDPClientListenConfig.ListenUDP(ctx, "udp", "[::1]:")
-	if err != nil {
-		t.Fatalf("Failed to listen server connection: %v", err)
-	}
-	defer serverConn.Close()
-
-	serverWgAddrPort := serverConn.LocalAddr().(*net.UDPAddr).AddrPort()
-	s.wgAddr = conn.AddrFromIPPort(serverWgAddrPort)
 
 	// Set read/write deadlines to make the test fail fast.
 	deadline := time.Now().Add(3 * time.Second)
@@ -117,7 +251,7 @@ func testClientServerConn(
 		t.Fatalf("Failed to set server connection deadline: %v", err)
 	}
 
-	f(t, clientConn.(*net.UDPConn), serverConn)
+	f(clientConn, serverConn)
 }
 
 func testClientServerHandshake(t *testing.T, clientConn, serverConn *net.UDPConn) {
@@ -170,17 +304,6 @@ func testClientServerHandshake(t *testing.T, clientConn, serverConn *net.UDPConn
 	}
 }
 
-func TestClientServerHandshake(t *testing.T) {
-	logCfg := tslogtest.Config{Level: slog.LevelDebug}
-	logger := logCfg.NewTestLogger(t)
-
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			testClientServerConn(t, logger, c.serverConfig, c.clientConfig, testClientServerHandshake)
-		})
-	}
-}
-
 func testClientServerDataPackets(t *testing.T, clientConn, serverConn *net.UDPConn) {
 	// Make packets.
 	smallDataPacket := make([]byte, 1024)
@@ -222,16 +345,5 @@ func testClientServerDataPackets(t *testing.T, clientConn, serverConn *net.UDPCo
 	// Client verifies small data packet.
 	if !bytes.Equal(receivedSmallDataPacket, expectedSmallDataPacket) {
 		t.Errorf("receivedSmallDataPacket = %v, want %v", receivedSmallDataPacket, expectedSmallDataPacket)
-	}
-}
-
-func TestClientServerDataPackets(t *testing.T) {
-	logCfg := tslogtest.Config{Level: slog.LevelDebug}
-	logger := logCfg.NewTestLogger(t)
-
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			testClientServerConn(t, logger, c.serverConfig, c.clientConfig, testClientServerDataPackets)
-		})
 	}
 }
