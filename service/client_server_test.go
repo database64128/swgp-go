@@ -112,6 +112,23 @@ var mtuCases = [...]struct {
 	},
 }
 
+var loMTU = firstLoopbackInterfaceMTU()
+
+func firstLoopbackInterfaceMTU() int {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return 0
+	}
+
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagLoopback != 0 && iface.Flags&net.FlagUp != 0 {
+			return iface.MTU
+		}
+	}
+
+	return 0
+}
+
 func TestClientServer(t *testing.T) {
 	logCfg := tslogtest.Config{Level: slog.LevelDebug}
 	logger := logCfg.NewTestLogger(t)
@@ -124,6 +141,10 @@ func TestClientServer(t *testing.T) {
 					t.Parallel()
 					for _, mtuCase := range mtuCases {
 						t.Run(mtuCase.name, func(t *testing.T) {
+							if mtuCase.mtu > loMTU {
+								t.Skipf("MTU %d is larger than loopback interface MTU %d", mtuCase.mtu, loMTU)
+							}
+
 							t.Parallel()
 
 							t.Run("Handshake", func(t *testing.T) {
