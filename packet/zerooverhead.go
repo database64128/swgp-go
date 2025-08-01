@@ -64,6 +64,11 @@ func zeroOverheadHandlerMaxHandshakePacketSizeFromMaxPacketSize(maxPacketSize in
 	return maxPacketSize - 2 - chacha20poly1305.Overhead - chacha20poly1305.NonceSizeX
 }
 
+// Overhead implements [Handler.Overhead].
+func (h *zeroOverheadHandler) Overhead() int {
+	return 0
+}
+
 // Encrypt implements [Handler.Encrypt].
 func (h *zeroOverheadHandler) Encrypt(dst, wgPacket []byte) ([]byte, error) {
 	// Return packets smaller than a single AES block unmodified.

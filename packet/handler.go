@@ -24,6 +24,9 @@ type Handler interface {
 	// The remaining capacity of dst must not overlap swgpPacket.
 	Decrypt(dst, swgpPacket []byte) ([]byte, error)
 
+	// Overhead returns the number of bytes that should be subtracted from the WireGuard tunnel's MTU.
+	Overhead() int
+
 	// WithMaxPacketSize returns a new Handler with the given maximum packet size.
 	WithMaxPacketSize(maxPacketSize int) Handler
 }

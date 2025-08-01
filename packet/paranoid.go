@@ -10,6 +10,10 @@ import (
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
+// ParanoidHandlerOverhead is the number of bytes that should be subtracted from
+// the WireGuard tunnel's MTU when using the paranoid handler.
+const ParanoidHandlerOverhead = chacha20poly1305.NonceSizeX + 2 + chacha20poly1305.Overhead
+
 // paranoidHandler encrypts and decrypts whole packets using an AEAD cipher.
 // All packets, irrespective of message type, are padded to the maximum packet length
 // to hide any possible characteristics.
@@ -51,7 +55,12 @@ func (h *paranoidHandler) WithMaxPacketSize(maxPacketSize int) Handler {
 }
 
 func paranoidHandlerMaxPayloadSizeFromMaxPacketSize(maxPacketSize int) int {
-	return min(65535, maxPacketSize-chacha20poly1305.NonceSizeX-2-chacha20poly1305.Overhead)
+	return min(65535, maxPacketSize-ParanoidHandlerOverhead)
+}
+
+// Overhead implements [Handler.Overhead].
+func (h *paranoidHandler) Overhead() int {
+	return ParanoidHandlerOverhead
 }
 
 // Encrypt implements [Handler.Encrypt].
