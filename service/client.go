@@ -139,15 +139,16 @@ func (cc *ClientConfig) Client(logger *tslog.Logger, listenConfigCache conn.List
 	// maxProxyPacketSize = MTU - IP header length - UDP header length
 	maxProxyPacketSize := cc.MTU - IPv4HeaderLength - UDPHeaderLength
 	maxProxyPacketSizev6 := cc.MTU - IPv6HeaderLength - UDPHeaderLength
-	wgTunnelMTU := wgTunnelMTUFromMaxPacketSize(maxProxyPacketSize)
-	wgTunnelMTUv6 := wgTunnelMTUFromMaxPacketSize(maxProxyPacketSizev6)
 
 	// Create packet handler for user-specified proxy mode.
-	handler, err := newPacketHandler(cc.ProxyMode, cc.ProxyPSK, maxProxyPacketSize)
+	handler, handlerOverhead, err := newPacketHandler(cc.ProxyMode, cc.ProxyPSK, maxProxyPacketSize)
 	if err != nil {
 		return nil, err
 	}
 	handler6 := handler.WithMaxPacketSize(maxProxyPacketSizev6)
+
+	wgTunnelMTU := wgTunnelMTUFromMaxPacketSize(maxProxyPacketSize - handlerOverhead)
+	wgTunnelMTUv6 := wgTunnelMTUFromMaxPacketSize(maxProxyPacketSizev6 - handlerOverhead)
 
 	// Use IPv6 values if the proxy endpoint is an IPv6 address.
 	if cc.ProxyEndpointAddress.IsIP() {

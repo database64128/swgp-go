@@ -147,39 +147,26 @@ func TestClientServer(t *testing.T) {
 
 							t.Parallel()
 
-							t.Run("Handshake", func(t *testing.T) {
-								testClientServerConn(
-									t,
-									logger,
-									proxyModeCase.proxyMode,
-									proxyModeCase.generatePSK,
-									afCase.listenNetwork,
-									afCase.listenAddress,
-									afCase.endpointNetwork,
-									afCase.connectLocalAddress,
-									mtuCase.mtu,
-									func(clientConn, serverConn *net.UDPConn) {
+							testClientServerConn(
+								t,
+								logger,
+								proxyModeCase.proxyMode,
+								proxyModeCase.generatePSK,
+								afCase.listenNetwork,
+								afCase.listenAddress,
+								afCase.endpointNetwork,
+								afCase.connectLocalAddress,
+								mtuCase.mtu,
+								func(clientConn, serverConn *net.UDPConn, _, _ conn.SocketInfo, client *client, _ *server) {
+									t.Run("Handshake", func(t *testing.T) {
 										testClientServerHandshake(t, clientConn, serverConn)
-									},
-								)
-							})
+									})
 
-							t.Run("DataPackets", func(t *testing.T) {
-								testClientServerConn(
-									t,
-									logger,
-									proxyModeCase.proxyMode,
-									proxyModeCase.generatePSK,
-									afCase.listenNetwork,
-									afCase.listenAddress,
-									afCase.endpointNetwork,
-									afCase.connectLocalAddress,
-									mtuCase.mtu,
-									func(clientConn, serverConn *net.UDPConn) {
-										testClientServerDataPackets(t, clientConn, serverConn)
-									},
-								)
-							})
+									t.Run("DataPackets", func(t *testing.T) {
+										testClientServerDataPackets(t, clientConn, serverConn, client)
+									})
+								},
+							)
 						})
 					}
 				})
@@ -198,12 +185,12 @@ func testClientServerConn(
 	endpointNetwork string,
 	connectLocalAddress conn.Addr,
 	mtu int,
-	f func(clientConn, serverConn *net.UDPConn),
+	f func(clientConn, serverConn *net.UDPConn, clientConnInfo, serverConnInfo conn.SocketInfo, client *client, server *server),
 ) {
 	ctx := t.Context()
 	listenConfigCache := conn.NewListenConfigCache()
 
-	serverConn, _, err := conn.DefaultUDPServerListenConfig.ListenUDP(ctx, listenNetwork, listenAddress)
+	serverConn, serverConnInfo, err := conn.DefaultUDPServerListenConfig.ListenUDP(ctx, listenNetwork, listenAddress)
 	if err != nil {
 		t.Fatalf("Failed to listen server connection: %v", err)
 	}
@@ -257,7 +244,7 @@ func testClientServerConn(
 	}
 	defer c.Stop()
 
-	clientConn, _, err := conn.DefaultUDPDialer.DialUDP(ctx, listenNetwork, c.wgListenAddress)
+	clientConn, clientConnInfo, err := conn.DefaultUDPDialer.DialUDP(ctx, listenNetwork, c.wgListenAddress)
 	if err != nil {
 		t.Fatalf("Failed to dial client connection: %v", err)
 	}
@@ -272,7 +259,7 @@ func testClientServerConn(
 		t.Fatalf("Failed to set server connection deadline: %v", err)
 	}
 
-	f(clientConn, serverConn)
+	f(clientConn, serverConn, clientConnInfo, serverConnInfo, c, s)
 }
 
 func testClientServerHandshake(t *testing.T, clientConn, serverConn *net.UDPConn) {
@@ -325,46 +312,47 @@ func testClientServerHandshake(t *testing.T, clientConn, serverConn *net.UDPConn
 	}
 }
 
-func testClientServerDataPackets(t *testing.T, clientConn, serverConn *net.UDPConn) {
+func testClientServerDataPackets(t *testing.T, clientConn, serverConn *net.UDPConn, client *client) {
 	// Make packets.
-	smallDataPacket := make([]byte, 1024)
-	smallDataPacket[0] = packet.WireGuardMessageTypeData
-	rand.Read(smallDataPacket[1:])
-	expectedSmallDataPacket := slices.Clone(smallDataPacket)
-	receivedSmallDataPacket := make([]byte, 1024+1)
+	dataPacketLen := client.wgTunnelMTUv6 + WireGuardDataPacketOverhead
+	dataPacket := make([]byte, dataPacketLen, 65535)
+	dataPacket[0] = packet.WireGuardMessageTypeData
+	rand.Read(dataPacket[1:])
+	expectedDataPacket := slices.Clone(dataPacket)
+	receivedDataPacket := make([]byte, dataPacketLen+1)
 
-	// Client sends small data packet.
-	if _, err := clientConn.Write(smallDataPacket); err != nil {
-		t.Fatalf("Failed to write small data packet: %v", err)
+	// Client sends data packet.
+	if _, err := clientConn.Write(dataPacket); err != nil {
+		t.Fatalf("Failed to write data packet: %v", err)
 	}
 
-	// Server receives small data packet.
-	n, addr, err := serverConn.ReadFromUDPAddrPort(receivedSmallDataPacket)
+	// Server receives data packet.
+	n, addr, err := serverConn.ReadFromUDPAddrPort(receivedDataPacket)
 	if err != nil {
-		t.Fatalf("Failed to read small data packet: %v", err)
+		t.Fatalf("Failed to read data packet: %v", err)
 	}
-	receivedSmallDataPacket = receivedSmallDataPacket[:n]
+	receivedDataPacket = receivedDataPacket[:n]
 
-	// Server verifies small data packet.
-	if !bytes.Equal(receivedSmallDataPacket, expectedSmallDataPacket) {
-		t.Errorf("receivedSmallDataPacket = %v, want %v", receivedSmallDataPacket, expectedSmallDataPacket)
+	// Server verifies data packet.
+	if !bytes.Equal(receivedDataPacket, expectedDataPacket) {
+		t.Errorf("receivedDataPacket = %v, want %v", receivedDataPacket, expectedDataPacket)
 	}
 
-	// Server sends small data packet.
-	_, err = serverConn.WriteToUDPAddrPort(smallDataPacket, addr)
+	// Server sends data packet.
+	_, err = serverConn.WriteToUDPAddrPort(dataPacket, addr)
 	if err != nil {
-		t.Fatalf("Failed to write small data packet: %v", err)
+		t.Fatalf("Failed to write data packet: %v", err)
 	}
 
-	// Client receives small data packet.
-	n, err = clientConn.Read(receivedSmallDataPacket)
+	// Client receives data packet.
+	n, err = clientConn.Read(receivedDataPacket)
 	if err != nil {
-		t.Fatalf("Failed to read small data packet: %v", err)
+		t.Fatalf("Failed to read data packet: %v", err)
 	}
-	receivedSmallDataPacket = receivedSmallDataPacket[:n]
+	receivedDataPacket = receivedDataPacket[:n]
 
-	// Client verifies small data packet.
-	if !bytes.Equal(receivedSmallDataPacket, expectedSmallDataPacket) {
-		t.Errorf("receivedSmallDataPacket = %v, want %v", receivedSmallDataPacket, expectedSmallDataPacket)
+	// Client verifies data packet.
+	if !bytes.Equal(receivedDataPacket, expectedDataPacket) {
+		t.Errorf("receivedDataPacket = %v, want %v", receivedDataPacket, expectedDataPacket)
 	}
 }

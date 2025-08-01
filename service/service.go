@@ -260,14 +260,16 @@ func (me *ManagerError) Unwrap() error {
 	return me.Err
 }
 
-func newPacketHandler(proxyMode string, proxyPSK []byte, maxPacketSize int) (packet.Handler, error) {
+func newPacketHandler(proxyMode string, proxyPSK []byte, maxPacketSize int) (h packet.Handler, overhead int, err error) {
 	switch proxyMode {
 	case "zero-overhead":
-		return packet.NewZeroOverheadHandler(proxyPSK, maxPacketSize)
+		h, err = packet.NewZeroOverheadHandler(proxyPSK, maxPacketSize)
+		return h, 0, err
 	case "paranoid":
-		return packet.NewParanoidHandler(proxyPSK, maxPacketSize)
+		h, err = packet.NewParanoidHandler(proxyPSK, maxPacketSize)
+		return h, packet.ParanoidHandlerOverhead, err
 	default:
-		return nil, fmt.Errorf("unknown proxy mode: %q", proxyMode)
+		return nil, 0, fmt.Errorf("unknown proxy mode: %q", proxyMode)
 	}
 }
 

@@ -138,15 +138,16 @@ func (sc *ServerConfig) Server(logger *tslog.Logger, listenConfigCache conn.List
 	// maxProxyPacketSize = MTU - IP header length - UDP header length
 	maxProxyPacketSizev4 := sc.MTU - IPv4HeaderLength - UDPHeaderLength
 	maxProxyPacketSizev6 := sc.MTU - IPv6HeaderLength - UDPHeaderLength
-	wgTunnelMTUv4 := wgTunnelMTUFromMaxPacketSize(maxProxyPacketSizev4)
-	wgTunnelMTUv6 := wgTunnelMTUFromMaxPacketSize(maxProxyPacketSizev6)
 
 	// Create packet handler for user-specified proxy mode.
-	handler4, err := newPacketHandler(sc.ProxyMode, sc.ProxyPSK, maxProxyPacketSizev4)
+	handler4, handlerOverhead, err := newPacketHandler(sc.ProxyMode, sc.ProxyPSK, maxProxyPacketSizev4)
 	if err != nil {
 		return nil, err
 	}
 	handler6 := handler4.WithMaxPacketSize(maxProxyPacketSizev6)
+
+	wgTunnelMTUv4 := wgTunnelMTUFromMaxPacketSize(maxProxyPacketSizev4 - handlerOverhead)
+	wgTunnelMTUv6 := wgTunnelMTUFromMaxPacketSize(maxProxyPacketSizev6 - handlerOverhead)
 
 	s := server{
 		name:                 sc.Name,
