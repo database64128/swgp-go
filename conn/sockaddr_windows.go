@@ -15,16 +15,16 @@ const (
 )
 
 func AddrPortToSockaddr(addrPort netip.AddrPort) (name *byte, namelen uint32) {
-	if addrPort.Addr().Is4() {
+	switch {
+	case !addrPort.IsValid():
+		return nil, 0
+	case addrPort.Addr().Is4():
 		rsa4 := AddrPortToSockaddrInet4(addrPort)
-		name = (*byte)(unsafe.Pointer(&rsa4))
-		namelen = SizeofSockaddrInet4
-	} else {
+		return (*byte)(unsafe.Pointer(&rsa4)), SizeofSockaddrInet4
+	default:
 		rsa6 := AddrPortToSockaddrInet6(addrPort)
-		name = (*byte)(unsafe.Pointer(&rsa6))
-		namelen = SizeofSockaddrInet6
+		return (*byte)(unsafe.Pointer(&rsa6)), SizeofSockaddrInet6
 	}
-	return
 }
 
 func AddrPortToSockaddrInet4(addrPort netip.AddrPort) windows.RawSockaddrInet4 {
@@ -56,6 +56,9 @@ func AddrPortToSockaddrInet6(addrPort netip.AddrPort) windows.RawSockaddrInet6 {
 
 func SockaddrToAddrPort(name *byte, namelen uint32) (netip.AddrPort, error) {
 	switch namelen {
+	case 0:
+		return netip.AddrPort{}, nil
+
 	case SizeofSockaddrInet4:
 		rsa4 := (*windows.RawSockaddrInet4)(unsafe.Pointer(name))
 		return SockaddrInet4ToAddrPort(rsa4), nil

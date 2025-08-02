@@ -12,33 +12,36 @@ import (
 )
 
 func AddrPortToSockaddr(addrPort netip.AddrPort) (name *byte, namelen uint32) {
-	if addrPort.Addr().Is4() {
+	switch {
+	case !addrPort.IsValid():
+		return nil, 0
+	case addrPort.Addr().Is4():
 		rsa4 := AddrPortToSockaddrInet4(addrPort)
-		name = (*byte)(unsafe.Pointer(&rsa4))
-		namelen = unix.SizeofSockaddrInet4
-	} else {
+		return (*byte)(unsafe.Pointer(&rsa4)), unix.SizeofSockaddrInet4
+	default:
 		rsa6 := AddrPortToSockaddrInet6(addrPort)
-		name = (*byte)(unsafe.Pointer(&rsa6))
-		namelen = unix.SizeofSockaddrInet6
+		return (*byte)(unsafe.Pointer(&rsa6)), unix.SizeofSockaddrInet6
 	}
-	return
 }
 
 func AddrPortToSockaddrWithAddressFamily(addrPort netip.AddrPort, is4 bool) (name *byte, namelen uint32) {
-	if is4 {
+	switch {
+	case !addrPort.IsValid():
+		return nil, 0
+	case is4:
 		rsa4 := AddrPortToSockaddrInet4(addrPort)
-		name = (*byte)(unsafe.Pointer(&rsa4))
-		namelen = unix.SizeofSockaddrInet4
-	} else {
+		return (*byte)(unsafe.Pointer(&rsa4)), unix.SizeofSockaddrInet4
+	default:
 		rsa6 := AddrPortToSockaddrInet6(addrPort)
-		name = (*byte)(unsafe.Pointer(&rsa6))
-		namelen = unix.SizeofSockaddrInet6
+		return (*byte)(unsafe.Pointer(&rsa6)), unix.SizeofSockaddrInet6
 	}
-	return
 }
 
 func SockaddrToAddrPort(name *byte, namelen uint32) (netip.AddrPort, error) {
 	switch namelen {
+	case 0:
+		return netip.AddrPort{}, nil
+
 	case unix.SizeofSockaddrInet4:
 		rsa4 := (*unix.RawSockaddrInet4)(unsafe.Pointer(name))
 		return SockaddrInet4ToAddrPort(rsa4), nil
