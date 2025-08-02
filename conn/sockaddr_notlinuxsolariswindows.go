@@ -10,31 +10,24 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func AddrPortToSockaddrInet4(addrPort netip.AddrPort) unix.RawSockaddrInet4 {
-	addr := addrPort.Addr()
+func SockaddrInet4PutAddrPort(sa *unix.RawSockaddrInet4, addrPort netip.AddrPort) {
+	sa.Len = unix.SizeofSockaddrInet4
+	sa.Family = unix.AF_INET
 	port := addrPort.Port()
-	rsa4 := unix.RawSockaddrInet4{
-		Len:    unix.SizeofSockaddrInet4,
-		Family: unix.AF_INET,
-		Addr:   addr.As4(),
-	}
-	p := (*[2]byte)(unsafe.Pointer(&rsa4.Port))
+	p := (*[2]byte)(unsafe.Pointer(&sa.Port))
 	p[0] = byte(port >> 8)
 	p[1] = byte(port)
-	return rsa4
+	sa.Addr = addrPort.Addr().As4()
 }
 
-func AddrPortToSockaddrInet6(addrPort netip.AddrPort) unix.RawSockaddrInet6 {
-	addr := addrPort.Addr()
+func SockaddrInet6PutAddrPort(sa *unix.RawSockaddrInet6, addrPort netip.AddrPort) {
+	sa.Len = unix.SizeofSockaddrInet6
+	sa.Family = unix.AF_INET6
 	port := addrPort.Port()
-	rsa6 := unix.RawSockaddrInet6{
-		Len:      unix.SizeofSockaddrInet6,
-		Family:   unix.AF_INET6,
-		Addr:     addr.As16(),
-		Scope_id: uint32(netx.ZoneCache.Index(addr.Zone())),
-	}
-	p := (*[2]byte)(unsafe.Pointer(&rsa6.Port))
+	p := (*[2]byte)(unsafe.Pointer(&sa.Port))
 	p[0] = byte(port >> 8)
 	p[1] = byte(port)
-	return rsa6
+	addr := addrPort.Addr()
+	sa.Addr = addr.As16()
+	sa.Scope_id = uint32(netx.ZoneCache.Index(addr.Zone()))
 }
