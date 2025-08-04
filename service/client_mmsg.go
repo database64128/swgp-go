@@ -43,12 +43,10 @@ type clientNatDownlinkMmsg struct {
 }
 
 func (c *client) start(ctx context.Context) error {
-	switch c.batchMode {
-	case "sendmmsg", "":
-		return c.startMmsg(ctx)
-	default:
+	if c.disableMmsg {
 		return c.startGeneric(ctx)
 	}
+	return c.startMmsg(ctx)
 }
 
 func (c *client) startMmsg(ctx context.Context) error {

@@ -14,10 +14,10 @@
             "wgFwmark": 0,
             "wgTrafficClass": 0,
             "mtu": 1500,
-            "batchMode": "",
             "relayBatchSize": 0,
             "mainRecvBatchSize": 0,
             "sendChannelCapacity": 0,
+            "disableMmsg": false,
             "disableUDPGSO": false,
             "disableUDPGRO": false
         }
@@ -37,10 +37,10 @@
             "proxyFwmark": 0,
             "proxyTrafficClass": 0,
             "mtu": 1500,
-            "batchMode": "",
             "relayBatchSize": 0,
             "mainRecvBatchSize": 0,
             "sendChannelCapacity": 0,
+            "disableMmsg": false,
             "disableUDPGSO": false,
             "disableUDPGRO": false
         }

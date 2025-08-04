@@ -80,7 +80,6 @@ type server struct {
 	proxyListenNetwork    string
 	proxyListenAddress    string
 	wgConnListenAddress   string
-	batchMode             string
 	relayBatchSize        int
 	mainRecvBatchSize     int
 	sendChannelCapacity   int
@@ -89,6 +88,7 @@ type server struct {
 	maxProxyPacketSizev6  int
 	wgTunnelMTUv4         int
 	wgTunnelMTUv6         int
+	disableMmsg           bool
 	wgNetwork             string
 	wgAddr                conn.Addr
 	handler4              packet.Handler
@@ -154,7 +154,6 @@ func (sc *ServerConfig) Server(logger *tslog.Logger, listenConfigCache conn.List
 		proxyListenNetwork:   sc.ProxyListenNetwork,
 		proxyListenAddress:   sc.ProxyListenAddress,
 		wgConnListenAddress:  sc.WgConnListenAddress,
-		batchMode:            sc.BatchMode,
 		relayBatchSize:       sc.RelayBatchSize,
 		mainRecvBatchSize:    sc.MainRecvBatchSize,
 		sendChannelCapacity:  sc.SendChannelCapacity,
@@ -162,6 +161,7 @@ func (sc *ServerConfig) Server(logger *tslog.Logger, listenConfigCache conn.List
 		maxProxyPacketSizev6: maxProxyPacketSizev6,
 		wgTunnelMTUv4:        wgTunnelMTUv4,
 		wgTunnelMTUv6:        wgTunnelMTUv6,
+		disableMmsg:          sc.DisableMmsg,
 		wgNetwork:            sc.WgEndpointNetwork,
 		wgAddr:               sc.WgEndpointAddress,
 		handler4:             handler4,

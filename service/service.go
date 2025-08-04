@@ -22,16 +22,13 @@ const (
 
 	// defaultRelayBatchSize is the default batch size of recvmmsg(2) and sendmmsg(2) calls in relay sessions.
 	//
-	// On an i9-13900K, the average number of messages received in a single recvmmsg(2) call is
-	// around 100 in iperf3 tests. Bumping the msgvec size to greater than 256 does not seem to
-	// yield any performance improvement.
-	//
-	// Note that the mainline iperf3 does not use sendmmsg(2) or io_uring for batch sending at the
-	// time of writing. So this value is still subject to change in the future.
-	defaultRelayBatchSize = 256
+	// We use the same value as wireguard-go. This roughly matches our default socket buffer size.
+	defaultRelayBatchSize = 128
 
-	// defaultMainRecvBatchSize is the default batch size of a relay service's main receive routine.
-	defaultMainRecvBatchSize = 64
+	// defaultMainRecvBatchSize is the default batch size of recvmmsg(2) calls in a relay service's main receive routine.
+	//
+	// We use the same value as wireguard-go. This roughly matches our default socket buffer size.
+	defaultMainRecvBatchSize = 128
 
 	// defaultSendChannelCapacity is the default capacity of a relay session's uplink send channel.
 	defaultSendChannelCapacity = 1024
@@ -68,22 +65,21 @@ type Service interface {
 
 // PerfConfig exposes performance tuning knobs.
 type PerfConfig struct {
-	// BatchMode controls the mode of batch receiving and sending.
-	//
-	// Available values:
-	// - "": Platform default.
-	// - "no": Do not receive or send packets in batches.
-	// - "sendmmsg": Use recvmmsg(2) and sendmmsg(2) calls. This is the default on Linux and NetBSD.
-	BatchMode string `json:"batchMode,omitzero"`
-
 	// RelayBatchSize is the batch size of recvmmsg(2) and sendmmsg(2) calls in relay sessions.
+	//
+	// If zero, the default value is 128.
 	RelayBatchSize int `json:"relayBatchSize,omitzero"`
 
-	// MainRecvBatchSize is the batch size of a relay service's main receive routine.
+	// MainRecvBatchSize is the batch size of recvmmsg(2) calls in a relay service's main receive routine.
+	//
+	// If zero, the default value is 128.
 	MainRecvBatchSize int `json:"mainRecvBatchSize,omitzero"`
 
 	// SendChannelCapacity is the capacity of a relay session's uplink send channel.
 	SendChannelCapacity int `json:"sendChannelCapacity,omitzero"`
+
+	// DisableMmsg disables the use of recvmmsg(2) and sendmmsg(2) syscalls on Linux and NetBSD.
+	DisableMmsg bool `json:"disableMmsg,omitzero"`
 
 	// DisableUDPGSO disables UDP Generic Segmentation Offload (GSO) on the listener.
 	//
@@ -98,12 +94,6 @@ type PerfConfig struct {
 
 // CheckAndApplyDefaults checks and applies default values to the configuration.
 func (pc *PerfConfig) CheckAndApplyDefaults() error {
-	switch pc.BatchMode {
-	case "", "no", "sendmmsg":
-	default:
-		return fmt.Errorf("unknown batch mode: %s", pc.BatchMode)
-	}
-
 	// About the batch sizes:
 	//
 	// On Linux, the sendmmsg(2) syscall can process up to UIO_MAXIOV (1024) messages at once.
