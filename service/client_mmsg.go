@@ -100,18 +100,14 @@ func (c *client) startMmsg(ctx context.Context) error {
 
 func (c *client) recvFromWgConnRecvmmsg(ctx context.Context, logger *tslog.Logger, wgConn *conn.MmsgRConn, wgConnInfo conn.SocketInfo) {
 	cmsgBuf := make([]byte, c.mainRecvBatchSize*conn.SocketControlMessageBufferSize)
-	bufvec := make([][]byte, c.mainRecvBatchSize)
-	cmsgvec := make([][]byte, c.mainRecvBatchSize)
 	namevec := make([]unix.RawSockaddrInet6, c.mainRecvBatchSize)
 	iovec := make([]unix.Iovec, c.mainRecvBatchSize)
 	msgvec := make([]conn.Mmsghdr, c.mainRecvBatchSize)
 
+	cmsgBufp := unsafe.Pointer(unsafe.SliceData(cmsgBuf))
+
 	for i := range c.mainRecvBatchSize {
 		packetBuf := c.getPacketBuf()
-		bufvec[i] = packetBuf
-
-		cmsgvec[i] = cmsgBuf[:conn.SocketControlMessageBufferSize:conn.SocketControlMessageBufferSize]
-		cmsgBuf = cmsgBuf[conn.SocketControlMessageBufferSize:]
 
 		iovec[i].Base = unsafe.SliceData(packetBuf)
 		iovec[i].SetLen(c.packetBufSize)
@@ -120,8 +116,10 @@ func (c *client) recvFromWgConnRecvmmsg(ctx context.Context, logger *tslog.Logge
 		msgvec[i].Msghdr.Namelen = unix.SizeofSockaddrInet6
 		msgvec[i].Msghdr.Iov = &iovec[i]
 		msgvec[i].Msghdr.SetIovlen(1)
-		msgvec[i].Msghdr.Control = unsafe.SliceData(cmsgvec[i])
+		msgvec[i].Msghdr.Control = (*byte)(cmsgBufp)
 		msgvec[i].Msghdr.SetControllen(conn.SocketControlMessageBufferSize)
+
+		cmsgBufp = unsafe.Add(cmsgBufp, conn.SocketControlMessageBufferSize)
 	}
 
 	var (
@@ -150,10 +148,12 @@ func (c *client) recvFromWgConnRecvmmsg(ctx context.Context, logger *tslog.Logge
 		c.mu.Lock()
 
 		msgvecn := msgvec[:n]
+		remainingCmsgBuf := cmsgBuf
 
 		for i := range msgvecn {
 			msg := &msgvecn[i]
-			cmsg := cmsgvec[i][:msg.Msghdr.Controllen]
+			cmsg := remainingCmsgBuf[:msg.Msghdr.Controllen]
+			remainingCmsgBuf = remainingCmsgBuf[conn.SocketControlMessageBufferSize:]
 			msg.Msghdr.SetControllen(conn.SocketControlMessageBufferSize)
 
 			clientAddrPort, err := conn.SockaddrToAddrPort(msg.Msghdr.Name, msg.Msghdr.Namelen)
@@ -183,7 +183,7 @@ func (c *client) recvFromWgConnRecvmmsg(ctx context.Context, logger *tslog.Logge
 			}
 
 			qp := queuedPacket{
-				buf:          bufvec[i][:msg.Msglen],
+				buf:          unsafe.Slice(iovec[i].Base, c.packetBufSize)[:msg.Msglen],
 				segmentSize:  msg.Msglen,
 				segmentCount: 1,
 			}
@@ -360,7 +360,6 @@ func (c *client) recvFromWgConnRecvmmsg(ctx context.Context, logger *tslog.Logge
 			select {
 			case natEntry.proxyConnSendCh <- qp:
 				packetBuf := c.getPacketBuf()
-				bufvec[i] = packetBuf
 				iovec[i].Base = unsafe.SliceData(packetBuf)
 			default:
 				if logger.Enabled(slog.LevelDebug) {
@@ -375,8 +374,8 @@ func (c *client) recvFromWgConnRecvmmsg(ctx context.Context, logger *tslog.Logge
 		c.mu.Unlock()
 	}
 
-	for i := range bufvec {
-		c.putPacketBuf(bufvec[i])
+	for i := range iovec {
+		c.putPacketBufUnchecked(iovec[i].Base)
 	}
 
 	logger.Info("Finished receiving from wgConn",
@@ -629,29 +628,27 @@ func (c *client) relayProxyToWgSendmmsg(downlink clientNatDownlinkMmsg) {
 	recvCmsgBuf := make([]byte, c.relayBatchSize*conn.SocketControlMessageBufferSize)
 	sendPacketBuf := make([]byte, 0, c.relayBatchSize*downlink.maxProxyPacketSize)
 	sendCmsgBuf := make([]byte, 0, c.relayBatchSize*conn.SocketControlMessageBufferSize)
-	rbufvec := make([][]byte, c.relayBatchSize)
-	rcmsgvec := make([][]byte, c.relayBatchSize)
 	riovec := make([]unix.Iovec, c.relayBatchSize)
 	siovec := make([]unix.Iovec, 0, c.relayBatchSize)
 	rmsgvec := make([]conn.Mmsghdr, c.relayBatchSize)
 	smsgvec := make([]conn.Mmsghdr, 0, c.relayBatchSize)
 
+	recvPacketBufp := unsafe.Pointer(unsafe.SliceData(recvPacketBuf))
+	recvCmsgBufp := unsafe.Pointer(unsafe.SliceData(recvCmsgBuf))
+
 	for i := range c.relayBatchSize {
-		rbufvec[i] = recvPacketBuf[:downlink.maxProxyPacketSize:downlink.maxProxyPacketSize]
-		recvPacketBuf = recvPacketBuf[downlink.maxProxyPacketSize:]
-
-		rcmsgvec[i] = recvCmsgBuf[:conn.SocketControlMessageBufferSize:conn.SocketControlMessageBufferSize]
-		recvCmsgBuf = recvCmsgBuf[conn.SocketControlMessageBufferSize:]
-
-		riovec[i].Base = unsafe.SliceData(rbufvec[i])
+		riovec[i].Base = (*byte)(recvPacketBufp)
 		riovec[i].SetLen(downlink.maxProxyPacketSize)
 
 		rmsgvec[i].Msghdr.Name = (*byte)(unsafe.Pointer(&savec[i]))
 		rmsgvec[i].Msghdr.Namelen = unix.SizeofSockaddrInet6
 		rmsgvec[i].Msghdr.Iov = &riovec[i]
 		rmsgvec[i].Msghdr.SetIovlen(1)
-		rmsgvec[i].Msghdr.Control = unsafe.SliceData(rcmsgvec[i])
+		rmsgvec[i].Msghdr.Control = (*byte)(recvCmsgBufp)
 		rmsgvec[i].Msghdr.SetControllen(conn.SocketControlMessageBufferSize)
+
+		recvPacketBufp = unsafe.Add(recvPacketBufp, downlink.maxProxyPacketSize)
+		recvCmsgBufp = unsafe.Add(recvCmsgBufp, conn.SocketControlMessageBufferSize)
 	}
 
 	for {
@@ -669,10 +666,15 @@ func (c *client) relayProxyToWgSendmmsg(downlink clientNatDownlinkMmsg) {
 		burstRecvBatchSize = max(burstRecvBatchSize, nr)
 
 		rmsgvecn := rmsgvec[:nr]
+		remainingRecvPacketBuf := recvPacketBuf
+		remainingRecvCmsgBuf := recvCmsgBuf
 
 		for i := range rmsgvecn {
 			msg := &rmsgvecn[i]
-			cmsg := rcmsgvec[i][:msg.Msghdr.Controllen]
+			swgpPacketBuf := remainingRecvPacketBuf[:msg.Msglen]
+			remainingRecvPacketBuf = remainingRecvPacketBuf[downlink.maxProxyPacketSize:]
+			cmsg := remainingRecvCmsgBuf[:msg.Msghdr.Controllen]
+			remainingRecvCmsgBuf = remainingRecvCmsgBuf[conn.SocketControlMessageBufferSize:]
 			msg.Msghdr.SetControllen(conn.SocketControlMessageBufferSize)
 
 			packetSourceAddrPort, err := conn.SockaddrToAddrPort(msg.Msghdr.Name, msg.Msghdr.Namelen)
@@ -710,8 +712,6 @@ func (c *client) relayProxyToWgSendmmsg(downlink clientNatDownlinkMmsg) {
 			}
 
 			swgpBytesReceived += uint64(msg.Msglen)
-
-			swgpPacketBuf := rbufvec[i][:msg.Msglen]
 
 			recvSegmentSize := int(rscm.SegmentSize)
 			if recvSegmentSize == 0 {
@@ -886,4 +886,9 @@ func (c *client) relayProxyToWgSendmmsg(downlink clientNatDownlinkMmsg) {
 		tslog.Uint("burstRecvSegmentCount", burstRecvSegmentCount),
 		tslog.Uint("burstSendSegmentCount", burstSendSegmentCount),
 	)
+}
+
+// putPacketBufUnchecked puts the packet buffer back into the pool without checking its capacity.
+func (c *client) putPacketBufUnchecked(packetBufp *byte) {
+	c.packetBufPool.Put(packetBufp)
 }
