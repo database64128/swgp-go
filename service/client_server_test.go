@@ -221,7 +221,7 @@ func testClientServerConn(
 	serverWgAddrPort := serverConn.LocalAddr().(*net.UDPAddr).AddrPort()
 
 	psk := generatePSK()
-	connectListenAddress := connectLocalAddress.String()
+	
 	serverConfig := ServerConfig{
 		Name:                "wg0",
 		ProxyListenNetwork:  listenNetwork,
@@ -230,7 +230,7 @@ func testClientServerConn(
 		ProxyPSK:            psk,
 		WgEndpointNetwork:   endpointNetwork,
 		WgEndpointAddress:   conn.AddrFromIPPort(serverWgAddrPort),
-		WgConnListenAddress: connectListenAddress,
+		WgConnListenAddress: connectLocalAddress,
 		MTU:                 mtu,
 		PerfConfig:          perfConfig,
 	}
@@ -252,7 +252,7 @@ func testClientServerConn(
 		WgListenAddress:        listenAddress,
 		ProxyEndpointNetwork:   endpointNetwork,
 		ProxyEndpointAddress:   conn.AddrFromIPPort(proxyAddrPort),
-		ProxyConnListenAddress: connectListenAddress,
+		ProxyConnListenAddress: connectLocalAddress,
 		ProxyMode:              proxyMode,
 		ProxyPSK:               psk,
 		MTU:                    mtu,

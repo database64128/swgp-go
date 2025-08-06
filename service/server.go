@@ -30,7 +30,7 @@ type ServerConfig struct {
 	ProxyTrafficClass   int       `json:"proxyTrafficClass,omitzero"`
 	WgEndpointNetwork   string    `json:"wgEndpointNetwork,omitzero"`
 	WgEndpointAddress   conn.Addr `json:"wgEndpoint"`
-	WgConnListenAddress string    `json:"wgConnListenAddress,omitzero"`
+	WgConnListenAddress conn.Addr `json:"wgConnListenAddress,omitzero"`
 	WgFwmark            int       `json:"wgFwmark,omitzero"`
 	WgTrafficClass      int       `json:"wgTrafficClass,omitzero"`
 	MTU                 int       `json:"mtu"`
@@ -79,7 +79,6 @@ type server struct {
 	name                 string
 	proxyListenNetwork   string
 	proxyListenAddress   string
-	wgConnListenAddress  string
 	relayBatchSize       int
 	mainRecvBatchSize    int
 	sendChannelCapacity  int
@@ -91,6 +90,7 @@ type server struct {
 	disableMmsg          bool
 	wgNetwork            string
 	wgAddr               conn.Addr
+	wgConnListenAddress  conn.Addr
 	handler4             packet.Handler
 	handler6             packet.Handler
 	logger               *tslog.Logger
@@ -153,7 +153,6 @@ func (sc *ServerConfig) Server(logger *tslog.Logger, socketConfigCache conn.UDPS
 		name:                 sc.Name,
 		proxyListenNetwork:   sc.ProxyListenNetwork,
 		proxyListenAddress:   sc.ProxyListenAddress,
-		wgConnListenAddress:  sc.WgConnListenAddress,
 		relayBatchSize:       sc.RelayBatchSize,
 		mainRecvBatchSize:    sc.MainRecvBatchSize,
 		sendChannelCapacity:  sc.SendChannelCapacity,
@@ -164,6 +163,7 @@ func (sc *ServerConfig) Server(logger *tslog.Logger, socketConfigCache conn.UDPS
 		disableMmsg:          sc.DisableMmsg,
 		wgNetwork:            sc.WgEndpointNetwork,
 		wgAddr:               sc.WgEndpointAddress,
+		wgConnListenAddress:  sc.WgConnListenAddress,
 		handler4:             handler4,
 		handler6:             handler6,
 		logger:               logger,
@@ -449,13 +449,14 @@ func (s *server) recvFromProxyConnGeneric(ctx context.Context, logger *tslog.Log
 				}
 
 				wgConnListenNetwork := listenUDPNetworkForRemoteAddr(wgAddrPort.Addr())
+				wgConnListenAddress := s.wgConnListenAddress.String()
 
-				wgConn, wgConnInfo, err := s.wgConnConfig.Listen(ctx, wgConnListenNetwork, s.wgConnListenAddress)
+				wgConn, wgConnInfo, err := s.wgConnConfig.Listen(ctx, wgConnListenNetwork, wgConnListenAddress)
 				if err != nil {
 					logger.Warn("Failed to create UDP socket for new session",
 						tslog.AddrPort("clientAddress", clientAddrPort),
 						slog.String("wgConnListenNetwork", wgConnListenNetwork),
-						slog.String("wgConnListenAddress", s.wgConnListenAddress),
+						slog.String("wgConnListenAddress", wgConnListenAddress),
 						tslog.Err(err),
 					)
 					return

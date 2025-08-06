@@ -326,13 +326,14 @@ func (s *server) recvFromProxyConnRecvmmsg(ctx context.Context, logger *tslog.Lo
 					}
 
 					wgConnListenNetwork := listenUDPNetworkForRemoteAddr(wgAddrPort.Addr())
+					wgConnListenAddress := s.wgConnListenAddress.String()
 
-					wgConn, wgConnInfo, err := s.wgConnConfig.ListenMmsgConn(ctx, wgConnListenNetwork, s.wgConnListenAddress)
+					wgConn, wgConnInfo, err := s.wgConnConfig.ListenMmsgConn(ctx, wgConnListenNetwork, wgConnListenAddress)
 					if err != nil {
 						logger.Warn("Failed to create UDP socket for new session",
 							tslog.AddrPort("clientAddress", clientAddrPort),
 							slog.String("wgConnListenNetwork", wgConnListenNetwork),
-							slog.String("wgConnListenAddress", s.wgConnListenAddress),
+							slog.String("wgConnListenAddress", wgConnListenAddress),
 							tslog.Err(err),
 						)
 						return
