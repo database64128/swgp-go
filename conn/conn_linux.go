@@ -94,25 +94,14 @@ func setRecvPktinfo(fd int, network string) error {
 	return nil
 }
 
-func (lso ListenerSocketOptions) buildSetFns() setFuncSlice {
+func (opts UDPSocketOptions) buildSetFns() setFuncSlice {
 	return setFuncSlice{}.
-		appendSetSendBufferSize(lso.SendBufferSize).
-		appendSetRecvBufferSize(lso.ReceiveBufferSize).
-		appendSetFwmarkFunc(lso.Fwmark).
-		appendSetTrafficClassFunc(lso.TrafficClass).
-		appendSetPMTUDFunc(lso.PathMTUDiscovery).
-		appendProbeUDPGSOSupportFunc(lso.ProbeUDPGSOSupport).
-		appendSetUDPGenericReceiveOffloadFunc(lso.UDPGenericReceiveOffload).
-		appendSetRecvPktinfoFunc(lso.ReceivePacketInfo)
-}
-
-func (dso DialerSocketOptions) buildSetFns() setFuncSlice {
-	return setFuncSlice{}.
-		appendSetSendBufferSize(dso.SendBufferSize).
-		appendSetRecvBufferSize(dso.ReceiveBufferSize).
-		appendSetFwmarkFunc(dso.Fwmark).
-		appendSetTrafficClassFunc(dso.TrafficClass).
-		appendSetPMTUDFunc(dso.PathMTUDiscovery).
-		appendProbeUDPGSOSupportFunc(dso.ProbeUDPGSOSupport).
-		appendSetUDPGenericReceiveOffloadFunc(dso.UDPGenericReceiveOffload)
+		appendSetSendBufferSize(opts.SendBufferSize).
+		appendSetRecvBufferSize(opts.ReceiveBufferSize).
+		appendSetFwmarkFunc(opts.Fwmark).
+		appendSetTrafficClassFunc(opts.TrafficClass).
+		appendSetPMTUDFunc(opts.PathMTUDiscovery).
+		appendProbeUDPGSOSupportFunc(opts.ProbeUDPGSOSupport).
+		appendSetUDPGenericReceiveOffloadFunc(opts.UDPGenericReceiveOffload).
+		appendSetRecvPktinfoFunc(opts.ReceivePacketInfo)
 }

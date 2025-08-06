@@ -1,15 +1,8 @@
 package conn
 
-func (lso ListenerSocketOptions) buildSetFns() setFuncSlice {
+func (opts UDPSocketOptions) buildSetFns() setFuncSlice {
 	return setFuncSlice{}.
-		appendSetSendBufferSize(lso.SendBufferSize).
-		appendSetRecvBufferSize(lso.ReceiveBufferSize).
-		appendSetTrafficClassFunc(lso.TrafficClass)
-}
-
-func (dso DialerSocketOptions) buildSetFns() setFuncSlice {
-	return setFuncSlice{}.
-		appendSetSendBufferSize(dso.SendBufferSize).
-		appendSetRecvBufferSize(dso.ReceiveBufferSize).
-		appendSetTrafficClassFunc(dso.TrafficClass)
+		appendSetSendBufferSize(opts.SendBufferSize).
+		appendSetRecvBufferSize(opts.ReceiveBufferSize).
+		appendSetTrafficClassFunc(opts.TrafficClass)
 }

@@ -96,8 +96,8 @@ type client struct {
 	handler6               packet.Handler
 	logger                 *tslog.Logger
 	wgConn                 *net.UDPConn
-	wgConnListenConfig     conn.ListenConfig
-	proxyConnListenConfig  conn.ListenConfig
+	wgConnConfig           conn.UDPSocketConfig
+	proxyConnConfig        conn.UDPSocketConfig
 	packetBufPool          sync.Pool
 	mu                     sync.Mutex
 	wg                     sync.WaitGroup
@@ -107,7 +107,7 @@ type client struct {
 
 // Client creates a swgp client service from the client config.
 // Call the Start method on the returned service to start it.
-func (cc *ClientConfig) Client(logger *tslog.Logger, listenConfigCache conn.ListenConfigCache) (*client, error) {
+func (cc *ClientConfig) Client(logger *tslog.Logger, socketConfigCache conn.UDPSocketConfigCache) (*client, error) {
 	// Require MTU to be at least 1280.
 	if cc.MTU < minimumMTU {
 		return nil, ErrMTUTooSmall
@@ -177,7 +177,7 @@ func (cc *ClientConfig) Client(logger *tslog.Logger, listenConfigCache conn.List
 		handler:                handler,
 		handler6:               handler6,
 		logger:                 logger,
-		wgConnListenConfig: listenConfigCache.Get(conn.ListenerSocketOptions{
+		wgConnConfig: socketConfigCache.Get(conn.UDPSocketOptions{
 			SendBufferSize:           conn.DefaultUDPSocketBufferSize,
 			ReceiveBufferSize:        conn.DefaultUDPSocketBufferSize,
 			Fwmark:                   cc.WgFwmark,
@@ -187,7 +187,7 @@ func (cc *ClientConfig) Client(logger *tslog.Logger, listenConfigCache conn.List
 			UDPGenericReceiveOffload: !cc.DisableUDPGRO,
 			ReceivePacketInfo:        true,
 		}),
-		proxyConnListenConfig: listenConfigCache.Get(conn.ListenerSocketOptions{
+		proxyConnConfig: socketConfigCache.Get(conn.UDPSocketOptions{
 			SendBufferSize:           conn.DefaultUDPSocketBufferSize,
 			ReceiveBufferSize:        conn.DefaultUDPSocketBufferSize,
 			Fwmark:                   cc.ProxyFwmark,
@@ -216,7 +216,7 @@ func (c *client) Start(ctx context.Context) (err error) {
 }
 
 func (c *client) startGeneric(ctx context.Context) error {
-	wgConn, wgConnInfo, err := c.wgConnListenConfig.ListenUDP(ctx, c.wgListenNetwork, c.wgListenAddress)
+	wgConn, wgConnInfo, err := c.wgConnConfig.Listen(ctx, c.wgListenNetwork, c.wgListenAddress)
 	if err != nil {
 		return err
 	}
@@ -394,7 +394,7 @@ func (c *client) recvFromWgConnGeneric(ctx context.Context, logger *tslog.Logger
 
 				proxyConnListenNetwork := listenUDPNetworkForRemoteAddr(proxyAddrPort.Addr())
 
-				proxyConn, proxyConnInfo, err := c.proxyConnListenConfig.ListenUDP(ctx, proxyConnListenNetwork, c.proxyConnListenAddress)
+				proxyConn, proxyConnInfo, err := c.proxyConnConfig.Listen(ctx, proxyConnListenNetwork, c.proxyConnListenAddress)
 				if err != nil {
 					logger.Warn("Failed to create UDP socket for new session",
 						tslog.AddrPort("clientAddress", clientAddrPort),

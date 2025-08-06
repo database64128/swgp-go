@@ -49,7 +49,7 @@ func (s *server) start(ctx context.Context) error {
 }
 
 func (s *server) startMmsg(ctx context.Context) error {
-	proxyConn, proxyConnInfo, err := s.proxyConnListenConfig.ListenUDPMmsgConn(ctx, s.proxyListenNetwork, s.proxyListenAddress)
+	proxyConn, proxyConnInfo, err := s.proxyConnConfig.ListenMmsgConn(ctx, s.proxyListenNetwork, s.proxyListenAddress)
 	if err != nil {
 		return err
 	}
@@ -327,7 +327,7 @@ func (s *server) recvFromProxyConnRecvmmsg(ctx context.Context, logger *tslog.Lo
 
 					wgConnListenNetwork := listenUDPNetworkForRemoteAddr(wgAddrPort.Addr())
 
-					wgConn, wgConnInfo, err := s.wgConnListenConfig.ListenUDPMmsgConn(ctx, wgConnListenNetwork, s.wgConnListenAddress)
+					wgConn, wgConnInfo, err := s.wgConnConfig.ListenMmsgConn(ctx, wgConnListenNetwork, s.wgConnListenAddress)
 					if err != nil {
 						logger.Warn("Failed to create UDP socket for new session",
 							tslog.AddrPort("clientAddress", clientAddrPort),

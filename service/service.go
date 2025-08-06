@@ -149,7 +149,7 @@ func (sc *Config) Manager(logger *tslog.Logger) (*Manager, error) {
 	services := make([]Service, 0, serviceCount)
 	serverIndexByName := make(map[string]int, len(sc.Servers))
 	clientIndexByName := make(map[string]int, len(sc.Clients))
-	listenConfigCache := conn.NewListenConfigCache()
+	socketConfigCache := conn.NewUDPSocketConfigCache()
 
 	for i := range sc.Servers {
 		serverConfig := &sc.Servers[i]
@@ -159,7 +159,7 @@ func (sc *Config) Manager(logger *tslog.Logger) (*Manager, error) {
 		}
 		serverIndexByName[serverConfig.Name] = i
 
-		s, err := serverConfig.Server(logger, listenConfigCache)
+		s, err := serverConfig.Server(logger, socketConfigCache)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create server service %q: %w", serverConfig.Name, err)
 		}
@@ -174,7 +174,7 @@ func (sc *Config) Manager(logger *tslog.Logger) (*Manager, error) {
 		}
 		clientIndexByName[clientConfig.Name] = i
 
-		c, err := clientConfig.Client(logger, listenConfigCache)
+		c, err := clientConfig.Client(logger, socketConfigCache)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create client service %q: %w", clientConfig.Name, err)
 		}

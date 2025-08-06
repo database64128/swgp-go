@@ -13,21 +13,12 @@ func setFwmark(fd, fwmark int) error {
 	return nil
 }
 
-func (lso ListenerSocketOptions) buildSetFns() setFuncSlice {
+func (opts UDPSocketOptions) buildSetFns() setFuncSlice {
 	return setFuncSlice{}.
-		appendSetSendBufferSize(lso.SendBufferSize).
-		appendSetRecvBufferSize(lso.ReceiveBufferSize).
-		appendSetFwmarkFunc(lso.Fwmark).
-		appendSetTrafficClassFunc(lso.TrafficClass).
-		appendSetPMTUDFunc(lso.PathMTUDiscovery).
-		appendSetRecvPktinfoFunc(lso.ReceivePacketInfo)
-}
-
-func (dso DialerSocketOptions) buildSetFns() setFuncSlice {
-	return setFuncSlice{}.
-		appendSetSendBufferSize(dso.SendBufferSize).
-		appendSetRecvBufferSize(dso.ReceiveBufferSize).
-		appendSetFwmarkFunc(dso.Fwmark).
-		appendSetTrafficClassFunc(dso.TrafficClass).
-		appendSetPMTUDFunc(dso.PathMTUDiscovery)
+		appendSetSendBufferSize(opts.SendBufferSize).
+		appendSetRecvBufferSize(opts.ReceiveBufferSize).
+		appendSetFwmarkFunc(opts.Fwmark).
+		appendSetTrafficClassFunc(opts.TrafficClass).
+		appendSetPMTUDFunc(opts.PathMTUDiscovery).
+		appendSetRecvPktinfoFunc(opts.ReceivePacketInfo)
 }

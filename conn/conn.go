@@ -59,16 +59,16 @@ func (fns setFuncSlice) controlFunc(info *SocketInfo) func(network, address stri
 	}
 }
 
-// ListenConfig is like [net.ListenConfig] but provides a subjectively nicer API.
-type ListenConfig struct {
+// UDPSocketConfig is like [net.ListenConfig] and [net.Dialer] in one with a subjectively nicer API.
+type UDPSocketConfig struct {
 	fns setFuncSlice
 }
 
-// ListenUDP wraps [net.ListenConfig.ListenPacket] and returns a [*net.UDPConn] directly.
-func (lc *ListenConfig) ListenUDP(ctx context.Context, network, address string) (uc *net.UDPConn, info SocketInfo, err error) {
+// Listen wraps [net.ListenConfig.ListenPacket] and returns a [*net.UDPConn] directly.
+func (cfg *UDPSocketConfig) Listen(ctx context.Context, network, address string) (uc *net.UDPConn, info SocketInfo, err error) {
 	info.MaxUDPGSOSegments = 1
 	nlc := net.ListenConfig{
-		Control: lc.fns.controlFunc(&info),
+		Control: cfg.fns.controlFunc(&info),
 	}
 	pc, err := nlc.ListenPacket(ctx, network, address)
 	if err != nil {
@@ -77,58 +77,100 @@ func (lc *ListenConfig) ListenUDP(ctx context.Context, network, address string) 
 	return pc.(*net.UDPConn), info, nil
 }
 
-// ListenerSocketOptions contains listener-specific socket options.
-type ListenerSocketOptions struct {
-	// SendBufferSize sets the send buffer size of the listener.
+// Dial wraps [net.Dialer.DialContext] and returns a [*net.UDPConn] directly.
+func (cfg *UDPSocketConfig) Dial(ctx context.Context, localAddr Addr, network, address string) (uc *net.UDPConn, info SocketInfo, err error) {
+	nd := net.Dialer{
+		ControlContext: cfg.fns.controlContextFunc(&info),
+	}
+
+	if localAddr.IsValid() {
+		networkIP, err := ipNetworkFromUDPNetwork(network)
+		if err != nil {
+			return nil, info, err
+		}
+
+		localAddrPort, err := localAddr.ResolveIPPort(ctx, networkIP)
+		if err != nil {
+			return nil, info, err
+		}
+
+		nd.LocalAddr = net.UDPAddrFromAddrPort(localAddrPort)
+	}
+
+	info.MaxUDPGSOSegments = 1
+
+	c, err := nd.DialContext(ctx, network, address)
+	if err != nil {
+		return nil, info, err
+	}
+	return c.(*net.UDPConn), info, nil
+}
+
+func ipNetworkFromUDPNetwork(network string) (string, error) {
+	switch network {
+	case "udp":
+		return "ip", nil
+	case "udp4":
+		return "ip4", nil
+	case "udp6":
+		return "ip6", nil
+	default:
+		return "", net.UnknownNetworkError(network)
+	}
+}
+
+// UDPSocketOptions contains UDP-specific socket options.
+type UDPSocketOptions struct {
+	// SendBufferSize sets the send buffer size of the socket.
 	//
 	// This is best-effort and does not return an error if the operation fails.
 	//
 	// Available on POSIX systems.
 	SendBufferSize int
 
-	// ReceiveBufferSize sets the receive buffer size of the listener.
+	// ReceiveBufferSize sets the receive buffer size of the socket.
 	//
 	// This is best-effort and does not return an error if the operation fails.
 	//
 	// Available on POSIX systems.
 	ReceiveBufferSize int
 
-	// Fwmark sets the listener's fwmark on Linux, or user cookie on FreeBSD.
+	// Fwmark sets the socket's fwmark on Linux, or user cookie on FreeBSD.
 	//
 	// Available on Linux and FreeBSD.
 	Fwmark int
 
-	// TrafficClass sets the traffic class of the listener.
+	// TrafficClass sets the traffic class of the socket.
 	//
 	// Available on most platforms except Windows.
 	TrafficClass int
 
-	// PathMTUDiscovery enables Path MTU Discovery on the listener.
+	// PathMTUDiscovery enables Path MTU Discovery on the socket.
 	//
 	// Available on Linux, macOS, FreeBSD, and Windows.
 	PathMTUDiscovery bool
 
 	// ProbeUDPGSOSupport enables best-effort probing of
-	// UDP Generic Segmentation Offload (GSO) support on the listener.
+	// UDP Generic Segmentation Offload (GSO) support on the socket.
 	//
 	// Available on Linux and Windows.
 	ProbeUDPGSOSupport bool
 
-	// UDPGenericReceiveOffload enables UDP Generic Receive Offload (GRO) on the listener.
+	// UDPGenericReceiveOffload enables UDP Generic Receive Offload (GRO) on the socket.
 	//
 	// Available on Linux and Windows.
 	UDPGenericReceiveOffload bool
 
-	// ReceivePacketInfo enables the reception of packet information control messages on the listener.
+	// ReceivePacketInfo enables the reception of packet information control messages on the socket.
 	//
 	// Available on POSIX systems.
 	ReceivePacketInfo bool
 }
 
-// ListenConfig returns a [ListenConfig] that sets the socket options.
-func (lso ListenerSocketOptions) ListenConfig() ListenConfig {
-	return ListenConfig{
-		fns: lso.buildSetFns(),
+// socketConfig returns a [UDPSocketConfig] that sets the socket options.
+func (opts UDPSocketOptions) socketConfig() UDPSocketConfig {
+	return UDPSocketConfig{
+		fns: opts.buildSetFns(),
 	}
 }
 
@@ -142,8 +184,8 @@ func (lso ListenerSocketOptions) ListenConfig() ListenConfig {
 const DefaultUDPSocketBufferSize = 7 << 20
 
 var (
-	// DefaultUDPServerSocketOptions is the default [ListenerSocketOptions] for UDP servers.
-	DefaultUDPServerSocketOptions = ListenerSocketOptions{
+	// DefaultUDPServerSocketOptions is the default [UDPSocketOptions] for UDP servers.
+	DefaultUDPServerSocketOptions = UDPSocketOptions{
 		SendBufferSize:           DefaultUDPSocketBufferSize,
 		ReceiveBufferSize:        DefaultUDPSocketBufferSize,
 		PathMTUDiscovery:         true,
@@ -152,11 +194,11 @@ var (
 		ReceivePacketInfo:        true,
 	}
 
-	// DefaultUDPServerListenConfig is the default [ListenConfig] for UDP servers.
-	DefaultUDPServerListenConfig = DefaultUDPServerSocketOptions.ListenConfig()
+	// DefaultUDPServerSocketConfig is the default [UDPSocketConfig] for UDP servers.
+	DefaultUDPServerSocketConfig = DefaultUDPServerSocketOptions.socketConfig()
 
-	// DefaultUDPClientSocketOptions is the default [ListenerSocketOptions] for UDP clients.
-	DefaultUDPClientSocketOptions = ListenerSocketOptions{
+	// DefaultUDPClientSocketOptions is the default [UDPSocketOptions] for UDP clients.
+	DefaultUDPClientSocketOptions = UDPSocketOptions{
 		SendBufferSize:           DefaultUDPSocketBufferSize,
 		ReceiveBufferSize:        DefaultUDPSocketBufferSize,
 		PathMTUDiscovery:         true,
@@ -164,131 +206,28 @@ var (
 		UDPGenericReceiveOffload: true,
 	}
 
-	// DefaultUDPClientListenConfig is the default [ListenConfig] for UDP clients.
-	DefaultUDPClientListenConfig = DefaultUDPClientSocketOptions.ListenConfig()
+	// DefaultUDPClientSocketConfig is the default [UDPSocketConfig] for UDP clients.
+	DefaultUDPClientSocketConfig = DefaultUDPClientSocketOptions.socketConfig()
 )
 
-// Dialer is like [net.Dialer] but provides a subjectively nicer API.
-type Dialer struct {
-	fns setFuncSlice
-}
+// UDPSocketConfigCache is a cache for [UDPSocketConfig] instances.
+type UDPSocketConfigCache map[UDPSocketOptions]UDPSocketConfig
 
-// DialUDP wraps [net.Dialer.DialContext] and returns a [*net.UDPConn] directly.
-func (d *Dialer) DialUDP(ctx context.Context, network, address string) (uc *net.UDPConn, info SocketInfo, err error) {
-	info.MaxUDPGSOSegments = 1
-	nd := net.Dialer{
-		ControlContext: d.fns.controlContextFunc(&info),
-	}
-	c, err := nd.DialContext(ctx, network, address)
-	if err != nil {
-		return nil, info, err
-	}
-	return c.(*net.UDPConn), info, nil
-}
-
-// DialerSocketOptions contains dialer-specific socket options.
-type DialerSocketOptions struct {
-	// SendBufferSize sets the send buffer size of the dialer.
-	//
-	// This is best-effort and does not return an error if the operation fails.
-	//
-	// Available on POSIX systems.
-	SendBufferSize int
-
-	// ReceiveBufferSize sets the receive buffer size of the dialer.
-	//
-	// This is best-effort and does not return an error if the operation fails.
-	//
-	// Available on POSIX systems.
-	ReceiveBufferSize int
-
-	// Fwmark sets the dialer's fwmark on Linux, or user cookie on FreeBSD.
-	//
-	// Available on Linux and FreeBSD.
-	Fwmark int
-
-	// TrafficClass sets the traffic class of the dialer.
-	//
-	// Available on most platforms except Windows.
-	TrafficClass int
-
-	// PathMTUDiscovery enables Path MTU Discovery on the dialer.
-	//
-	// Available on Linux, macOS, FreeBSD, and Windows.
-	PathMTUDiscovery bool
-
-	// ProbeUDPGSOSupport enables best-effort probing of
-	// UDP Generic Segmentation Offload (GSO) support on the dialer.
-	//
-	// Available on Linux and Windows.
-	ProbeUDPGSOSupport bool
-
-	// UDPGenericReceiveOffload enables UDP Generic Receive Offload (GRO) on the dialer.
-	//
-	// Available on Linux and Windows.
-	UDPGenericReceiveOffload bool
-}
-
-// Dialer returns a [Dialer] that sets the socket options.
-func (dso DialerSocketOptions) Dialer() Dialer {
-	return Dialer{
-		fns: dso.buildSetFns(),
+// NewUDPSocketConfigCache creates a new cache for [UDPSocketConfig] with a few default entries.
+func NewUDPSocketConfigCache() UDPSocketConfigCache {
+	return UDPSocketConfigCache{
+		DefaultUDPServerSocketOptions: DefaultUDPServerSocketConfig,
+		DefaultUDPClientSocketOptions: DefaultUDPClientSocketConfig,
 	}
 }
 
-var (
-	// DefaultUDPDialerSocketOptions is the default [DialerSocketOptions] for UDP clients.
-	DefaultUDPDialerSocketOptions = DialerSocketOptions{
-		SendBufferSize:           DefaultUDPSocketBufferSize,
-		ReceiveBufferSize:        DefaultUDPSocketBufferSize,
-		PathMTUDiscovery:         true,
-		ProbeUDPGSOSupport:       true,
-		UDPGenericReceiveOffload: true,
-	}
-
-	// DefaultUDPDialer is the default [Dialer] for UDP clients.
-	DefaultUDPDialer = DefaultUDPDialerSocketOptions.Dialer()
-)
-
-// ListenConfigCache is a map of [ListenerSocketOptions] to [ListenConfig].
-type ListenConfigCache map[ListenerSocketOptions]ListenConfig
-
-// NewListenConfigCache creates a new cache for [ListenConfig] with a few default entries.
-func NewListenConfigCache() ListenConfigCache {
-	return ListenConfigCache{
-		DefaultUDPServerSocketOptions: DefaultUDPServerListenConfig,
-		DefaultUDPClientSocketOptions: DefaultUDPClientListenConfig,
-	}
-}
-
-// Get returns a [ListenConfig] for the given [ListenerSocketOptions].
-func (cache ListenConfigCache) Get(lso ListenerSocketOptions) (lc ListenConfig) {
-	lc, ok := cache[lso]
+// Get returns a [UDPSocketConfig] for the given [UDPSocketOptions].
+func (cache UDPSocketConfigCache) Get(opts UDPSocketOptions) (cfg UDPSocketConfig) {
+	cfg, ok := cache[opts]
 	if ok {
-		return
+		return cfg
 	}
-	lc = lso.ListenConfig()
-	cache[lso] = lc
-	return
-}
-
-// DialerCache is a map of [DialerSocketOptions] to [Dialer].
-type DialerCache map[DialerSocketOptions]Dialer
-
-// NewDialerCache creates a new cache for [Dialer] with a few default entries.
-func NewDialerCache() DialerCache {
-	return DialerCache{
-		DefaultUDPDialerSocketOptions: DefaultUDPDialer,
-	}
-}
-
-// Get returns a [Dialer] for the given [DialerSocketOptions].
-func (cache DialerCache) Get(dso DialerSocketOptions) (d Dialer) {
-	d, ok := cache[dso]
-	if ok {
-		return
-	}
-	d = dso.Dialer()
-	cache[dso] = d
-	return
+	cfg = opts.socketConfig()
+	cache[opts] = cfg
+	return cfg
 }

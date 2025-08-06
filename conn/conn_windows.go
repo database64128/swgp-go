@@ -76,21 +76,12 @@ func setRecvPktinfo(fd int, network string) error {
 	return nil
 }
 
-func (lso ListenerSocketOptions) buildSetFns() setFuncSlice {
+func (opts UDPSocketOptions) buildSetFns() setFuncSlice {
 	return setFuncSlice{}.
-		appendSetSendBufferSize(lso.SendBufferSize).
-		appendSetRecvBufferSize(lso.ReceiveBufferSize).
-		appendSetPMTUDFunc(lso.PathMTUDiscovery).
-		appendProbeUDPGSOSupportFunc(lso.ProbeUDPGSOSupport).
-		appendSetUDPGenericReceiveOffloadFunc(lso.UDPGenericReceiveOffload).
-		appendSetRecvPktinfoFunc(lso.ReceivePacketInfo)
-}
-
-func (dso DialerSocketOptions) buildSetFns() setFuncSlice {
-	return setFuncSlice{}.
-		appendSetSendBufferSize(dso.SendBufferSize).
-		appendSetRecvBufferSize(dso.ReceiveBufferSize).
-		appendSetPMTUDFunc(dso.PathMTUDiscovery).
-		appendProbeUDPGSOSupportFunc(dso.ProbeUDPGSOSupport).
-		appendSetUDPGenericReceiveOffloadFunc(dso.UDPGenericReceiveOffload)
+		appendSetSendBufferSize(opts.SendBufferSize).
+		appendSetRecvBufferSize(opts.ReceiveBufferSize).
+		appendSetPMTUDFunc(opts.PathMTUDiscovery).
+		appendProbeUDPGSOSupportFunc(opts.ProbeUDPGSOSupport).
+		appendSetUDPGenericReceiveOffloadFunc(opts.UDPGenericReceiveOffload).
+		appendSetRecvPktinfoFunc(opts.ReceivePacketInfo)
 }

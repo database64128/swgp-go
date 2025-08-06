@@ -76,37 +76,37 @@ type serverNatDownlinkGeneric struct {
 }
 
 type server struct {
-	name                  string
-	proxyListenNetwork    string
-	proxyListenAddress    string
-	wgConnListenAddress   string
-	relayBatchSize        int
-	mainRecvBatchSize     int
-	sendChannelCapacity   int
-	packetBufSize         int
-	maxProxyPacketSizev4  int
-	maxProxyPacketSizev6  int
-	wgTunnelMTUv4         int
-	wgTunnelMTUv6         int
-	disableMmsg           bool
-	wgNetwork             string
-	wgAddr                conn.Addr
-	handler4              packet.Handler
-	handler6              packet.Handler
-	logger                *tslog.Logger
-	proxyConn             *net.UDPConn
-	proxyConnListenConfig conn.ListenConfig
-	wgConnListenConfig    conn.ListenConfig
-	packetBufPool         sync.Pool
-	mu                    sync.Mutex
-	wg                    sync.WaitGroup
-	mwg                   sync.WaitGroup
-	table                 map[netip.AddrPort]*serverNatEntry
+	name                 string
+	proxyListenNetwork   string
+	proxyListenAddress   string
+	wgConnListenAddress  string
+	relayBatchSize       int
+	mainRecvBatchSize    int
+	sendChannelCapacity  int
+	packetBufSize        int
+	maxProxyPacketSizev4 int
+	maxProxyPacketSizev6 int
+	wgTunnelMTUv4        int
+	wgTunnelMTUv6        int
+	disableMmsg          bool
+	wgNetwork            string
+	wgAddr               conn.Addr
+	handler4             packet.Handler
+	handler6             packet.Handler
+	logger               *tslog.Logger
+	proxyConn            *net.UDPConn
+	proxyConnConfig      conn.UDPSocketConfig
+	wgConnConfig         conn.UDPSocketConfig
+	packetBufPool        sync.Pool
+	mu                   sync.Mutex
+	wg                   sync.WaitGroup
+	mwg                  sync.WaitGroup
+	table                map[netip.AddrPort]*serverNatEntry
 }
 
 // Server creates a swgp server service from the server config.
 // Call the Start method on the returned service to start it.
-func (sc *ServerConfig) Server(logger *tslog.Logger, listenConfigCache conn.ListenConfigCache) (*server, error) {
+func (sc *ServerConfig) Server(logger *tslog.Logger, socketConfigCache conn.UDPSocketConfigCache) (*server, error) {
 	// Require MTU to be at least 1280.
 	if sc.MTU < minimumMTU {
 		return nil, ErrMTUTooSmall
@@ -167,7 +167,7 @@ func (sc *ServerConfig) Server(logger *tslog.Logger, listenConfigCache conn.List
 		handler4:             handler4,
 		handler6:             handler6,
 		logger:               logger,
-		proxyConnListenConfig: listenConfigCache.Get(conn.ListenerSocketOptions{
+		proxyConnConfig: socketConfigCache.Get(conn.UDPSocketOptions{
 			SendBufferSize:           conn.DefaultUDPSocketBufferSize,
 			ReceiveBufferSize:        conn.DefaultUDPSocketBufferSize,
 			Fwmark:                   sc.ProxyFwmark,
@@ -177,7 +177,7 @@ func (sc *ServerConfig) Server(logger *tslog.Logger, listenConfigCache conn.List
 			UDPGenericReceiveOffload: !sc.DisableUDPGRO,
 			ReceivePacketInfo:        true,
 		}),
-		wgConnListenConfig: listenConfigCache.Get(conn.ListenerSocketOptions{
+		wgConnConfig: socketConfigCache.Get(conn.UDPSocketOptions{
 			SendBufferSize:           conn.DefaultUDPSocketBufferSize,
 			ReceiveBufferSize:        conn.DefaultUDPSocketBufferSize,
 			Fwmark:                   sc.WgFwmark,
@@ -206,7 +206,7 @@ func (s *server) Start(ctx context.Context) (err error) {
 }
 
 func (s *server) startGeneric(ctx context.Context) error {
-	proxyConn, proxyConnInfo, err := s.proxyConnListenConfig.ListenUDP(ctx, s.proxyListenNetwork, s.proxyListenAddress)
+	proxyConn, proxyConnInfo, err := s.proxyConnConfig.Listen(ctx, s.proxyListenNetwork, s.proxyListenAddress)
 	if err != nil {
 		return err
 	}
@@ -450,7 +450,7 @@ func (s *server) recvFromProxyConnGeneric(ctx context.Context, logger *tslog.Log
 
 				wgConnListenNetwork := listenUDPNetworkForRemoteAddr(wgAddrPort.Addr())
 
-				wgConn, wgConnInfo, err := s.wgConnListenConfig.ListenUDP(ctx, wgConnListenNetwork, s.wgConnListenAddress)
+				wgConn, wgConnInfo, err := s.wgConnConfig.Listen(ctx, wgConnListenNetwork, s.wgConnListenAddress)
 				if err != nil {
 					logger.Warn("Failed to create UDP socket for new session",
 						tslog.AddrPort("clientAddress", clientAddrPort),

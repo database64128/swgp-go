@@ -210,9 +210,9 @@ func testClientServerConn(
 	),
 ) {
 	ctx := t.Context()
-	listenConfigCache := conn.NewListenConfigCache()
+	listenConfigCache := conn.NewUDPSocketConfigCache()
 
-	serverConn, serverConnInfo, err := conn.DefaultUDPServerListenConfig.ListenUDP(ctx, listenNetwork, listenAddress)
+	serverConn, serverConnInfo, err := conn.DefaultUDPServerSocketConfig.Listen(ctx, listenNetwork, listenAddress)
 	if err != nil {
 		t.Fatalf("Failed to listen server connection: %v", err)
 	}
@@ -273,9 +273,9 @@ func testClientServerConn(
 		clientConnInfo conn.SocketInfo
 	)
 	if !clientConnNoDial {
-		clientConn, clientConnInfo, err = conn.DefaultUDPDialer.DialUDP(ctx, listenNetwork, c.wgListenAddress)
+		clientConn, clientConnInfo, err = conn.DefaultUDPClientSocketConfig.Dial(ctx, conn.Addr{}, listenNetwork, c.wgListenAddress)
 	} else {
-		clientConn, clientConnInfo, err = conn.DefaultUDPClientListenConfig.ListenUDP(ctx, listenNetwork, listenAddress)
+		clientConn, clientConnInfo, err = conn.DefaultUDPClientSocketConfig.Listen(ctx, listenNetwork, listenAddress)
 	}
 	if err != nil {
 		t.Fatalf("Failed to dial client connection: %v", err)

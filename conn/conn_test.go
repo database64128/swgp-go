@@ -3,14 +3,14 @@ package conn
 import "testing"
 
 func TestListenUDP(t *testing.T) {
-	for _, lcc := range []struct {
-		name string
-		lc   ListenConfig
+	for _, c := range []struct {
+		name         string
+		socketConfig UDPSocketConfig
 	}{
-		{"DefaultUDPServerListenConfig", DefaultUDPServerListenConfig},
-		{"DefaultUDPClientListenConfig", DefaultUDPClientListenConfig},
+		{"DefaultUDPServerSocketConfig", DefaultUDPServerSocketConfig},
+		{"DefaultUDPClientSocketConfig", DefaultUDPClientSocketConfig},
 	} {
-		t.Run(lcc.name, func(t *testing.T) {
+		t.Run(c.name, func(t *testing.T) {
 			for _, nac := range []struct {
 				name    string
 				network string
@@ -25,7 +25,7 @@ func TestListenUDP(t *testing.T) {
 				{"udp6+loopback6", "udp6", "[::1]:"},
 			} {
 				t.Run(nac.name, func(t *testing.T) {
-					uc, _, err := lcc.lc.ListenUDP(t.Context(), nac.network, nac.address)
+					uc, _, err := c.socketConfig.Listen(t.Context(), nac.network, nac.address)
 					if err != nil {
 						t.Fatal(err)
 					}
