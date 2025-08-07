@@ -20,8 +20,6 @@ import (
 )
 
 type serverNatUplinkMmsg struct {
-	wgAddrPort   netip.AddrPort
-	wgConnIs4    bool
 	wgConn       *conn.MmsgWConn
 	wgConnInfo   conn.SocketInfo
 	wgConnSendCh <-chan queuedPacket
@@ -32,7 +30,6 @@ type serverNatDownlinkMmsg struct {
 	clientAddrPort     netip.AddrPort
 	clientPktinfop     *pktinfo
 	clientPktinfo      *atomic.Pointer[pktinfo]
-	wgAddrPort         netip.AddrPort
 	wgConn             *conn.MmsgRConn
 	proxyConn          *conn.MmsgWConn
 	proxyConnInfo      conn.SocketInfo
@@ -316,30 +313,22 @@ func (s *server) recvFromProxyConnRecvmmsg(ctx context.Context, logger *tslog.Lo
 						s.wg.Done()
 					}()
 
-					wgAddrPort, err := s.wgAddr.ResolveIPPort(ctx, s.wgNetwork)
-					if err != nil {
-						logger.Warn("Failed to resolve wgAddr",
-							tslog.AddrPort("clientAddress", clientAddrPort),
-							tslog.Err(err),
-						)
-						return
-					}
+					wgAddress := s.wgAddr.String()
 
-					wgConnListenNetwork := listenUDPNetworkForRemoteAddr(wgAddrPort.Addr())
-					wgConnListenAddress := s.wgConnListenAddress.String()
-
-					wgConn, wgConnInfo, err := s.wgConnConfig.ListenMmsgConn(ctx, wgConnListenNetwork, wgConnListenAddress)
+					wgConn, wgConnInfo, err := s.wgConnConfig.DialMmsgConn(ctx, s.wgConnListenAddress, s.wgNetwork, wgAddress)
 					if err != nil {
 						logger.Warn("Failed to create UDP socket for new session",
 							tslog.AddrPort("clientAddress", clientAddrPort),
-							slog.String("wgConnListenNetwork", wgConnListenNetwork),
-							slog.String("wgConnListenAddress", wgConnListenAddress),
+							tslog.ConnAddr("wgConnListenAddress", s.wgConnListenAddress),
+							slog.String("wgNetwork", s.wgNetwork),
+							slog.String("wgAddress", wgAddress),
 							tslog.Err(err),
 						)
 						return
 					}
 
 					wgConnListenAddrPort := wgConn.LocalAddr().(*net.UDPAddr).AddrPort()
+					wgAddrPort := wgConn.RemoteAddr().(*net.UDPAddr).AddrPort()
 
 					if err = wgConn.SetReadDeadline(time.Now().Add(RejectAfterTime)); err != nil {
 						logger.Error("Failed to SetReadDeadline on wgConn",
@@ -393,8 +382,6 @@ func (s *server) recvFromProxyConnRecvmmsg(ctx context.Context, logger *tslog.Lo
 
 					go func() {
 						s.relayProxyToWgSendmmsg(serverNatUplinkMmsg{
-							wgAddrPort:   wgAddrPort,
-							wgConnIs4:    wgConnListenAddrPort.Addr().Is4(),
 							wgConn:       wgConn.NewWConn(),
 							wgConnInfo:   wgConnInfo,
 							wgConnSendCh: wgConnSendCh,
@@ -408,7 +395,6 @@ func (s *server) recvFromProxyConnRecvmmsg(ctx context.Context, logger *tslog.Lo
 						clientAddrPort:     clientAddrPort,
 						clientPktinfop:     clientPktinfop,
 						clientPktinfo:      &natEntry.clientPktinfo,
-						wgAddrPort:         wgAddrPort,
 						wgConn:             wgConn.NewRConn(),
 						proxyConn:          proxyConn.NewWConn(),
 						proxyConnInfo:      proxyConnInfo,
@@ -469,7 +455,6 @@ func (s *server) relayProxyToWgSendmmsg(uplink serverNatUplinkMmsg) {
 		burstSegmentCount uint32
 	)
 
-	name, namelen := conn.AddrPortToSockaddrWithAddressFamily(uplink.wgAddrPort, uplink.wgConnIs4)
 	cmsgBuf := make([]byte, 0, s.relayBatchSize*conn.SocketControlMessageBufferSize)
 	bufvec := make([][]byte, 0, s.relayBatchSize)
 	iovec := make([]unix.Iovec, 0, s.relayBatchSize)
@@ -527,8 +512,6 @@ func (s *server) relayProxyToWgSendmmsg(uplink serverNatUplinkMmsg) {
 
 				msgvec = append(msgvec, conn.Mmsghdr{
 					Msghdr: unix.Msghdr{
-						Name:    name,
-						Namelen: namelen,
 						Iov:     &iovec[len(iovec)-1],
 						Iovlen:  1,
 						Control: unsafe.SliceData(cmsg),
@@ -624,7 +607,6 @@ func (s *server) relayWgToProxySendmmsg(downlink serverNatDownlinkMmsg) {
 	}
 
 	name, namelen := conn.AddrPortToSockaddr(downlink.clientAddrPort)
-	savec := make([]unix.RawSockaddrInet6, s.relayBatchSize)
 	recvPacketBuf := make([]byte, s.relayBatchSize*downlink.maxProxyPacketSize)
 	recvCmsgBuf := make([]byte, s.relayBatchSize*conn.SocketControlMessageBufferSize)
 	sendPacketBuf := make([]byte, 0, s.relayBatchSize*downlink.maxProxyPacketSize)
@@ -641,8 +623,6 @@ func (s *server) relayWgToProxySendmmsg(downlink serverNatDownlinkMmsg) {
 		riovec[i].Base = (*byte)(recvPacketBufp)
 		riovec[i].SetLen(downlink.maxProxyPacketSize)
 
-		rmsgvec[i].Msghdr.Name = (*byte)(unsafe.Pointer(&savec[i]))
-		rmsgvec[i].Msghdr.Namelen = unix.SizeofSockaddrInet6
 		rmsgvec[i].Msghdr.Iov = &riovec[i]
 		rmsgvec[i].Msghdr.SetIovlen(1)
 		rmsgvec[i].Msghdr.Control = (*byte)(recvCmsgBufp)
@@ -684,20 +664,6 @@ func (s *server) relayWgToProxySendmmsg(downlink serverNatDownlinkMmsg) {
 			remainingRecvCmsgBuf = remainingRecvCmsgBuf[conn.SocketControlMessageBufferSize:]
 			msg.Msghdr.SetControllen(conn.SocketControlMessageBufferSize)
 
-			packetSourceAddrPort, err := conn.SockaddrToAddrPort(msg.Msghdr.Name, msg.Msghdr.Namelen)
-			if err != nil {
-				downlink.logger.Error("Failed to parse sockaddr of packet from wgConn", tslog.Err(err))
-				continue
-			}
-			if !conn.AddrPortMappedEqual(packetSourceAddrPort, downlink.wgAddrPort) {
-				downlink.logger.Warn("Ignoring packet from non-wg address",
-					tslog.AddrPort("packetSourceAddress", packetSourceAddrPort),
-					tslog.Uint("packetLength", msg.Msglen),
-					tslog.Err(err),
-				)
-				continue
-			}
-
 			if err = conn.ParseFlagsForError(int(msg.Msghdr.Flags)); err != nil {
 				downlink.logger.Warn("Discarded packet from wgConn",
 					tslog.Uint("packetLength", msg.Msglen),
@@ -710,7 +676,6 @@ func (s *server) relayWgToProxySendmmsg(downlink serverNatDownlinkMmsg) {
 			rscm, err := conn.ParseSocketControlMessage(cmsg)
 			if err != nil {
 				downlink.logger.Error("Failed to parse socket control message from wgConn",
-					tslog.AddrPort("packetSourceAddress", packetSourceAddrPort),
 					slog.Int("cmsgLength", len(cmsg)),
 					tslog.Err(err),
 				)
