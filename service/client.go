@@ -54,28 +54,6 @@ type clientNatEntry struct {
 	proxyConnSendCh    chan<- queuedPacket
 }
 
-type clientNatUplinkGeneric struct {
-	proxyAddrPort   netip.AddrPort
-	proxyConn       *net.UDPConn
-	proxyConnInfo   conn.SocketInfo
-	proxyConnSendCh <-chan queuedPacket
-	handler         packet.Handler
-	logger          *tslog.Logger
-}
-
-type clientNatDownlinkGeneric struct {
-	clientAddrPort     netip.AddrPort
-	clientPktinfop     *pktinfo
-	clientPktinfo      *atomic.Pointer[pktinfo]
-	proxyAddrPort      netip.AddrPort
-	proxyConn          *net.UDPConn
-	wgConn             *net.UDPConn
-	wgConnInfo         conn.SocketInfo
-	handler            packet.Handler
-	maxProxyPacketSize int
-	logger             *tslog.Logger
-}
-
 type client struct {
 	name                   string
 	wgListenNetwork        string
@@ -459,30 +437,30 @@ func (c *client) recvFromWgConnGeneric(ctx context.Context, logger *tslog.Logger
 				c.wg.Add(1)
 
 				go func() {
-					c.relayWgToProxyGeneric(clientNatUplinkGeneric{
-						proxyAddrPort:   proxyAddrPort,
-						proxyConn:       proxyConn,
-						proxyConnInfo:   proxyConnInfo,
-						proxyConnSendCh: proxyConnSendCh,
-						handler:         handler,
-						logger:          sesLogger,
-					})
+					c.relayWgToProxyGeneric(
+						proxyAddrPort,
+						proxyConn,
+						proxyConnInfo,
+						proxyConnSendCh,
+						handler,
+						sesLogger,
+					)
 					proxyConn.Close()
 					c.wg.Done()
 				}()
 
-				c.relayProxyToWgGeneric(clientNatDownlinkGeneric{
-					clientAddrPort:     clientAddrPort,
-					clientPktinfop:     clientPktinfop,
-					clientPktinfo:      &natEntry.clientPktinfo,
-					proxyAddrPort:      proxyAddrPort,
-					proxyConn:          proxyConn,
-					wgConn:             wgConn,
-					wgConnInfo:         wgConnInfo,
-					handler:            handler,
-					maxProxyPacketSize: maxProxyPacketSize,
-					logger:             sesLogger,
-				})
+				c.relayProxyToWgGeneric(
+					clientAddrPort,
+					clientPktinfop,
+					&natEntry.clientPktinfo,
+					proxyAddrPort,
+					proxyConn,
+					wgConn,
+					wgConnInfo,
+					handler,
+					maxProxyPacketSize,
+					sesLogger,
+				)
 			}()
 
 			if logger.Enabled(slog.LevelDebug) {
@@ -519,7 +497,14 @@ func (c *client) recvFromWgConnGeneric(ctx context.Context, logger *tslog.Logger
 	)
 }
 
-func (c *client) relayWgToProxyGeneric(uplink clientNatUplinkGeneric) {
+func (c *client) relayWgToProxyGeneric(
+	proxyAddrPort netip.AddrPort,
+	proxyConn *net.UDPConn,
+	proxyConnInfo conn.SocketInfo,
+	proxyConnSendCh <-chan queuedPacket,
+	handler packet.Handler,
+	logger *tslog.Logger,
+) {
 	packetBuf := make([]byte, 0, c.packetBufSize)
 	cmsgBuf := make([]byte, 0, conn.SocketControlMessageBufferSize)
 
@@ -531,7 +516,7 @@ func (c *client) relayWgToProxyGeneric(uplink clientNatUplinkGeneric) {
 		burstSegmentCount uint32
 	)
 
-	for rqp := range uplink.proxyConnSendCh {
+	for rqp := range proxyConnSendCh {
 		var (
 			isHandshake     bool
 			sqpLength       uint32
@@ -549,9 +534,9 @@ func (c *client) relayWgToProxyGeneric(uplink clientNatUplinkGeneric) {
 				isHandshake = true
 			}
 
-			dst, err := uplink.handler.Encrypt(packetBuf, wgPacket)
+			dst, err := handler.Encrypt(packetBuf, wgPacket)
 			if err != nil {
-				uplink.logger.Warn("Failed to encrypt wgPacket",
+				logger.Warn("Failed to encrypt wgPacket",
 					slog.Int("packetLength", wgPacketLength),
 					tslog.Err(err),
 				)
@@ -612,7 +597,7 @@ func (c *client) relayWgToProxyGeneric(uplink clientNatUplinkGeneric) {
 			b := sqp.buf
 			segmentsRemaining := sqp.segmentCount
 
-			maxUDPGSOSegments := uplink.proxyConnInfo.MaxUDPGSOSegments
+			maxUDPGSOSegments := proxyConnInfo.MaxUDPGSOSegments
 			if maxUDPGSOSegments > 1 {
 				// Cap each coalesced message to 65535 bytes to prevent -EMSGSIZE.
 				maxUDPGSOSegments = max(1, 65535/sqp.segmentSize)
@@ -634,9 +619,9 @@ func (c *client) relayWgToProxyGeneric(uplink clientNatUplinkGeneric) {
 					cmsg = scm.AppendTo(cmsgBuf)
 				}
 
-				n, _, err := uplink.proxyConn.WriteMsgUDPAddrPort(sendBuf, cmsg, uplink.proxyAddrPort)
+				n, _, err := proxyConn.WriteMsgUDPAddrPort(sendBuf, cmsg, proxyAddrPort)
 				if err != nil {
-					uplink.logger.Warn("Failed to write swgpPacket to proxyConn",
+					logger.Warn("Failed to write swgpPacket to proxyConn",
 						slog.Int("swgpPacketLength", sendBufSize),
 						tslog.Uint("segmentSize", sqp.segmentSize),
 						tslog.Err(err),
@@ -655,13 +640,13 @@ func (c *client) relayWgToProxyGeneric(uplink clientNatUplinkGeneric) {
 		packetBuf = packetBuf[:0]
 
 		if isHandshake {
-			if err := uplink.proxyConn.SetReadDeadline(time.Now().Add(RejectAfterTime)); err != nil {
-				uplink.logger.Error("Failed to SetReadDeadline on proxyConn", tslog.Err(err))
+			if err := proxyConn.SetReadDeadline(time.Now().Add(RejectAfterTime)); err != nil {
+				logger.Error("Failed to SetReadDeadline on proxyConn", tslog.Err(err))
 			}
 		}
 	}
 
-	uplink.logger.Info("Finished relay wgConn -> proxyConn",
+	logger.Info("Finished relay wgConn -> proxyConn",
 		tslog.Uint("sendmsgCount", sendmsgCount),
 		tslog.Uint("packetsSent", packetsSent),
 		tslog.Uint("swgpBytesSent", swgpBytesSent),
@@ -669,7 +654,18 @@ func (c *client) relayWgToProxyGeneric(uplink clientNatUplinkGeneric) {
 	)
 }
 
-func (c *client) relayProxyToWgGeneric(downlink clientNatDownlinkGeneric) {
+func (c *client) relayProxyToWgGeneric(
+	clientAddrPort netip.AddrPort,
+	clientPktinfop *pktinfo,
+	atomicClientPktinfop *atomic.Pointer[pktinfo],
+	proxyAddrPort netip.AddrPort,
+	proxyConn *net.UDPConn,
+	wgConn *net.UDPConn,
+	wgConnInfo conn.SocketInfo,
+	handler packet.Handler,
+	maxProxyPacketSize int,
+	logger *tslog.Logger,
+) {
 	var (
 		clientPktinfo         pktinfo
 		queuedPackets         []queuedPacket
@@ -683,22 +679,22 @@ func (c *client) relayProxyToWgGeneric(downlink clientNatDownlinkGeneric) {
 		burstSendSegmentCount uint32
 	)
 
-	if downlink.clientPktinfop != nil {
-		clientPktinfo = *downlink.clientPktinfop
+	if clientPktinfop != nil {
+		clientPktinfo = *clientPktinfop
 	}
 
-	recvPacketBuf := make([]byte, downlink.maxProxyPacketSize)
+	recvPacketBuf := make([]byte, maxProxyPacketSize)
 	recvCmsgBuf := make([]byte, conn.SocketControlMessageBufferSize)
-	sendPacketBuf := make([]byte, 0, downlink.maxProxyPacketSize)
+	sendPacketBuf := make([]byte, 0, maxProxyPacketSize)
 	sendCmsgBuf := make([]byte, 0, conn.SocketControlMessageBufferSize)
 
 	for {
-		n, cmsgn, flags, packetSourceAddrPort, err := downlink.proxyConn.ReadMsgUDPAddrPort(recvPacketBuf, recvCmsgBuf)
+		n, cmsgn, flags, packetSourceAddrPort, err := proxyConn.ReadMsgUDPAddrPort(recvPacketBuf, recvCmsgBuf)
 		if err != nil {
 			if errors.Is(err, os.ErrDeadlineExceeded) {
 				break
 			}
-			downlink.logger.Warn("Failed to read from proxyConn",
+			logger.Warn("Failed to read from proxyConn",
 				tslog.AddrPort("packetSourceAddress", packetSourceAddrPort),
 				slog.Int("packetLength", n),
 				slog.Int("cmsgLength", cmsgn),
@@ -707,7 +703,7 @@ func (c *client) relayProxyToWgGeneric(downlink clientNatDownlinkGeneric) {
 			continue
 		}
 		if err = conn.ParseFlagsForError(flags); err != nil {
-			downlink.logger.Warn("Failed to read from proxyConn",
+			logger.Warn("Failed to read from proxyConn",
 				tslog.AddrPort("packetSourceAddress", packetSourceAddrPort),
 				slog.Int("packetLength", n),
 				slog.Int("cmsgLength", cmsgn),
@@ -716,8 +712,8 @@ func (c *client) relayProxyToWgGeneric(downlink clientNatDownlinkGeneric) {
 			continue
 		}
 
-		if packetSourceAddrPort != downlink.proxyAddrPort {
-			downlink.logger.Warn("Ignoring packet from non-proxy address",
+		if packetSourceAddrPort != proxyAddrPort {
+			logger.Warn("Ignoring packet from non-proxy address",
 				tslog.AddrPort("packetSourceAddress", packetSourceAddrPort),
 				slog.Int("packetLength", n),
 				tslog.Err(err),
@@ -727,7 +723,7 @@ func (c *client) relayProxyToWgGeneric(downlink clientNatDownlinkGeneric) {
 
 		rscm, err := conn.ParseSocketControlMessage(recvCmsgBuf[:cmsgn])
 		if err != nil {
-			downlink.logger.Error("Failed to parse socket control message from proxyConn",
+			logger.Error("Failed to parse socket control message from proxyConn",
 				tslog.AddrPort("packetSourceAddress", packetSourceAddrPort),
 				slog.Int("cmsgLength", cmsgn),
 				tslog.Err(err),
@@ -758,9 +754,9 @@ func (c *client) relayProxyToWgGeneric(downlink clientNatDownlinkGeneric) {
 			swgpPacketBuf = swgpPacketBuf[swgpPacketLength:]
 			recvSegmentCount++
 
-			dst, err := downlink.handler.Decrypt(sendPacketBuf, swgpPacket)
+			dst, err := handler.Decrypt(sendPacketBuf, swgpPacket)
 			if err != nil {
-				downlink.logger.Warn("Failed to decrypt swgpPacket",
+				logger.Warn("Failed to decrypt swgpPacket",
 					slog.Int("packetLength", swgpPacketLength),
 					tslog.Err(err),
 				)
@@ -818,16 +814,16 @@ func (c *client) relayProxyToWgGeneric(downlink clientNatDownlinkGeneric) {
 			continue
 		}
 
-		if cpp := downlink.clientPktinfo.Load(); cpp != downlink.clientPktinfop {
+		if cpp := atomicClientPktinfop.Load(); cpp != clientPktinfop {
 			clientPktinfo = *cpp
-			downlink.clientPktinfop = cpp
+			clientPktinfop = cpp
 		}
 
 		for _, qp := range queuedPackets {
 			b := qp.buf
 			segmentsRemaining := qp.segmentCount
 
-			maxUDPGSOSegments := downlink.wgConnInfo.MaxUDPGSOSegments
+			maxUDPGSOSegments := wgConnInfo.MaxUDPGSOSegments
 			if maxUDPGSOSegments > 1 {
 				// Cap each coalesced message to 65535 bytes to prevent -EMSGSIZE.
 				maxUDPGSOSegments = max(1, 65535/qp.segmentSize)
@@ -850,9 +846,9 @@ func (c *client) relayProxyToWgGeneric(downlink clientNatDownlinkGeneric) {
 				}
 				cmsg := sscm.AppendTo(sendCmsgBuf)
 
-				n, _, err := downlink.wgConn.WriteMsgUDPAddrPort(sendBuf, cmsg, downlink.clientAddrPort)
+				n, _, err := wgConn.WriteMsgUDPAddrPort(sendBuf, cmsg, clientAddrPort)
 				if err != nil {
-					downlink.logger.Warn("Failed to write wgPacket to wgConn",
+					logger.Warn("Failed to write wgPacket to wgConn",
 						slog.Int("wgPacketLength", sendBufSize),
 						tslog.Uint("segmentSize", qp.segmentSize),
 						tslog.Uint("segmentCount", sendSegmentCount),
@@ -872,7 +868,7 @@ func (c *client) relayProxyToWgGeneric(downlink clientNatDownlinkGeneric) {
 		sendPacketBuf = sendPacketBuf[:0]
 	}
 
-	downlink.logger.Info("Finished relay proxyConn -> wgConn",
+	logger.Info("Finished relay proxyConn -> wgConn",
 		tslog.Uint("recvmsgCount", recvmsgCount),
 		tslog.Uint("packetsReceived", packetsReceived),
 		tslog.Uint("swgpBytesReceived", swgpBytesReceived),
