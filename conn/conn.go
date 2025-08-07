@@ -66,10 +66,17 @@ type UDPSocketConfig struct {
 
 // Listen wraps [net.ListenConfig.ListenPacket] and returns a [*net.UDPConn] directly.
 func (cfg *UDPSocketConfig) Listen(ctx context.Context, network, address string) (uc *net.UDPConn, info SocketInfo, err error) {
+	network, err = udpNetwork(network)
+	if err != nil {
+		return nil, info, err
+	}
+
 	info.MaxUDPGSOSegments = 1
+
 	nlc := net.ListenConfig{
 		Control: cfg.fns.controlFunc(&info),
 	}
+
 	pc, err := nlc.ListenPacket(ctx, network, address)
 	if err != nil {
 		return nil, info, err
@@ -84,7 +91,7 @@ func (cfg *UDPSocketConfig) Dial(ctx context.Context, localAddr Addr, network, a
 	}
 
 	if localAddr.IsValid() {
-		networkIP, err := ipNetworkFromUDPNetwork(network)
+		networkIP, err := ipNetwork(network)
 		if err != nil {
 			return nil, info, err
 		}
@@ -97,6 +104,11 @@ func (cfg *UDPSocketConfig) Dial(ctx context.Context, localAddr Addr, network, a
 		nd.LocalAddr = net.UDPAddrFromAddrPort(localAddrPort)
 	}
 
+	network, err = udpNetwork(network)
+	if err != nil {
+		return nil, info, err
+	}
+
 	info.MaxUDPGSOSegments = 1
 
 	c, err := nd.DialContext(ctx, network, address)
@@ -106,14 +118,31 @@ func (cfg *UDPSocketConfig) Dial(ctx context.Context, localAddr Addr, network, a
 	return c.(*net.UDPConn), info, nil
 }
 
-func ipNetworkFromUDPNetwork(network string) (string, error) {
+func ipNetwork(network string) (string, error) {
 	switch network {
+	case "ip", "ip4", "ip6":
+		return network, nil
 	case "udp":
 		return "ip", nil
 	case "udp4":
 		return "ip4", nil
 	case "udp6":
 		return "ip6", nil
+	default:
+		return "", net.UnknownNetworkError(network)
+	}
+}
+
+func udpNetwork(network string) (string, error) {
+	switch network {
+	case "udp", "udp4", "udp6":
+		return network, nil
+	case "ip":
+		return "udp", nil
+	case "ip4":
+		return "udp4", nil
+	case "ip6":
+		return "udp6", nil
 	default:
 		return "", net.UnknownNetworkError(network)
 	}
