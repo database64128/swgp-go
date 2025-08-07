@@ -6,5 +6,5 @@ require (
 	github.com/database64128/netx-go v0.1.0
 	github.com/lmittmann/tint v1.1.2
 	golang.org/x/crypto v0.40.0
-	golang.org/x/sys v0.34.0
+	golang.org/x/sys v0.35.0
 )
