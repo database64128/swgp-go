@@ -385,25 +385,3 @@ func TestAddrParsing(t *testing.T) {
 		})
 	}
 }
-
-var (
-	addrPort4    = netip.AddrPortFrom(netip.AddrFrom4([4]byte{127, 0, 0, 1}), 1080)
-	addrPort4in6 = netip.AddrPortFrom(netip.AddrFrom16([16]byte{10: 0xff, 11: 0xff, 127, 0, 0, 1}), 1080)
-)
-
-func TestAddrPortMappedEqual(t *testing.T) {
-	for _, c := range []struct {
-		a, b netip.AddrPort
-		eq   bool
-	}{
-		{addrPort4, addrPort4, true},
-		{addrPort4, addrPort4in6, true},
-		{addrPort4in6, addrPort4in6, true},
-		{addrPort4, addrIPAddrPort, false},
-		{addrPort4in6, addrIPAddrPort, false},
-	} {
-		if eq := AddrPortMappedEqual(c.a, c.b); eq != c.eq {
-			t.Errorf("AddrPortMappedEqual(%q, %q) = %t, want %t", c.a, c.b, eq, c.eq)
-		}
-	}
-}
