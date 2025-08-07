@@ -118,7 +118,7 @@ func (sc *ServerConfig) Server(logger *tslog.Logger, socketConfigCache conn.UDPS
 		sc.ProxyListenNetwork = "udp"
 	case "udp", "udp4", "udp6":
 	default:
-		return nil, fmt.Errorf("invalid proxyListenNetwork: %s", sc.ProxyListenNetwork)
+		return nil, fmt.Errorf("invalid proxyListenNetwork %q: not one of [udp udp4 udp6]", sc.ProxyListenNetwork)
 	}
 
 	// Check WgEndpointNetwork.
@@ -127,7 +127,7 @@ func (sc *ServerConfig) Server(logger *tslog.Logger, socketConfigCache conn.UDPS
 		sc.WgEndpointNetwork = "ip"
 	case "ip", "ip4", "ip6":
 	default:
-		return nil, fmt.Errorf("invalid wgEndpointNetwork: %s", sc.WgEndpointNetwork)
+		return nil, fmt.Errorf("invalid wgEndpointNetwork %q: not one of [ip ip4 ip6]", sc.WgEndpointNetwork)
 	}
 
 	// Check and apply PerfConfig defaults.
