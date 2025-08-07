@@ -99,19 +99,19 @@ var mtuCases = [...]struct {
 	mtu  int
 }{
 	{
-		name: "1492",
+		name: "MTU=1492",
 		mtu:  1492,
 	},
 	{
-		name: "1500",
+		name: "MTU=1500",
 		mtu:  1500,
 	},
 	{
-		name: "9000",
+		name: "MTU=9000",
 		mtu:  9000,
 	},
 	{
-		name: "65535",
+		name: "MTU=65535",
 		mtu:  65535,
 	},
 }
@@ -133,6 +133,48 @@ func firstLoopbackInterfaceMTU() int {
 	return 0
 }
 
+var mmsgCases = [...]struct {
+	name        string
+	disableMmsg bool
+}{
+	{
+		name:        "MmsgDefault",
+		disableMmsg: false,
+	},
+	{
+		name:        "MmsgDisabled",
+		disableMmsg: true,
+	},
+}
+
+var udpGSOCases = [...]struct {
+	name          string
+	disableUDPGSO bool
+}{
+	{
+		name:          "UDPGSODefault",
+		disableUDPGSO: false,
+	},
+	{
+		name:          "UDPGSODisabled",
+		disableUDPGSO: true,
+	},
+}
+
+var udpGROCases = [...]struct {
+	name          string
+	disableUDPGRO bool
+}{
+	{
+		name:          "UDPGRODefault",
+		disableUDPGRO: false,
+	},
+	{
+		name:          "UDPGRODisabled",
+		disableUDPGRO: true,
+	},
+}
+
 func TestClientServer(t *testing.T) {
 	logCfg := tslogtest.Config{Level: slog.LevelDebug}
 	logger := logCfg.NewTestLogger(t)
@@ -148,38 +190,55 @@ func TestClientServer(t *testing.T) {
 							if mtuCase.mtu > loMTU {
 								t.Skipf("MTU %d is larger than loopback interface MTU %d", mtuCase.mtu, loMTU)
 							}
-
 							t.Parallel()
+							for _, mmsgCase := range mmsgCases {
+								t.Run(mmsgCase.name, func(t *testing.T) {
+									t.Parallel()
+									for _, udpGSOCase := range udpGSOCases {
+										t.Run(udpGSOCase.name, func(t *testing.T) {
+											t.Parallel()
+											for _, udpGROCase := range udpGROCases {
+												t.Run(udpGROCase.name, func(t *testing.T) {
+													t.Parallel()
+													testClientServerConn(
+														t,
+														logger,
+														proxyModeCase.proxyMode,
+														proxyModeCase.generatePSK,
+														afCase.listenNetwork,
+														afCase.listenAddress,
+														afCase.endpointNetwork,
+														afCase.connectLocalAddress,
+														mtuCase.mtu,
+														PerfConfig{
+															DisableMmsg:   mmsgCase.disableMmsg,
+															DisableUDPGSO: udpGSOCase.disableUDPGSO,
+															DisableUDPGRO: udpGROCase.disableUDPGRO,
+														},
+														5*time.Second,
+														false,
+														func(
+															t *testing.T,
+															_ *tslog.Logger,
+															clientConn, serverConn *net.UDPConn,
+															_, _ conn.SocketInfo,
+															client *client, _ *server,
+														) {
+															t.Run("Handshake", func(t *testing.T) {
+																testClientServerHandshake(t, clientConn, serverConn)
+															})
 
-							testClientServerConn(
-								t,
-								logger,
-								proxyModeCase.proxyMode,
-								proxyModeCase.generatePSK,
-								afCase.listenNetwork,
-								afCase.listenAddress,
-								afCase.endpointNetwork,
-								afCase.connectLocalAddress,
-								mtuCase.mtu,
-								PerfConfig{},
-								5*time.Second,
-								false,
-								func(
-									t *testing.T,
-									_ *tslog.Logger,
-									clientConn, serverConn *net.UDPConn,
-									_, _ conn.SocketInfo,
-									client *client, _ *server,
-								) {
-									t.Run("Handshake", func(t *testing.T) {
-										testClientServerHandshake(t, clientConn, serverConn)
-									})
-
-									t.Run("DataPackets", func(t *testing.T) {
-										testClientServerDataPackets(t, clientConn, serverConn, client)
-									})
-								},
-							)
+															t.Run("DataPackets", func(t *testing.T) {
+																testClientServerDataPackets(t, clientConn, serverConn, client)
+															})
+														},
+													)
+												})
+											}
+										})
+									}
+								})
+							}
 						})
 					}
 				})
@@ -221,7 +280,7 @@ func testClientServerConn(
 	serverWgAddrPort := serverConn.LocalAddr().(*net.UDPAddr).AddrPort()
 
 	psk := generatePSK()
-	
+
 	serverConfig := ServerConfig{
 		Name:                "wg0",
 		ProxyListenNetwork:  listenNetwork,
@@ -399,29 +458,50 @@ func TestClientServerSendDrain(t *testing.T) {
 
 	for _, proxyModeCase := range proxyModeCases {
 		t.Run(proxyModeCase.name, func(t *testing.T) {
+			t.Parallel()
 			for _, afCase := range addressFamilyCases[1:2] { // No point in testing other cases.
 				t.Run(afCase.name, func(t *testing.T) {
+					t.Parallel()
 					for _, mtuCase := range mtuCases[1:] { // Skip 1492, which should perform similarly to 1500.
 						t.Run(mtuCase.name, func(t *testing.T) {
 							if mtuCase.mtu > loMTU {
 								t.Skipf("MTU %d is larger than loopback interface MTU %d", mtuCase.mtu, loMTU)
 							}
-
-							testClientServerConn(
-								t,
-								logger,
-								proxyModeCase.proxyMode,
-								proxyModeCase.generatePSK,
-								afCase.listenNetwork,
-								afCase.listenAddress,
-								afCase.endpointNetwork,
-								afCase.connectLocalAddress,
-								mtuCase.mtu,
-								PerfConfig{},
-								time.Minute,
-								true, // To work around https://github.com/golang/go/issues/74841, use ListenUDP for now.
-								testClientServerSendDrain,
-							)
+							t.Parallel()
+							for _, mmsgCase := range mmsgCases {
+								t.Run(mmsgCase.name, func(t *testing.T) {
+									t.Parallel()
+									for _, udpGSOCase := range udpGSOCases {
+										t.Run(udpGSOCase.name, func(t *testing.T) {
+											t.Parallel()
+											for _, udpGROCase := range udpGROCases {
+												t.Run(udpGROCase.name, func(t *testing.T) {
+													t.Parallel()
+													testClientServerConn(
+														t,
+														logger,
+														proxyModeCase.proxyMode,
+														proxyModeCase.generatePSK,
+														afCase.listenNetwork,
+														afCase.listenAddress,
+														afCase.endpointNetwork,
+														afCase.connectLocalAddress,
+														mtuCase.mtu,
+														PerfConfig{
+															DisableMmsg:   mmsgCase.disableMmsg,
+															DisableUDPGSO: udpGSOCase.disableUDPGSO,
+															DisableUDPGRO: udpGROCase.disableUDPGRO,
+														},
+														time.Minute,
+														true, // To work around https://github.com/golang/go/issues/74841, use ListenUDP for now.
+														testClientServerSendDrain,
+													)
+												})
+											}
+										})
+									}
+								})
+							}
 						})
 					}
 				})
@@ -535,6 +615,7 @@ func testDrainConn(t *testing.T, logger *tslog.Logger, drainConn *net.UDPConn) (
 	}
 
 	logger.Info("Drained packets",
+		slog.String("test", t.Name()),
 		tslog.Uint("recvmsgCount", recvmsgCount),
 		tslog.Uint("bytesReceived", bytesReceived),
 		tslog.Uint("packetsReceived", packetsReceived),
@@ -594,6 +675,7 @@ func testSendConn(
 	}
 
 	logger.Info("Sent packets",
+		slog.String("test", t.Name()),
 		tslog.Int("segmentSize", segmentSize),
 		tslog.Uint("segmentCount", segmentCount),
 		tslog.Uint("packetCount", sender.Count()),

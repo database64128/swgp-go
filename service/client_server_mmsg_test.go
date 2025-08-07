@@ -32,29 +32,44 @@ func TestClientServerMmsgSendDrain(t *testing.T) {
 
 	for _, proxyModeCase := range proxyModeCases {
 		t.Run(proxyModeCase.name, func(t *testing.T) {
+			t.Parallel()
 			for _, afCase := range addressFamilyCases[1:2] { // No point in testing other cases.
 				t.Run(afCase.name, func(t *testing.T) {
+					t.Parallel()
 					for _, mtuCase := range mtuCases[1:] { // Skip 1492, which should perform similarly to 1500.
 						t.Run(mtuCase.name, func(t *testing.T) {
 							if mtuCase.mtu > loMTU {
 								t.Skipf("MTU %d is larger than loopback interface MTU %d", mtuCase.mtu, loMTU)
 							}
-
-							testClientServerConn(
-								t,
-								logger,
-								proxyModeCase.proxyMode,
-								proxyModeCase.generatePSK,
-								afCase.listenNetwork,
-								afCase.listenAddress,
-								afCase.endpointNetwork,
-								afCase.connectLocalAddress,
-								mtuCase.mtu,
-								PerfConfig{},
-								time.Minute,
-								false,
-								testClientServerMmsgConn,
-							)
+							t.Parallel()
+							for _, udpGSOCase := range udpGSOCases {
+								t.Run(udpGSOCase.name, func(t *testing.T) {
+									t.Parallel()
+									for _, udpGROCase := range udpGROCases {
+										t.Run(udpGROCase.name, func(t *testing.T) {
+											t.Parallel()
+											testClientServerConn(
+												t,
+												logger,
+												proxyModeCase.proxyMode,
+												proxyModeCase.generatePSK,
+												afCase.listenNetwork,
+												afCase.listenAddress,
+												afCase.endpointNetwork,
+												afCase.connectLocalAddress,
+												mtuCase.mtu,
+												PerfConfig{
+													DisableUDPGSO: udpGSOCase.disableUDPGSO,
+													DisableUDPGRO: udpGROCase.disableUDPGRO,
+												},
+												time.Minute,
+												false,
+												testClientServerMmsgConn,
+											)
+										})
+									}
+								})
+							}
 						})
 					}
 				})
@@ -244,6 +259,7 @@ func testDrainMmsgConn(
 	}
 
 	logger.Info("Drained packets",
+		slog.String("test", t.Name()),
 		tslog.Uint("recvmmsgCount", recvmmsgCount),
 		tslog.Uint("msgsReceived", msgsReceived),
 		tslog.Uint("bytesReceived", bytesReceived),
@@ -329,6 +345,7 @@ func testSendMmsgConn(
 	}
 
 	logger.Info("Sent packets",
+		slog.String("test", t.Name()),
 		tslog.Int("segmentSize", segmentSize),
 		tslog.Uint("segmentCount", segmentCount),
 		tslog.Uint("packetCount", sender.Count()),
