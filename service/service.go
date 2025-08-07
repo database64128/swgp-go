@@ -267,8 +267,8 @@ func wgTunnelMTUFromMaxPacketSize(maxPacketSize int) int {
 	return (maxPacketSize - WireGuardDataPacketOverhead) & WireGuardDataPacketLengthMask
 }
 
-func listenUDPNetworkForRemoteAddr(remoteAddr netip.Addr) string {
-	if remoteAddr.Is4() || remoteAddr.Is4In6() {
+func listenUDPNetworkForUnmappedRemoteAddr(remoteAddr netip.Addr) string {
+	if remoteAddr.Is4() {
 		return "udp4"
 	}
 	return "udp6"

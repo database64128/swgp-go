@@ -387,12 +387,13 @@ func (c *client) recvFromWgConnGeneric(ctx context.Context, logger *tslog.Logger
 					return
 				}
 
-				// Work around https://github.com/golang/go/issues/74737.
+				// Unmapping proxyAddrPort aligns its address family with proxyConn,
+				// which enables direct equality comparison with the address returned by ReadMsgUDPAddrPort.
 				if proxyAddrPort.Addr().Is4In6() {
 					proxyAddrPort = netip.AddrPortFrom(proxyAddrPort.Addr().Unmap(), proxyAddrPort.Port())
 				}
 
-				proxyConnListenNetwork := listenUDPNetworkForRemoteAddr(proxyAddrPort.Addr())
+				proxyConnListenNetwork := listenUDPNetworkForUnmappedRemoteAddr(proxyAddrPort.Addr())
 				proxyConnListenAddress := c.proxyConnListenAddress.String()
 
 				proxyConn, proxyConnInfo, err := c.proxyConnConfig.Listen(ctx, proxyConnListenNetwork, proxyConnListenAddress)
@@ -715,7 +716,7 @@ func (c *client) relayProxyToWgGeneric(downlink clientNatDownlinkGeneric) {
 			continue
 		}
 
-		if !conn.AddrPortMappedEqual(packetSourceAddrPort, downlink.proxyAddrPort) {
+		if packetSourceAddrPort != downlink.proxyAddrPort {
 			downlink.logger.Warn("Ignoring packet from non-proxy address",
 				tslog.AddrPort("packetSourceAddress", packetSourceAddrPort),
 				slog.Int("packetLength", n),
