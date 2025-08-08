@@ -18,22 +18,75 @@ import (
 	"github.com/database64128/swgp-go/tslog"
 )
 
-// ServerConfig stores configurations for a swgp server service.
-// It may be marshaled as or unmarshaled from JSON.
+// ServerConfig is the configuration for a swgp server service.
 type ServerConfig struct {
-	Name                string    `json:"name"`
-	ProxyListenNetwork  string    `json:"proxyListenNetwork,omitzero"`
-	ProxyListenAddress  string    `json:"proxyListen"`
-	ProxyMode           string    `json:"proxyMode"`
-	ProxyPSK            []byte    `json:"proxyPSK"`
-	ProxyFwmark         int       `json:"proxyFwmark,omitzero"`
-	ProxyTrafficClass   int       `json:"proxyTrafficClass,omitzero"`
-	WgEndpointNetwork   string    `json:"wgEndpointNetwork,omitzero"`
-	WgEndpointAddress   conn.Addr `json:"wgEndpoint"`
+	// Name specifies the name of the server.
+	Name string `json:"name"`
+
+	// ProxyListenNetwork controls the address family of the server socket.
+	//
+	//  - "udp": Determine from system capabilities and listen address.
+	//  - "udp4": AF_INET
+	//  - "udp6": AF_INET6
+	//
+	// If unspecified, "udp" is used.
+	ProxyListenNetwork string `json:"proxyListenNetwork,omitzero"`
+
+	// ProxyListenAddress specifies the address to bind the server socket to.
+	ProxyListenAddress string `json:"proxyListen"`
+
+	// ProxyMode specifies the proxy protocol.
+	//
+	//  - "zero-overhead": Lightweight protocol with minimal overhead.
+	//  - "paranoid": Full-packet AEAD.
+	//
+	// See README for more information on the protocols.
+	ProxyMode string `json:"proxyMode"`
+
+	// ProxyPSK specifies the pre-shared key for the proxy.
+	ProxyPSK []byte `json:"proxyPSK"`
+
+	// ProxyFwmark optionally specifies the server socket's fwmark on Linux, or user cookie on FreeBSD.
+	//
+	// Available on Linux and FreeBSD.
+	ProxyFwmark int `json:"proxyFwmark,omitzero"`
+
+	// ProxyTrafficClass optionally specifies the server socket's traffic class.
+	//
+	// Available on most platforms except Windows.
+	ProxyTrafficClass int `json:"proxyTrafficClass,omitzero"`
+
+	// WgEndpointNetwork controls the address family of the resolved IP address
+	// when [WgEndpointAddress] is a domain name.
+	//
+	//  - "ip": System default
+	//  - "ip4": IPv4
+	//  - "ip6": IPv6
+	//
+	// If unspecified, "ip" is used.
+	WgEndpointNetwork string `json:"wgEndpointNetwork,omitzero"`
+
+	// WgEndpointAddress specifies the address of the WireGuard endpoint.
+	// It can be either an IP address or a domain name.
+	// Domain names are resolved on session establishment.
+	WgEndpointAddress conn.Addr `json:"wgEndpoint"`
+
+	// WgConnListenAddress optionally specifies the address to bind the WireGuard-facing socket to.
 	WgConnListenAddress conn.Addr `json:"wgConnListenAddress,omitzero"`
-	WgFwmark            int       `json:"wgFwmark,omitzero"`
-	WgTrafficClass      int       `json:"wgTrafficClass,omitzero"`
-	MTU                 int       `json:"mtu"`
+
+	// WgFwmark optionally specifies the WireGuard-facing socket's fwmark on Linux, or user cookie on FreeBSD.
+	//
+	// Available on Linux and FreeBSD.
+	WgFwmark int `json:"wgFwmark,omitzero"`
+
+	// WgTrafficClass optionally specifies the WireGuard-facing socket's traffic class.
+	//
+	// Available on most platforms except Windows.
+	WgTrafficClass int `json:"wgTrafficClass,omitzero"`
+
+	// MTU specifies the maximum transmission unit of the server's designated network path.
+	MTU int `json:"mtu"`
+
 	PerfConfig
 }
 

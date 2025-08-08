@@ -18,22 +18,75 @@ import (
 	"github.com/database64128/swgp-go/tslog"
 )
 
-// ClientConfig stores configurations for a swgp client service.
-// It may be marshaled as or unmarshaled from JSON.
+// ClientConfig is the configuration for a swgp client service.
 type ClientConfig struct {
-	Name                   string    `json:"name"`
-	WgListenNetwork        string    `json:"wgListenNetwork,omitzero"`
-	WgListenAddress        string    `json:"wgListen"`
-	WgFwmark               int       `json:"wgFwmark,omitzero"`
-	WgTrafficClass         int       `json:"wgTrafficClass,omitzero"`
-	ProxyEndpointNetwork   string    `json:"proxyEndpointNetwork,omitzero"`
-	ProxyEndpointAddress   conn.Addr `json:"proxyEndpoint"`
+	// Name specifies the name of the client.
+	Name string `json:"name"`
+
+	// WgListenNetwork controls the address family of the server socket.
+	//
+	//  - "udp": Determine from system capabilities and listen address.
+	//  - "udp4": AF_INET
+	//  - "udp6": AF_INET6
+	//
+	// If unspecified, "udp" is used.
+	WgListenNetwork string `json:"wgListenNetwork,omitzero"`
+
+	// WgListenAddress specifies the address to bind the server socket to.
+	WgListenAddress string `json:"wgListen"`
+
+	// WgFwmark optionally specifies the server socket's fwmark on Linux, or user cookie on FreeBSD.
+	//
+	// Available on Linux and FreeBSD.
+	WgFwmark int `json:"wgFwmark,omitzero"`
+
+	// WgTrafficClass optionally specifies the server socket's traffic class.
+	//
+	// Available on most platforms except Windows.
+	WgTrafficClass int `json:"wgTrafficClass,omitzero"`
+
+	// ProxyEndpointNetwork controls the address family of the resolved IP address
+	// when [ProxyEndpointAddress] is a domain name.
+	//
+	//  - "ip": System default
+	//  - "ip4": IPv4
+	//  - "ip6": IPv6
+	//
+	// If unspecified, "ip" is used.
+	ProxyEndpointNetwork string `json:"proxyEndpointNetwork,omitzero"`
+
+	// ProxyEndpointAddress specifies the address of the proxy server.
+	// It can be either an IP address or a domain name.
+	// Domain names are resolved on session establishment.
+	ProxyEndpointAddress conn.Addr `json:"proxyEndpoint"`
+
+	// ProxyConnListenAddress optionally specifies the address to bind the proxy-facing socket to.
 	ProxyConnListenAddress conn.Addr `json:"proxyConnListenAddress,omitzero"`
-	ProxyMode              string    `json:"proxyMode"`
-	ProxyPSK               []byte    `json:"proxyPSK"`
-	ProxyFwmark            int       `json:"proxyFwmark,omitzero"`
-	ProxyTrafficClass      int       `json:"proxyTrafficClass,omitzero"`
-	MTU                    int       `json:"mtu"`
+
+	// ProxyMode specifies the proxy protocol.
+	//
+	//  - "zero-overhead": Lightweight protocol with minimal overhead.
+	//  - "paranoid": Full-packet AEAD.
+	//
+	// See README for more information on the protocols.
+	ProxyMode string `json:"proxyMode"`
+
+	// ProxyPSK specifies the pre-shared key for the proxy.
+	ProxyPSK []byte `json:"proxyPSK"`
+
+	// ProxyFwmark optionally specifies the proxy-facing socket's fwmark on Linux, or user cookie on FreeBSD.
+	//
+	// Available on Linux and FreeBSD.
+	ProxyFwmark int `json:"proxyFwmark,omitzero"`
+
+	// ProxyTrafficClass optionally specifies the proxy-facing socket's traffic class.
+	//
+	// Available on most platforms except Windows.
+	ProxyTrafficClass int `json:"proxyTrafficClass,omitzero"`
+
+	// MTU specifies the maximum transmission unit of the client's designated network path.
+	MTU int `json:"mtu"`
+
 	PerfConfig
 }
 
