@@ -15,7 +15,7 @@ import (
 	"unsafe"
 
 	"github.com/database64128/swgp-go/conn"
-	"github.com/database64128/swgp-go/packet"
+	"github.com/database64128/swgp-go/internal/wireguard"
 	"github.com/database64128/swgp-go/service/internal/packetseq"
 	"github.com/database64128/swgp-go/tslog"
 	"github.com/database64128/swgp-go/tslogtest"
@@ -86,7 +86,7 @@ func testClientServerMmsgConn(
 	client *client, _ *server,
 ) {
 	var serverConnPeer netip.AddrPort
-	segmentSize := client.wgTunnelMTUv6 + WireGuardDataPacketOverhead
+	segmentSize := client.wgTunnelMTUv6 + wireguard.DataPacketOverhead
 	clientMmsgConn, err := conn.NewMmsgConn(clientConn)
 	if err != nil {
 		t.Fatalf("Failed to create clientMmsgConn: %v", err)
@@ -297,7 +297,7 @@ func testSendMmsgConn(
 			packetBufLen := len(packetBuf)
 			packetBuf = packetBuf[:packetBufLen+segmentSize]
 			segment := packetBuf[packetBufLen:]
-			segment[0] = packet.WireGuardMessageTypeData
+			segment[0] = wireguard.MessageTypeData
 			if i == 0 {
 				segmentCount++
 			}

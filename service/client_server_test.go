@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/database64128/swgp-go/conn"
-	"github.com/database64128/swgp-go/packet"
+	"github.com/database64128/swgp-go/internal/wireguard"
 	"github.com/database64128/swgp-go/service/internal/packetseq"
 	"github.com/database64128/swgp-go/tslog"
 	"github.com/database64128/swgp-go/tslogtest"
@@ -355,17 +355,17 @@ func testClientServerConn(
 
 func testClientServerHandshake(t *testing.T, clientConn, serverConn *net.UDPConn) {
 	// Make packets.
-	handshakeInitiationPacket := make([]byte, packet.WireGuardMessageLengthHandshakeInitiation)
-	handshakeInitiationPacket[0] = packet.WireGuardMessageTypeHandshakeInitiation
+	handshakeInitiationPacket := make([]byte, wireguard.MessageLengthHandshakeInitiation)
+	handshakeInitiationPacket[0] = wireguard.MessageTypeHandshakeInitiation
 	rand.Read(handshakeInitiationPacket[1:])
 	expectedHandshakeInitiationPacket := slices.Clone(handshakeInitiationPacket)
-	receivedHandshakeInitiationPacket := make([]byte, packet.WireGuardMessageLengthHandshakeInitiation+1)
+	receivedHandshakeInitiationPacket := make([]byte, wireguard.MessageLengthHandshakeInitiation+1)
 
-	handshakeResponsePacket := make([]byte, packet.WireGuardMessageLengthHandshakeResponse)
-	handshakeResponsePacket[0] = packet.WireGuardMessageTypeHandshakeResponse
+	handshakeResponsePacket := make([]byte, wireguard.MessageLengthHandshakeResponse)
+	handshakeResponsePacket[0] = wireguard.MessageTypeHandshakeResponse
 	rand.Read(handshakeResponsePacket[1:])
 	expectedHandshakeResponsePacket := slices.Clone(handshakeResponsePacket)
-	receivedHandshakeResponsePacket := make([]byte, packet.WireGuardMessageLengthHandshakeResponse+1)
+	receivedHandshakeResponsePacket := make([]byte, wireguard.MessageLengthHandshakeResponse+1)
 
 	// Client sends handshake initiation.
 	if _, err := clientConn.Write(handshakeInitiationPacket); err != nil {
@@ -405,9 +405,9 @@ func testClientServerHandshake(t *testing.T, clientConn, serverConn *net.UDPConn
 
 func testClientServerDataPackets(t *testing.T, clientConn, serverConn *net.UDPConn, client *client) {
 	// Make packets.
-	dataPacketLen := client.wgTunnelMTUv6 + WireGuardDataPacketOverhead
+	dataPacketLen := client.wgTunnelMTUv6 + wireguard.DataPacketOverhead
 	dataPacket := make([]byte, dataPacketLen, 65535)
-	dataPacket[0] = packet.WireGuardMessageTypeData
+	dataPacket[0] = wireguard.MessageTypeData
 	rand.Read(dataPacket[1:])
 	expectedDataPacket := slices.Clone(dataPacket)
 	receivedDataPacket := make([]byte, dataPacketLen+1)
@@ -519,7 +519,7 @@ func testClientServerSendDrain(
 ) {
 	var serverConnPeer netip.AddrPort
 	clientConnPeer := client.wgConn.LocalAddr().(*net.UDPAddr).AddrPort()
-	segmentSize := client.wgTunnelMTUv6 + WireGuardDataPacketOverhead
+	segmentSize := client.wgTunnelMTUv6 + wireguard.DataPacketOverhead
 
 	t.Run("C->S", func(t *testing.T) {
 		var wg sync.WaitGroup
@@ -644,7 +644,7 @@ func testSendConn(
 		packetBufLen := len(packetBuf)
 		packetBuf = packetBuf[:packetBufLen+segmentSize]
 		segment := packetBuf[packetBufLen:]
-		segment[0] = packet.WireGuardMessageTypeData
+		segment[0] = wireguard.MessageTypeData
 		segmentCount++
 	}
 

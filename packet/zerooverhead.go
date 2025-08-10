@@ -9,6 +9,7 @@ import (
 	mrand "math/rand/v2"
 	"slices"
 
+	"github.com/database64128/swgp-go/internal/wireguard"
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
@@ -93,7 +94,7 @@ func (h *zeroOverheadHandler) Encrypt(dst, wgPacket []byte) ([]byte, error) {
 
 	// We are done with non-handshake packets.
 	switch messageType {
-	case WireGuardMessageTypeHandshakeInitiation, WireGuardMessageTypeHandshakeResponse, WireGuardMessageTypeHandshakeCookieReply:
+	case wireguard.MessageTypeHandshakeInitiation, wireguard.MessageTypeHandshakeResponse, wireguard.MessageTypeHandshakeCookieReply:
 	default:
 		return dst, nil
 	}
@@ -142,7 +143,7 @@ func (h *zeroOverheadHandler) Decrypt(dst, swgpPacket []byte) ([]byte, error) {
 
 	// For non-handshake packets, copy the remaining bytes and be done with it.
 	switch b[0] {
-	case WireGuardMessageTypeHandshakeInitiation, WireGuardMessageTypeHandshakeResponse, WireGuardMessageTypeHandshakeCookieReply:
+	case wireguard.MessageTypeHandshakeInitiation, wireguard.MessageTypeHandshakeResponse, wireguard.MessageTypeHandshakeCookieReply:
 	default:
 		return append(dst, swgpPacket[aes.BlockSize:]...), nil
 	}

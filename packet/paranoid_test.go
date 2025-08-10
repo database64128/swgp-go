@@ -4,6 +4,8 @@ import (
 	"crypto/rand"
 	"strconv"
 	"testing"
+
+	"github.com/database64128/swgp-go/internal/wireguard"
 )
 
 func newParanoidHandler(t *testing.T) Handler {
@@ -14,7 +16,7 @@ func newParanoidHandler(t *testing.T) Handler {
 
 	h, err := NewParanoidHandler(psk, 1452)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("NewParanoidHandler failed: %v", err)
 	}
 	return h
 }
@@ -26,15 +28,15 @@ func TestParanoidHandler(t *testing.T) {
 		name    string
 		msgType byte
 	}{
-		{"HandshakeInitiation", WireGuardMessageTypeHandshakeInitiation},
-		{"HandshakeResponse", WireGuardMessageTypeHandshakeResponse},
-		{"HandshakeCookieReply", WireGuardMessageTypeHandshakeCookieReply},
-		{"Data", WireGuardMessageTypeData},
+		{"HandshakeInitiation", wireguard.MessageTypeHandshakeInitiation},
+		{"HandshakeResponse", wireguard.MessageTypeHandshakeResponse},
+		{"HandshakeCookieReply", wireguard.MessageTypeHandshakeCookieReply},
+		{"Data", wireguard.MessageTypeData},
 	} {
 		t.Run(msg.name, func(t *testing.T) {
 			for _, length := range []int{0, 1, 16, 128, 1280} {
 				t.Run(strconv.Itoa(length), func(t *testing.T) {
-					testHandler(t, msg.msgType, length, h, nil, nil, nil)
+					testHandler(t, msg.msgType, length, h, nil)
 				})
 			}
 		})

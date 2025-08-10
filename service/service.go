@@ -8,9 +8,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net/netip"
-	"time"
 
 	"github.com/database64128/swgp-go/conn"
+	"github.com/database64128/swgp-go/internal/wireguard"
 	"github.com/database64128/swgp-go/packet"
 	"github.com/database64128/swgp-go/pprof"
 	"github.com/database64128/swgp-go/tslog"
@@ -32,20 +32,6 @@ const (
 
 	// defaultSendChannelCapacity is the default capacity of a relay session's uplink send channel.
 	defaultSendChannelCapacity = 1024
-)
-
-// We use WireGuard's RejectAfterTime as NAT timeout.
-const RejectAfterTime = 180 * time.Second
-
-// Used to calculate max packet size from MTU.
-const (
-	IPv4HeaderLength            = 20
-	IPv6HeaderLength            = 40
-	UDPHeaderLength             = 8
-	WireGuardDataPacketOverhead = 32
-
-	// WireGuard pads data packets so the length is always a multiple of 16.
-	WireGuardDataPacketLengthMask = 0xFFF0
 )
 
 var ErrMTUTooSmall = errors.New("MTU must be at least 1280")
@@ -267,8 +253,22 @@ func newPacketHandler(proxyMode string, proxyPSK []byte, maxPacketSize int) (h p
 	}
 }
 
+const (
+	ipv4HeaderLength = 20
+	ipv6HeaderLength = 40
+	udpHeaderLength  = 8
+)
+
+func maxProxyPacketSizev4FromPathMTU(mtu int) int {
+	return mtu - ipv4HeaderLength - udpHeaderLength
+}
+
+func maxProxyPacketSizev6FromPathMTU(mtu int) int {
+	return mtu - ipv6HeaderLength - udpHeaderLength
+}
+
 func wgTunnelMTUFromMaxPacketSize(maxPacketSize int) int {
-	return (maxPacketSize - WireGuardDataPacketOverhead) & WireGuardDataPacketLengthMask
+	return (maxPacketSize - wireguard.DataPacketOverhead) & wireguard.DataPacketLengthMask
 }
 
 func listenUDPNetworkForUnmappedRemoteAddr(remoteAddr netip.Addr) string {
@@ -299,7 +299,7 @@ func (qp *queuedPacket) isWireGuardHandshakeInitiationMessage() bool {
 		return false
 	}
 	for i := 0; i < len(qp.buf); i += int(qp.segmentSize) {
-		if qp.buf[i] == packet.WireGuardMessageTypeHandshakeInitiation {
+		if qp.buf[i] == wireguard.MessageTypeHandshakeInitiation {
 			return true
 		}
 	}

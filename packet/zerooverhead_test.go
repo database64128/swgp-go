@@ -5,6 +5,8 @@ import (
 	"crypto/rand"
 	"strconv"
 	"testing"
+
+	"github.com/database64128/swgp-go/internal/wireguard"
 )
 
 func newZeroOverheadHandler(t *testing.T) Handler {
@@ -15,7 +17,7 @@ func newZeroOverheadHandler(t *testing.T) Handler {
 
 	h, err := NewZeroOverheadHandler(psk, 1452)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("NewZeroOverheadHandler failed: %v", err)
 	}
 	return h
 }
@@ -33,7 +35,7 @@ func verifyZeroOverheadHandlerPacket(t *testing.T, wgPacket, swgpPacket, decrypt
 	}
 
 	switch wgPacket[0] {
-	case WireGuardMessageTypeHandshakeInitiation, WireGuardMessageTypeHandshakeResponse, WireGuardMessageTypeHandshakeCookieReply:
+	case wireguard.MessageTypeHandshakeInitiation, wireguard.MessageTypeHandshakeResponse, wireguard.MessageTypeHandshakeCookieReply:
 		if bytes.Equal(wgPacket[16:], swgpPacket[16:]) {
 			t.Error("The rest of the packet is not encrypted.")
 		}
@@ -51,15 +53,15 @@ func TestZeroOverheadHandler(t *testing.T) {
 		name    string
 		msgType byte
 	}{
-		{"HandshakeInitiation", WireGuardMessageTypeHandshakeInitiation},
-		{"HandshakeResponse", WireGuardMessageTypeHandshakeResponse},
-		{"HandshakeCookieReply", WireGuardMessageTypeHandshakeCookieReply},
-		{"Data", WireGuardMessageTypeData},
+		{"HandshakeInitiation", wireguard.MessageTypeHandshakeInitiation},
+		{"HandshakeResponse", wireguard.MessageTypeHandshakeResponse},
+		{"HandshakeCookieReply", wireguard.MessageTypeHandshakeCookieReply},
+		{"Data", wireguard.MessageTypeData},
 	} {
 		t.Run(msg.name, func(t *testing.T) {
 			for _, length := range []int{0, 1, 16, 128, 1280} {
 				t.Run(strconv.Itoa(length), func(t *testing.T) {
-					testHandler(t, msg.msgType, length, h, nil, nil, verifyZeroOverheadHandlerPacket)
+					testHandler(t, msg.msgType, length, h, verifyZeroOverheadHandlerPacket)
 				})
 			}
 		})

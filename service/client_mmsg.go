@@ -14,6 +14,7 @@ import (
 	"unsafe"
 
 	"github.com/database64128/swgp-go/conn"
+	"github.com/database64128/swgp-go/internal/wireguard"
 	"github.com/database64128/swgp-go/packet"
 	"github.com/database64128/swgp-go/tslog"
 	"golang.org/x/sys/unix"
@@ -242,7 +243,7 @@ func (c *client) recvFromWgConnRecvmmsg(ctx context.Context, logger *tslog.Logge
 					proxyConnListenAddrPort := proxyConn.LocalAddr().(*net.UDPAddr).AddrPort()
 					proxyAddrPort := proxyConn.RemoteAddr().(*net.UDPAddr).AddrPort()
 
-					if err = proxyConn.SetReadDeadline(time.Now().Add(RejectAfterTime)); err != nil {
+					if err = proxyConn.SetReadDeadline(time.Now().Add(wireguard.RejectAfterTime)); err != nil {
 						logger.Error("Failed to SetReadDeadline on proxyConn",
 							tslog.AddrPort("clientAddress", clientAddrPort),
 							tslog.AddrPort("proxyConnListenAddress", proxyConnListenAddrPort),
@@ -401,7 +402,7 @@ main:
 				wgPacketBuf = wgPacketBuf[wgPacketLength:]
 
 				// Update proxyConn read deadline when rqp contains a WireGuard handshake initiation message.
-				if wgPacket[0] == packet.WireGuardMessageTypeHandshakeInitiation {
+				if wgPacket[0] == wireguard.MessageTypeHandshakeInitiation {
 					isHandshake = true
 				}
 
@@ -545,7 +546,7 @@ main:
 		}
 
 		if isHandshake {
-			if err := proxyConn.SetReadDeadline(time.Now().Add(RejectAfterTime)); err != nil {
+			if err := proxyConn.SetReadDeadline(time.Now().Add(wireguard.RejectAfterTime)); err != nil {
 				logger.Error("Failed to SetReadDeadline on proxyConn", tslog.Err(err))
 			}
 		}

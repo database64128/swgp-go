@@ -14,6 +14,7 @@ import (
 	"unsafe"
 
 	"github.com/database64128/swgp-go/conn"
+	"github.com/database64128/swgp-go/internal/wireguard"
 	"github.com/database64128/swgp-go/packet"
 	"github.com/database64128/swgp-go/tslog"
 )
@@ -167,9 +168,8 @@ func (cc *ClientConfig) Client(logger *tslog.Logger, socketConfigCache conn.UDPS
 		return nil, err
 	}
 
-	// maxProxyPacketSize = MTU - IP header length - UDP header length
-	maxProxyPacketSize := cc.MTU - IPv4HeaderLength - UDPHeaderLength
-	maxProxyPacketSizev6 := cc.MTU - IPv6HeaderLength - UDPHeaderLength
+	maxProxyPacketSize := maxProxyPacketSizev4FromPathMTU(cc.MTU)
+	maxProxyPacketSizev6 := maxProxyPacketSizev6FromPathMTU(cc.MTU)
 
 	// Create packet handler for user-specified proxy mode.
 	handler, handlerOverhead, err := newPacketHandler(cc.ProxyMode, cc.ProxyPSK, maxProxyPacketSize)
@@ -440,7 +440,7 @@ func (c *client) recvFromWgConnGeneric(ctx context.Context, logger *tslog.Logger
 
 				proxyConnListenAddrPort := proxyConn.LocalAddr().(*net.UDPAddr).AddrPort()
 
-				if err = proxyConn.SetReadDeadline(time.Now().Add(RejectAfterTime)); err != nil {
+				if err = proxyConn.SetReadDeadline(time.Now().Add(wireguard.RejectAfterTime)); err != nil {
 					logger.Error("Failed to SetReadDeadline on proxyConn",
 						tslog.AddrPort("clientAddress", clientAddrPort),
 						tslog.AddrPort("proxyConnListenAddress", proxyConnListenAddrPort),
@@ -583,7 +583,7 @@ func (c *client) relayWgToProxyGeneric(
 			wgPacketBuf = wgPacketBuf[wgPacketLength:]
 
 			// Update proxyConn read deadline when rqp contains a WireGuard handshake initiation message.
-			if wgPacket[0] == packet.WireGuardMessageTypeHandshakeInitiation {
+			if wgPacket[0] == wireguard.MessageTypeHandshakeInitiation {
 				isHandshake = true
 			}
 
@@ -693,7 +693,7 @@ func (c *client) relayWgToProxyGeneric(
 		packetBuf = packetBuf[:0]
 
 		if isHandshake {
-			if err := proxyConn.SetReadDeadline(time.Now().Add(RejectAfterTime)); err != nil {
+			if err := proxyConn.SetReadDeadline(time.Now().Add(wireguard.RejectAfterTime)); err != nil {
 				logger.Error("Failed to SetReadDeadline on proxyConn", tslog.Err(err))
 			}
 		}

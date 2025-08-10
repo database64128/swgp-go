@@ -14,6 +14,7 @@ import (
 	"unsafe"
 
 	"github.com/database64128/swgp-go/conn"
+	"github.com/database64128/swgp-go/internal/wireguard"
 	"github.com/database64128/swgp-go/packet"
 	"github.com/database64128/swgp-go/tslog"
 )
@@ -168,8 +169,8 @@ func (sc *ServerConfig) Server(logger *tslog.Logger, socketConfigCache conn.UDPS
 	}
 
 	// maxProxyPacketSize = MTU - IP header length - UDP header length
-	maxProxyPacketSizev4 := sc.MTU - IPv4HeaderLength - UDPHeaderLength
-	maxProxyPacketSizev6 := sc.MTU - IPv6HeaderLength - UDPHeaderLength
+	maxProxyPacketSizev4 := maxProxyPacketSizev4FromPathMTU(sc.MTU)
+	maxProxyPacketSizev6 := maxProxyPacketSizev6FromPathMTU(sc.MTU)
 
 	// Create packet handler for user-specified proxy mode.
 	handler4, handlerOverhead, err := newPacketHandler(sc.ProxyMode, sc.ProxyPSK, maxProxyPacketSizev4)
@@ -497,7 +498,7 @@ func (s *server) recvFromProxyConnGeneric(ctx context.Context, logger *tslog.Log
 
 				wgConnListenAddrPort := wgConn.LocalAddr().(*net.UDPAddr).AddrPort()
 
-				if err = wgConn.SetReadDeadline(time.Now().Add(RejectAfterTime)); err != nil {
+				if err = wgConn.SetReadDeadline(time.Now().Add(wireguard.RejectAfterTime)); err != nil {
 					logger.Error("Failed to SetReadDeadline on wgConn",
 						tslog.AddrPort("clientAddress", clientAddrPort),
 						tslog.AddrPort("wgConnListenAddress", wgConnListenAddrPort),
@@ -630,7 +631,7 @@ func (s *server) relayProxyToWgGeneric(
 	for qp := range wgConnSendCh {
 		// Update wgConn read deadline when qp contains a WireGuard handshake initiation message.
 		if qp.isWireGuardHandshakeInitiationMessage() {
-			if err := wgConn.SetReadDeadline(time.Now().Add(RejectAfterTime)); err != nil {
+			if err := wgConn.SetReadDeadline(time.Now().Add(wireguard.RejectAfterTime)); err != nil {
 				logger.Error("Failed to SetReadDeadline on wgConn", tslog.Err(err))
 			}
 		}

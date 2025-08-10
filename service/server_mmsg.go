@@ -14,6 +14,7 @@ import (
 	"unsafe"
 
 	"github.com/database64128/swgp-go/conn"
+	"github.com/database64128/swgp-go/internal/wireguard"
 	"github.com/database64128/swgp-go/packet"
 	"github.com/database64128/swgp-go/tslog"
 	"golang.org/x/sys/unix"
@@ -311,7 +312,7 @@ func (s *server) recvFromProxyConnRecvmmsg(ctx context.Context, logger *tslog.Lo
 					wgConnListenAddrPort := wgConn.LocalAddr().(*net.UDPAddr).AddrPort()
 					wgAddrPort := wgConn.RemoteAddr().(*net.UDPAddr).AddrPort()
 
-					if err = wgConn.SetReadDeadline(time.Now().Add(RejectAfterTime)); err != nil {
+					if err = wgConn.SetReadDeadline(time.Now().Add(wireguard.RejectAfterTime)); err != nil {
 						logger.Error("Failed to SetReadDeadline on wgConn",
 							tslog.AddrPort("clientAddress", clientAddrPort),
 							tslog.AddrPort("wgConnListenAddress", wgConnListenAddrPort),
@@ -542,7 +543,7 @@ func (s *server) relayProxyToWgSendmmsg(
 		}
 
 		if isHandshake {
-			if err := wgConn.SetReadDeadline(time.Now().Add(RejectAfterTime)); err != nil {
+			if err := wgConn.SetReadDeadline(time.Now().Add(wireguard.RejectAfterTime)); err != nil {
 				logger.Error("Failed to SetReadDeadline on wgConn", tslog.Err(err))
 			}
 		}
