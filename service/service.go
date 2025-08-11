@@ -193,6 +193,10 @@ func (sc *Config) Manager(logger *tslog.Logger) (*Manager, error) {
 		services = append(services, sc.Pprof.NewService(logger))
 	}
 
+	if ifacePicker != nil {
+		services = append(services, ifacePicker)
+	}
+
 	return &Manager{services, logger}, nil
 }
 

@@ -1,17 +1,26 @@
 package netiface
 
 import (
+	"context"
 	"sync/atomic"
 
 	"github.com/database64128/swgp-go/conn"
 	"github.com/database64128/swgp-go/tslog"
 )
 
-func (*PickerConfig) newPicker(_ *tslog.Logger) (*Picker, error) {
+func (*PickerConfig) newPicker(*tslog.Logger) (*Picker, error) {
 	return nil, ErrPickerUnsupported
 }
 
 type picker struct{}
+
+func (picker) start(context.Context) error {
+	return ErrPickerUnsupported
+}
+
+func (picker) stop() error {
+	return ErrPickerUnsupported
+}
 
 func (picker) requestPoll() {
 	panic(ErrPickerUnsupported)

@@ -1,7 +1,9 @@
 package netiface
 
 import (
+	"context"
 	"errors"
+	"log/slog"
 	"sync/atomic"
 
 	"github.com/database64128/swgp-go/conn"
@@ -32,8 +34,25 @@ func (c *PickerConfig) NewPicker(logger *tslog.Logger) (*Picker, error) {
 // Picker is implemented on supported platforms to discover and pick default physical network interfaces.
 //
 // This is useful for preventing routing loops, when a default route to a virtual tunnel interface is configured.
+//
+// Picker implements [service.Service].
 type Picker struct {
 	picker
+}
+
+// SlogAttr implements [service.Service.SlogAttr].
+func (p *Picker) SlogAttr() slog.Attr {
+	return slog.String("service", "ifacePicker")
+}
+
+// Start implements [service.Service.Start].
+func (p *Picker) Start(ctx context.Context) error {
+	return p.start(ctx)
+}
+
+// Stop implements [service.Service.Stop].
+func (p *Picker) Stop() error {
+	return p.stop()
 }
 
 // RequestPoll requests the picker to poll for changes in the network interfaces.
