@@ -323,9 +323,3 @@ func (qp *queuedPacket) isWireGuardHandshakeInitiationMessage() bool {
 	}
 	return false
 }
-
-// pktinfo stores packet information for sending from the correct interface and IP.
-type pktinfo struct {
-	addr    netip.Addr
-	ifindex uint32
-}

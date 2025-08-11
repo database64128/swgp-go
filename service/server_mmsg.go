@@ -249,12 +249,12 @@ func (s *server) recvFromProxyConnRecvmmsg(ctx context.Context, logger *tslog.Lo
 				natEntry = &serverNatEntry{}
 			}
 
-			clientPktinfo := pktinfo{
-				addr:    rscm.PktinfoAddr,
-				ifindex: rscm.PktinfoIfindex,
+			clientPktinfo := conn.Pktinfo{
+				Addr:    rscm.PktinfoAddr,
+				Ifindex: rscm.PktinfoIfindex,
 			}
 
-			var clientPktinfop *pktinfo
+			var clientPktinfop *conn.Pktinfo
 
 			if clientPktinfo != natEntry.clientPktinfoCache {
 				clientPktinfoCache := clientPktinfo
@@ -265,8 +265,8 @@ func (s *server) recvFromProxyConnRecvmmsg(ctx context.Context, logger *tslog.Lo
 				if logger.Enabled(slog.LevelDebug) {
 					logger.Debug("Updated client pktinfo",
 						tslog.AddrPort("clientAddress", clientAddrPort),
-						tslog.Addrp("clientPktinfoAddr", &clientPktinfop.addr),
-						tslog.Uint("clientPktinfoIfindex", clientPktinfoCache.ifindex),
+						tslog.Addrp("clientPktinfoAddr", &clientPktinfop.Addr),
+						tslog.Uint("clientPktinfoIfindex", clientPktinfoCache.Ifindex),
 					)
 				}
 			}
@@ -399,7 +399,7 @@ func (s *server) recvFromProxyConnRecvmmsg(ctx context.Context, logger *tslog.Lo
 				case natEntry.wgConnSendCh <- qp:
 				default:
 					if logger.Enabled(slog.LevelDebug) {
-						logger.Debug("wgPacket dropped due to full send channel",
+						logger.Debug("wgPacket dropped: send channel is full",
 							tslog.AddrPort("clientAddress", clientAddrPort),
 							tslog.ConnAddrp("wgAddress", &s.wgAddr),
 						)
@@ -573,8 +573,8 @@ func (s *server) relayProxyToWgSendmmsg(
 
 func (s *server) relayWgToProxySendmmsg(
 	clientAddrPort netip.AddrPort,
-	clientPktinfop *pktinfo,
-	atomicClientPktinfop *atomic.Pointer[pktinfo],
+	clientPktinfop *conn.Pktinfo,
+	atomicClientPktinfop *atomic.Pointer[conn.Pktinfo],
 	wgConn *conn.MmsgRConn,
 	proxyConn *conn.MmsgWConn,
 	proxyConnInfo conn.SocketInfo,
@@ -583,7 +583,7 @@ func (s *server) relayWgToProxySendmmsg(
 	logger *tslog.Logger,
 ) {
 	var (
-		clientPktinfo         pktinfo
+		clientPktinfo         conn.Pktinfo
 		queuedPackets         []queuedPacket
 		recvmmmsgCount        uint64
 		msgsReceived          uint64
@@ -779,8 +779,8 @@ func (s *server) relayWgToProxySendmmsg(
 				b = b[sendBufSize:]
 
 				sscm := conn.SocketControlMessage{
-					PktinfoAddr:    clientPktinfo.addr,
-					PktinfoIfindex: clientPktinfo.ifindex,
+					PktinfoAddr:    clientPktinfo.Addr,
+					PktinfoIfindex: clientPktinfo.Ifindex,
 				}
 				if sendSegmentCount > 1 {
 					sscm.SegmentSize = qp.segmentSize

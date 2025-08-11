@@ -103,8 +103,8 @@ type serverNatEntry struct {
 	//    initialization must not proceed.
 	//  - During shutdown, if the swapped-out value is nil, preceed to the next entry.
 	state              atomic.Pointer[net.UDPConn]
-	clientPktinfo      atomic.Pointer[pktinfo]
-	clientPktinfoCache pktinfo
+	clientPktinfo      atomic.Pointer[conn.Pktinfo]
+	clientPktinfoCache conn.Pktinfo
 	wgConnSendCh       chan<- queuedPacket
 }
 
@@ -421,12 +421,12 @@ func (s *server) recvFromProxyConnGeneric(ctx context.Context, logger *tslog.Log
 			natEntry = &serverNatEntry{}
 		}
 
-		clientPktinfo := pktinfo{
-			addr:    rscm.PktinfoAddr,
-			ifindex: rscm.PktinfoIfindex,
+		clientPktinfo := conn.Pktinfo{
+			Addr:    rscm.PktinfoAddr,
+			Ifindex: rscm.PktinfoIfindex,
 		}
 
-		var clientPktinfop *pktinfo
+		var clientPktinfop *conn.Pktinfo
 
 		if clientPktinfo != natEntry.clientPktinfoCache {
 			clientPktinfoCache := clientPktinfo
@@ -437,8 +437,8 @@ func (s *server) recvFromProxyConnGeneric(ctx context.Context, logger *tslog.Log
 			if logger.Enabled(slog.LevelDebug) {
 				logger.Debug("Updated client pktinfo",
 					tslog.AddrPort("clientAddress", clientAddrPort),
-					tslog.Addrp("clientPktinfoAddr", &clientPktinfop.addr),
-					tslog.Uint("clientPktinfoIfindex", clientPktinfoCache.ifindex),
+					tslog.Addrp("clientPktinfoAddr", &clientPktinfop.Addr),
+					tslog.Uint("clientPktinfoIfindex", clientPktinfoCache.Ifindex),
 				)
 			}
 		}
@@ -587,7 +587,7 @@ func (s *server) recvFromProxyConnGeneric(ctx context.Context, logger *tslog.Log
 			case natEntry.wgConnSendCh <- qp:
 			default:
 				if logger.Enabled(slog.LevelDebug) {
-					logger.Debug("wgPacket dropped due to full send channel",
+					logger.Debug("wgPacket dropped: send channel is full",
 						tslog.AddrPort("clientAddress", clientAddrPort),
 						tslog.ConnAddrp("wgAddress", &s.wgAddr),
 					)
@@ -690,8 +690,8 @@ func (s *server) relayProxyToWgGeneric(
 
 func (s *server) relayWgToProxyGeneric(
 	clientAddrPort netip.AddrPort,
-	clientPktinfop *pktinfo,
-	atomicClientPktinfop *atomic.Pointer[pktinfo],
+	clientPktinfop *conn.Pktinfo,
+	atomicClientPktinfop *atomic.Pointer[conn.Pktinfo],
 	wgAddrPort netip.AddrPort,
 	wgConn *net.UDPConn,
 	proxyConn *net.UDPConn,
@@ -701,7 +701,7 @@ func (s *server) relayWgToProxyGeneric(
 	logger *tslog.Logger,
 ) {
 	var (
-		clientPktinfo         pktinfo
+		clientPktinfo         conn.Pktinfo
 		queuedPackets         []queuedPacket
 		recvmsgCount          uint64
 		packetsReceived       uint64
@@ -872,8 +872,8 @@ func (s *server) relayWgToProxyGeneric(
 				b = b[sendBufSize:]
 
 				sscm := conn.SocketControlMessage{
-					PktinfoAddr:    clientPktinfo.addr,
-					PktinfoIfindex: clientPktinfo.ifindex,
+					PktinfoAddr:    clientPktinfo.Addr,
+					PktinfoIfindex: clientPktinfo.Ifindex,
 				}
 				if sendSegmentCount > 1 {
 					sscm.SegmentSize = qp.segmentSize
