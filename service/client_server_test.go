@@ -318,7 +318,7 @@ func testClientServerConn(
 		PerfConfig:             perfConfig,
 	}
 
-	c, err := clientConfig.Client(logger, listenConfigCache)
+	c, err := clientConfig.Client(logger, listenConfigCache, nil)
 	if err != nil {
 		t.Fatalf("Failed to create client service %q: %v", clientConfig.Name, err)
 	}

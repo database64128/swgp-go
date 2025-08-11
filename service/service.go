@@ -11,6 +11,7 @@ import (
 
 	"github.com/database64128/swgp-go/conn"
 	"github.com/database64128/swgp-go/internal/wireguard"
+	"github.com/database64128/swgp-go/netiface"
 	"github.com/database64128/swgp-go/packet"
 	"github.com/database64128/swgp-go/pprof"
 	"github.com/database64128/swgp-go/tslog"
@@ -124,6 +125,9 @@ type Config struct {
 
 	// Pprof is the configuration for the pprof service.
 	Pprof pprof.Config `json:"pprof,omitzero"`
+
+	// IfacePicker is the configuration for the interface picker.
+	IfacePicker netiface.PickerConfig `json:"ifacePicker,omitzero"`
 }
 
 // Manager initializes the service manager.
@@ -156,6 +160,8 @@ func (sc *Config) Manager(logger *tslog.Logger) (*Manager, error) {
 		services = append(services, s)
 	}
 
+	var ifacePicker *netiface.Picker
+
 	for i := range sc.Clients {
 		clientConfig := &sc.Clients[i]
 
@@ -164,7 +170,19 @@ func (sc *Config) Manager(logger *tslog.Logger) (*Manager, error) {
 		}
 		clientIndexByName[clientConfig.Name] = i
 
-		c, err := clientConfig.Client(logger, socketConfigCache)
+		var proxyIfacePicker *netiface.Picker
+		if clientConfig.ProxyAutoPickInterface {
+			if ifacePicker == nil {
+				var err error
+				ifacePicker, err = sc.IfacePicker.NewPicker(logger)
+				if err != nil {
+					return nil, fmt.Errorf("failed to create interface picker: %w", err)
+				}
+			}
+			proxyIfacePicker = ifacePicker
+		}
+
+		c, err := clientConfig.Client(logger, socketConfigCache, proxyIfacePicker)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create client service %q: %w", clientConfig.Name, err)
 		}

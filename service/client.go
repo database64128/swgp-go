@@ -15,6 +15,7 @@ import (
 
 	"github.com/database64128/swgp-go/conn"
 	"github.com/database64128/swgp-go/internal/wireguard"
+	"github.com/database64128/swgp-go/netiface"
 	"github.com/database64128/swgp-go/packet"
 	"github.com/database64128/swgp-go/tslog"
 )
@@ -85,6 +86,18 @@ type ClientConfig struct {
 	// Available on most platforms except Windows.
 	ProxyTrafficClass int `json:"proxyTrafficClass,omitzero"`
 
+	// ProxyAutoPickInterface controls whether to automatically pick the network interface to
+	// send proxy packets from.
+	//
+	// This is useful for preventing routing loops, when the system has a default route to
+	// the WireGuard tunnel interface, but does not have a stable IP address to bind the
+	// proxy socket to.
+	//
+	// Do not use this option on Linux or FreeBSD. Use [ProxyFwmark] instead.
+	//
+	// Available on macOS, Dragonfly BSD, NetBSD, OpenBSD, and Windows.
+	ProxyAutoPickInterface bool `json:"proxyAutoPickInterface,omitzero"`
+
 	// MTU specifies the maximum transmission unit of the client's designated network path.
 	MTU int `json:"mtu"`
 
@@ -127,6 +140,7 @@ type client struct {
 	handler                packet.Handler
 	handler6               packet.Handler
 	logger                 *tslog.Logger
+	proxyIfacePicker       *netiface.Picker
 	wgConn                 *net.UDPConn
 	wgConnConfig           conn.UDPSocketConfig
 	proxyConnConfig        conn.UDPSocketConfig
@@ -139,7 +153,7 @@ type client struct {
 
 // Client creates a swgp client service from the client config.
 // Call the Start method on the returned service to start it.
-func (cc *ClientConfig) Client(logger *tslog.Logger, socketConfigCache conn.UDPSocketConfigCache) (*client, error) {
+func (cc *ClientConfig) Client(logger *tslog.Logger, socketConfigCache conn.UDPSocketConfigCache, ifacePicker *netiface.Picker) (*client, error) {
 	// Require MTU to be at least 1280.
 	if cc.MTU < minimumMTU {
 		return nil, ErrMTUTooSmall
@@ -208,6 +222,7 @@ func (cc *ClientConfig) Client(logger *tslog.Logger, socketConfigCache conn.UDPS
 		handler:                handler,
 		handler6:               handler6,
 		logger:                 logger,
+		proxyIfacePicker:       ifacePicker,
 		wgConnConfig: socketConfigCache.Get(conn.UDPSocketOptions{
 			SendBufferSize:           conn.DefaultUDPSocketBufferSize,
 			ReceiveBufferSize:        conn.DefaultUDPSocketBufferSize,
@@ -424,6 +439,16 @@ func (c *client) recvFromWgConnGeneric(ctx context.Context, logger *tslog.Logger
 					proxyAddrPort = netip.AddrPortFrom(proxyAddrPort.Addr().Unmap(), proxyAddrPort.Port())
 				}
 
+				var proxyPktinfop *atomic.Pointer[conn.Pktinfo]
+				if c.proxyIfacePicker != nil {
+					c.proxyIfacePicker.RequestPoll()
+					if proxyAddrPort.Addr().Is4() {
+						proxyPktinfop = c.proxyIfacePicker.Default4()
+					} else {
+						proxyPktinfop = c.proxyIfacePicker.Default6()
+					}
+				}
+
 				proxyConnListenNetwork := listenUDPNetworkForUnmappedRemoteAddr(proxyAddrPort.Addr())
 				proxyConnListenAddress := c.proxyConnListenAddress.String()
 
@@ -492,6 +517,7 @@ func (c *client) recvFromWgConnGeneric(ctx context.Context, logger *tslog.Logger
 				go func() {
 					c.relayWgToProxyGeneric(
 						proxyAddrPort,
+						proxyPktinfop,
 						proxyConn,
 						proxyConnInfo,
 						proxyConnSendCh,
@@ -552,6 +578,7 @@ func (c *client) recvFromWgConnGeneric(ctx context.Context, logger *tslog.Logger
 
 func (c *client) relayWgToProxyGeneric(
 	proxyAddrPort netip.AddrPort,
+	proxyPktinfop *atomic.Pointer[conn.Pktinfo],
 	proxyConn *net.UDPConn,
 	proxyConnInfo conn.SocketInfo,
 	proxyConnSendCh <-chan queuedPacket,
@@ -646,6 +673,20 @@ func (c *client) relayWgToProxyGeneric(
 			continue
 		}
 
+		var proxyPktinfo conn.Pktinfo
+
+		if proxyPktinfop != nil {
+			if isHandshake {
+				c.proxyIfacePicker.RequestPoll()
+			}
+
+			proxyPktinfo = *proxyPktinfop.Load()
+			if !proxyPktinfo.Addr.IsValid() {
+				logger.Debug("swgpPacket dropped: no suitable interface")
+				sendQueuedPackets = sendQueuedPackets[:0]
+			}
+		}
+
 		for _, sqp := range sendQueuedPackets {
 			b := sqp.buf
 			segmentsRemaining := sqp.segmentCount
@@ -664,13 +705,14 @@ func (c *client) relayWgToProxyGeneric(
 				sendBuf := b[:sendBufSize]
 				b = b[sendBufSize:]
 
-				var cmsg []byte
-				if sendSegmentCount > 1 {
-					scm := conn.SocketControlMessage{
-						SegmentSize: sqp.segmentSize,
-					}
-					cmsg = scm.AppendTo(cmsgBuf)
+				scm := conn.SocketControlMessage{
+					PktinfoAddr:    proxyPktinfo.Addr,
+					PktinfoIfindex: proxyPktinfo.Ifindex,
 				}
+				if sendSegmentCount > 1 {
+					scm.SegmentSize = sqp.segmentSize
+				}
+				cmsg := scm.AppendTo(cmsgBuf)
 
 				n, _, err := proxyConn.WriteMsgUDPAddrPort(sendBuf, cmsg, proxyAddrPort)
 				if err != nil {
