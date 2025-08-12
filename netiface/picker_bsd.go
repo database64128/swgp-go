@@ -80,7 +80,10 @@ func (p *picker) start(ctx context.Context) error {
 }
 
 func (p *picker) monitorRoutingSocket(f *os.File) {
-	b := make([]byte, 65535)
+	// route(8) monitor uses this buffer size.
+	// Each read only returns a single message.
+	const readBufSize = 2048
+	b := make([]byte, readBufSize)
 	for {
 		n, err := f.Read(b)
 		if err != nil {
@@ -123,6 +126,10 @@ func (p *picker) handleRouteMessage(b []byte) {
 			if msg.Flags&unix.RTF_UP == 0 ||
 				msg.Flags&unix.RTF_GATEWAY == 0 ||
 				msg.Flags&unix.RTF_HOST != 0 {
+				continue
+			}
+
+			if msg.Index == 0 {
 				continue
 			}
 
