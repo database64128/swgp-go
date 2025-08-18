@@ -1,6 +1,6 @@
-//go:build dragonfly || netbsd || openbsd
+//go:build dragonfly || freebsd || netbsd || openbsd
 
-package netiface
+package bsdroute
 
 import (
 	"os"

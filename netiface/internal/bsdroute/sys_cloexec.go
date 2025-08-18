@@ -1,4 +1,6 @@
-package netiface
+//go:build darwin
+
+package bsdroute
 
 import (
 	"os"
