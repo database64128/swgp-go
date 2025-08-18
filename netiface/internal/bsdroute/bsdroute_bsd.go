@@ -87,7 +87,7 @@ func (f IfaceFlags) MarshalText() ([]byte, error) {
 	return f.AppendText(nil)
 }
 
-// Constants for interface address flags.
+// Constants for interface IPv6 address flags (ifru_flags6).
 // They share the same values across supported BSD variants.
 //
 //   - macOS: https://github.com/apple-oss-distributions/xnu/blob/94d3b452840153a99b38a3a9659680b2a006908e/bsd/netinet6/in6_var.h#L785-L821
@@ -99,6 +99,35 @@ const (
 	IN6_IFF_DEPRECATED = 0x10
 	IN6_IFF_TEMPORARY  = 0x80
 )
+
+type inet6Ifreq struct {
+	Name [unix.IFNAMSIZ]byte
+	Ifru [68]int32
+}
+
+// IoctlGetIfaFlagInet6 calls ioctl(SIOCGIFAFLAG_IN6) on f to retrieve the interface IPv6 address flags for sa.
+func IoctlGetIfaFlagInet6(f *os.File, sa *unix.RawSockaddrInet6) (flags int32, err error) {
+	const SIOCGIFAFLAG_IN6 = 0xc1206949
+	var ifr inet6Ifreq
+	*(*unix.RawSockaddrInet6)(unsafe.Pointer(&ifr.Ifru)) = *sa
+	c, err := f.SyscallConn()
+	if err != nil {
+		return 0, err
+	}
+	if cerr := c.Control(func(fd uintptr) {
+		err = ioctlPtr(int(fd), SIOCGIFAFLAG_IN6, unsafe.Pointer(&ifr))
+	}); cerr != nil {
+		return 0, cerr
+	}
+	if err != nil {
+		return 0, os.NewSyscallError("ioctl", err)
+	}
+	return ifr.Ifru[0], nil
+}
+
+//go:linkname ioctlPtr syscall.ioctlPtr
+//go:noescape
+func ioctlPtr(fd int, req uint, arg unsafe.Pointer) (err error)
 
 // ParseAddrs populates dst with pointers to the sockaddr structures in b as indicated by addrs.
 func ParseAddrs(dst *[unix.RTAX_MAX]*unix.RawSockaddr, b []byte, addrs int32) {

@@ -53,14 +53,14 @@ func (p *picker) start(ctx context.Context) error {
 		_ = f.Close()
 		return fmt.Errorf("failed to get interface dump: %w", err)
 	}
-	p.handleRouteMessage(b)
+	p.handleRouteMessage(f, b)
 
 	b, err = bsdroute.SysctlGetBytes([]int32{unix.CTL_NET, unix.AF_ROUTE, 0, unix.AF_UNSPEC, unix.NET_RT_DUMP, 0})
 	if err != nil {
 		_ = f.Close()
 		return fmt.Errorf("failed to get route dump: %w", err)
 	}
-	p.handleRouteMessage(b)
+	p.handleRouteMessage(f, b)
 
 	p.wg.Add(1)
 	go func() {
@@ -96,11 +96,11 @@ func (p *picker) monitorRoutingSocket(f *os.File) {
 			p.logger.Error("Failed to read from routing socket", tslog.Err(err))
 			continue
 		}
-		p.handleRouteMessage(b[:n])
+		p.handleRouteMessage(f, b[:n])
 	}
 }
 
-func (p *picker) handleRouteMessage(b []byte) {
+func (p *picker) handleRouteMessage(f *os.File, b []byte) {
 	for len(b) >= bsdroute.SizeofMsghdr {
 		m := (*bsdroute.Msghdr)(unsafe.Pointer(unsafe.SliceData(b)))
 		if m.Msglen < bsdroute.SizeofMsghdr || int(m.Msglen) > len(b) {
@@ -175,11 +175,6 @@ func (p *picker) handleRouteMessage(b []byte) {
 				continue
 			}
 
-			if ifam.Flags&bsdroute.IN6_IFF_DEPRECATED != 0 ||
-				ifam.Flags&bsdroute.IN6_IFF_TEMPORARY != 0 {
-				continue
-			}
-
 			addrsBuf, ok := m.AddrsBuf(msgBuf, unix.SizeofIfaMsghdr)
 			if !ok {
 				p.logger.Error("Invalid ifam_hdrlen",
@@ -206,11 +201,36 @@ func (p *picker) handleRouteMessage(b []byte) {
 
 				switch m.Type {
 				case unix.RTM_NEWADDR:
+					ifaFlags, err := bsdroute.IoctlGetIfaFlagInet6(f, (*unix.RawSockaddrInet6)(unsafe.Pointer(addrs[unix.RTAX_IFA])))
+					if err != nil {
+						p.logger.Warn("Failed to get interface IPv6 address flags",
+							tslog.Uint("index", ifam.Index),
+							tslog.Addr("ifaAddr", ifaAddr),
+							tslog.Err(err),
+						)
+						continue
+					}
+
+					if ifaFlags&bsdroute.IN6_IFF_DEPRECATED != 0 ||
+						ifaFlags&bsdroute.IN6_IFF_TEMPORARY != 0 {
+						continue
+					}
+
+					if p.logger.Enabled(slog.LevelDebug) {
+						p.logger.Debug("Updating physical interface IPv6 address",
+							tslog.Uint("index", ifam.Index),
+							tslog.Addr("ifaAddr", ifaAddr),
+							tslog.Int("ifaFlags", ifaFlags),
+						)
+					}
+
 					iface.addr6 = ifaAddr
+
 				case unix.RTM_DELADDR:
 					if iface.addr6 == ifaAddr {
 						iface.addr6 = netip.Addr{}
 					}
+
 				default:
 					panic("unreachable")
 				}
