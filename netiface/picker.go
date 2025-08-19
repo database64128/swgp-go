@@ -55,15 +55,8 @@ func (p *Picker) Stop() error {
 	return p.stop()
 }
 
-// RequestPoll requests the picker to poll for changes in the network interfaces.
-//
-// Depending on the implementation, this may be a no-op.
-func (p *Picker) RequestPoll() {
-	p.requestPoll()
-}
-
-// Default4 returns the first IPv4 address and the interface index of the first
-// physical network interface with an IPv4 default route.
+// Default4 returns the IPv4 address and the interface index of a physical
+// network interface with an IPv4 default route.
 //
 // The returned pointer is guaranteed to be non-nil, but the value may be zero,
 // indicating that no suitable interface was found.
@@ -71,8 +64,8 @@ func (p *Picker) Default4() *atomic.Pointer[conn.Pktinfo] {
 	return p.default4()
 }
 
-// Default6 returns the first IPv6 address and the interface index of the first
-// physical network interface with an IPv6 default route.
+// Default6 returns the IPv6 address and the interface index of a physical
+// network interface with an IPv6 default route.
 //
 // The returned pointer is guaranteed to be non-nil, but the value may be zero,
 // indicating that no suitable interface was found.

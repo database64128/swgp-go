@@ -24,10 +24,6 @@ func (picker) stop() error {
 	return ErrPickerUnsupported
 }
 
-func (picker) requestPoll() {
-	panic(ErrPickerUnsupported)
-}
-
 func (picker) default4() *atomic.Pointer[conn.Pktinfo] {
 	panic(ErrPickerUnsupported)
 }

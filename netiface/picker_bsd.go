@@ -496,8 +496,6 @@ func (p *picker) stop() error {
 	return nil
 }
 
-func (*picker) requestPoll() {}
-
 func (p *picker) default4() *atomic.Pointer[conn.Pktinfo] {
 	return &p.pktinfo4p
 }

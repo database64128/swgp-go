@@ -95,7 +95,7 @@ type ClientConfig struct {
 	//
 	// Do not use this option on Linux or FreeBSD. Use [ProxyFwmark] instead.
 	//
-	// Available on macOS, Dragonfly BSD, NetBSD, OpenBSD, and Windows.
+	// Available on macOS, Dragonfly BSD, FreeBSD, NetBSD, OpenBSD, and Windows.
 	ProxyAutoPickInterface bool `json:"proxyAutoPickInterface,omitzero"`
 
 	// MTU specifies the maximum transmission unit of the client's designated network path.
@@ -441,7 +441,6 @@ func (c *client) recvFromWgConnGeneric(ctx context.Context, logger *tslog.Logger
 
 				var proxyPktinfop *atomic.Pointer[conn.Pktinfo]
 				if c.proxyIfacePicker != nil {
-					c.proxyIfacePicker.RequestPoll()
 					if proxyAddrPort.Addr().Is4() {
 						proxyPktinfop = c.proxyIfacePicker.Default4()
 					} else {
@@ -676,10 +675,6 @@ func (c *client) relayWgToProxyGeneric(
 		var proxyPktinfo conn.Pktinfo
 
 		if proxyPktinfop != nil {
-			if isHandshake {
-				c.proxyIfacePicker.RequestPoll()
-			}
-
 			proxyPktinfo = *proxyPktinfop.Load()
 			if !proxyPktinfo.Addr.IsValid() {
 				logger.Debug("swgpPacket dropped: no suitable interface")
