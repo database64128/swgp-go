@@ -8,8 +8,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func newRoutingSocket() (int, error) {
-	fd, err := unix.Socket(unix.AF_ROUTE, unix.SOCK_RAW|unix.SOCK_NONBLOCK|unix.SOCK_CLOEXEC, unix.AF_UNSPEC)
+func Socket(domain int, typ int, proto int) (fd int, err error) {
+	fd, err = unix.Socket(domain, typ|unix.SOCK_NONBLOCK|unix.SOCK_CLOEXEC, proto)
 	if err != nil {
 		return 0, os.NewSyscallError("socket", err)
 	}

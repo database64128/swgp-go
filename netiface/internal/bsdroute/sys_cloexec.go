@@ -9,9 +9,9 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func newRoutingSocket() (int, error) {
+func Socket(domain int, typ int, proto int) (fd int, err error) {
 	syscall.ForkLock.RLock()
-	fd, err := unix.Socket(unix.AF_ROUTE, unix.SOCK_RAW, unix.AF_UNSPEC)
+	fd, err = unix.Socket(domain, typ, proto)
 	if err == nil {
 		unix.CloseOnExec(fd)
 	}

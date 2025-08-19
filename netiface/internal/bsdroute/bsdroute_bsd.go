@@ -12,7 +12,7 @@ import (
 
 // OpenRoutingSocket opens a new routing socket.
 func OpenRoutingSocket() (*os.File, error) {
-	fd, err := newRoutingSocket()
+	fd, err := Socket(unix.AF_ROUTE, unix.SOCK_RAW, unix.AF_UNSPEC)
 	if err != nil {
 		return nil, err
 	}
@@ -106,20 +106,11 @@ type inet6Ifreq struct {
 }
 
 // IoctlGetIfaFlagInet6 calls ioctl(SIOCGIFAFLAG_IN6) on f to retrieve the interface IPv6 address flags for sa.
-func IoctlGetIfaFlagInet6(f *os.File, sa *unix.RawSockaddrInet6) (flags int32, err error) {
+func IoctlGetIfaFlagInet6(fd int, sa *unix.RawSockaddrInet6) (flags int32, err error) {
 	const SIOCGIFAFLAG_IN6 = 0xc1206949
 	var ifr inet6Ifreq
 	*(*unix.RawSockaddrInet6)(unsafe.Pointer(&ifr.Ifru)) = *sa
-	c, err := f.SyscallConn()
-	if err != nil {
-		return 0, err
-	}
-	if cerr := c.Control(func(fd uintptr) {
-		err = ioctlPtr(int(fd), SIOCGIFAFLAG_IN6, unsafe.Pointer(&ifr))
-	}); cerr != nil {
-		return 0, cerr
-	}
-	if err != nil {
+	if err := ioctlPtr(fd, SIOCGIFAFLAG_IN6, unsafe.Pointer(&ifr)); err != nil {
 		return 0, os.NewSyscallError("ioctl", err)
 	}
 	return ifr.Ifru[0], nil

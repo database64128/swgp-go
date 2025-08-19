@@ -48,24 +48,33 @@ func (p *picker) start(ctx context.Context) error {
 		return fmt.Errorf("failed to open routing socket: %w", err)
 	}
 
+	ioctlFd, err := bsdroute.Socket(unix.AF_INET6, unix.SOCK_DGRAM, 0)
+	if err != nil {
+		_ = f.Close()
+		return fmt.Errorf("failed to open ioctl socket: %w", err)
+	}
+
 	b, err := bsdroute.SysctlGetBytes([]int32{unix.CTL_NET, unix.AF_ROUTE, 0, unix.AF_UNSPEC, unix.NET_RT_IFLIST, 0})
 	if err != nil {
 		_ = f.Close()
+		_ = unix.Close(ioctlFd)
 		return fmt.Errorf("failed to get interface dump: %w", err)
 	}
-	p.handleRouteMessage(f, b)
+	p.handleRouteMessage(ioctlFd, b)
 
 	b, err = bsdroute.SysctlGetBytes([]int32{unix.CTL_NET, unix.AF_ROUTE, 0, unix.AF_UNSPEC, unix.NET_RT_DUMP, 0})
 	if err != nil {
 		_ = f.Close()
+		_ = unix.Close(ioctlFd)
 		return fmt.Errorf("failed to get route dump: %w", err)
 	}
-	p.handleRouteMessage(f, b)
+	p.handleRouteMessage(ioctlFd, b)
 
 	p.wg.Add(1)
 	go func() {
-		p.monitorRoutingSocket(f)
+		p.monitorRoutingSocket(f, ioctlFd)
 		_ = f.Close()
+		_ = unix.Close(ioctlFd)
 		p.wg.Done()
 	}()
 
@@ -82,7 +91,7 @@ func (p *picker) start(ctx context.Context) error {
 	return nil
 }
 
-func (p *picker) monitorRoutingSocket(f *os.File) {
+func (p *picker) monitorRoutingSocket(f *os.File, ioctlFd int) {
 	// route(8) monitor uses this buffer size.
 	// Each read only returns a single message.
 	const readBufSize = 2048
@@ -96,11 +105,11 @@ func (p *picker) monitorRoutingSocket(f *os.File) {
 			p.logger.Error("Failed to read from routing socket", tslog.Err(err))
 			continue
 		}
-		p.handleRouteMessage(f, b[:n])
+		p.handleRouteMessage(ioctlFd, b[:n])
 	}
 }
 
-func (p *picker) handleRouteMessage(f *os.File, b []byte) {
+func (p *picker) handleRouteMessage(ioctlFd int, b []byte) {
 	for len(b) >= bsdroute.SizeofMsghdr {
 		m := (*bsdroute.Msghdr)(unsafe.Pointer(unsafe.SliceData(b)))
 		if m.Msglen < bsdroute.SizeofMsghdr || int(m.Msglen) > len(b) {
@@ -201,7 +210,7 @@ func (p *picker) handleRouteMessage(f *os.File, b []byte) {
 
 				switch m.Type {
 				case unix.RTM_NEWADDR:
-					ifaFlags, err := bsdroute.IoctlGetIfaFlagInet6(f, (*unix.RawSockaddrInet6)(unsafe.Pointer(addrs[unix.RTAX_IFA])))
+					ifaFlags, err := bsdroute.IoctlGetIfaFlagInet6(ioctlFd, (*unix.RawSockaddrInet6)(unsafe.Pointer(addrs[unix.RTAX_IFA])))
 					if err != nil {
 						p.logger.Warn("Failed to get interface IPv6 address flags",
 							tslog.Uint("index", ifam.Index),
@@ -310,7 +319,8 @@ func (p *picker) handleRouteMessage(f *os.File, b []byte) {
 
 			switch m.Type {
 			case unix.RTM_ADD, unix.RTM_CHANGE, unix.RTM_GET:
-				if ifaAddr.Is4() {
+				switch {
+				case ifaAddr.Is4():
 					if p.pktinfo4.Addr != ifaAddr || p.pktinfo4.Ifindex != uint32(rtm.Index) {
 						pktinfo4 := conn.Pktinfo{
 							Addr:    ifaAddr,
@@ -325,7 +335,7 @@ func (p *picker) handleRouteMessage(f *os.File, b []byte) {
 						p.pktinfo4 = pktinfo4
 						p.pktinfo4p.Store(&pktinfo4)
 					}
-				} else {
+				case iface.addr6.IsValid():
 					// Unlike IPv4, the IPv6 address in a default route message is a link-local address.
 					if p.pktinfo6.Addr != iface.addr6 || p.pktinfo6.Ifindex != uint32(rtm.Index) {
 						pktinfo6 := conn.Pktinfo{
@@ -344,7 +354,8 @@ func (p *picker) handleRouteMessage(f *os.File, b []byte) {
 				}
 
 			case unix.RTM_DELETE:
-				if ifaAddr.Is4() {
+				switch {
+				case ifaAddr.Is4():
 					if p.pktinfo4.Addr == ifaAddr && p.pktinfo4.Ifindex == uint32(rtm.Index) {
 						p.logger.Info("Deleting default pktinfo4",
 							tslog.Addr("oldAddr", p.pktinfo4.Addr),
@@ -353,7 +364,7 @@ func (p *picker) handleRouteMessage(f *os.File, b []byte) {
 						p.pktinfo4 = conn.Pktinfo{}
 						p.pktinfo4p.Store(&conn.Pktinfo{})
 					}
-				} else {
+				case iface.addr6.IsValid():
 					if p.pktinfo6.Addr == iface.addr6 && p.pktinfo6.Ifindex == uint32(rtm.Index) {
 						p.logger.Info("Deleting default pktinfo6",
 							tslog.Addr("oldAddr", p.pktinfo6.Addr),
