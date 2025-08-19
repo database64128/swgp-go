@@ -117,7 +117,7 @@ func IoctlGetIfaFlagInet6(fd int, name string, sa *unix.RawSockaddrInet6) (flags
 	return ifr.Ifru[0], nil
 }
 
-//go:linkname ioctlPtr syscall.ioctlPtr
+//go:linkname ioctlPtr golang.org/x/sys/unix.ioctlPtr
 //go:noescape
 func ioctlPtr(fd int, req uint, arg unsafe.Pointer) (err error)
 
