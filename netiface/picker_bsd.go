@@ -279,7 +279,7 @@ func (p *picker) handleRouteMessage(
 						p.logger.Debug("Updating physical interface IPv6 address",
 							tslog.Uint("index", ifam.Index),
 							tslog.Addr("ifaAddr", ifaAddr),
-							tslog.Int("ifaFlags", ifaFlags),
+							slog.Any("ifaFlags", ifaFlags),
 							slog.String("ifname", iface.name),
 						)
 					}

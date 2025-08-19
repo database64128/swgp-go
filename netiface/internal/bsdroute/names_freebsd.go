@@ -64,28 +64,31 @@ func (m MsgType) string() string {
 	}
 }
 
-/*
-struct bits rt_bits[] = {
-	{ RTF_UP,	'U', "up" },
-	{ RTF_GATEWAY,	'G', "gateway" },
-	{ RTF_HOST,	'H', "host" },
-	{ RTF_REJECT,	'R', "reject" },
-	{ RTF_DYNAMIC,	'D', "dynamic" },
-	{ RTF_MODIFIED,	'M', "modified" },
-	{ RTF_DONE,	'd', "done" },
-	{ RTF_XRESOLVE,	'X', "xresolve" },
-	{ RTF_STATIC,	'S', "static" },
-	{ RTF_PROTO1,	'1', "proto1" },
-	{ RTF_PROTO2,	'2', "proto2" },
-	{ RTF_PROTO3,	'3', "proto3" },
-	{ RTF_BLACKHOLE,'B', "blackhole" },
-	{ RTF_BROADCAST,'b', "broadcast" },
-#ifdef RTF_LLINFO
-	{ RTF_LLINFO,	'L', "llinfo" },
-#endif
-	{ 0 , 0, NULL }
-};
-*/
+// Source: https://github.com/freebsd/freebsd-src/blob/main/usr.bin/netstat/route.c
+//
+// /*
+//  * Definitions for showing gateway flags.
+//  */
+// struct bits rt_bits[] = {
+// 	{ RTF_UP,	'U', "up" },
+// 	{ RTF_GATEWAY,	'G', "gateway" },
+// 	{ RTF_HOST,	'H', "host" },
+// 	{ RTF_REJECT,	'R', "reject" },
+// 	{ RTF_DYNAMIC,	'D', "dynamic" },
+// 	{ RTF_MODIFIED,	'M', "modified" },
+// 	{ RTF_DONE,	'd', "done" }, /* Completed -- for routing msgs only */
+// 	{ RTF_XRESOLVE,	'X', "xresolve" },
+// 	{ RTF_STATIC,	'S', "static" },
+// 	{ RTF_PROTO1,	'1', "proto1" },
+// 	{ RTF_PROTO2,	'2', "proto2" },
+// 	{ RTF_PROTO3,	'3', "proto3" },
+// 	{ RTF_BLACKHOLE,'B', "blackhole" },
+// 	{ RTF_BROADCAST,'b', "broadcast" },
+// #ifdef RTF_LLINFO
+// 	{ RTF_LLINFO,	'L', "llinfo" },
+// #endif
+// 	{ 0 , 0, NULL }
+// };
 
 var routeFlagNames = [...]struct {
 	mask RouteFlags
@@ -163,4 +166,34 @@ var ifaceFlagNames = [...]struct {
 	{unix.IFF_DYING, "DYING"},
 	{unix.IFF_RENAMING, "RENAMING"},
 	{unix.IFF_NOGROUP, "NOGROUP"},
+}
+
+// Constants for interface IPv6 address flags (ia6_flags, ifru_flags6).
+//
+// Source: https://github.com/freebsd/freebsd-src/blob/main/sys/netinet6/in6_var.h
+const (
+	IN6_IFF_ANYCAST       = 0x0001 // anycast address
+	IN6_IFF_TENTATIVE     = 0x0002 // tentative address
+	IN6_IFF_DUPLICATED    = 0x0004 // DAD detected duplicate
+	IN6_IFF_DETACHED      = 0x0008 // may be detached from the link
+	IN6_IFF_DEPRECATED    = 0x0010 // deprecated address
+	IN6_IFF_NODAD         = 0x0020 // don't perform DAD on this address (obsolete)
+	IN6_IFF_AUTOCONF      = 0x0040 // autoconfigurable address.
+	IN6_IFF_TEMPORARY     = 0x0080 // temporary (anonymous) address.
+	IN6_IFF_PREFER_SOURCE = 0x0100 // preferred address for SAS
+)
+
+var ifaFlags6Names = [...]struct {
+	mask IfaFlags6
+	name string
+}{
+	{IN6_IFF_ANYCAST, "anycast"},
+	{IN6_IFF_TENTATIVE, "tentative"},
+	{IN6_IFF_DUPLICATED, "duplicated"},
+	{IN6_IFF_DETACHED, "detached"},
+	{IN6_IFF_DEPRECATED, "deprecated"},
+	{IN6_IFF_NODAD, "nodad"},
+	{IN6_IFF_AUTOCONF, "autoconf"},
+	{IN6_IFF_TEMPORARY, "temporary"},
+	{IN6_IFF_PREFER_SOURCE, "prefer_source"},
 }

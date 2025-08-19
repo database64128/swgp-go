@@ -87,26 +87,33 @@ func (f IfaceFlags) MarshalText() ([]byte, error) {
 	return f.AppendText(nil)
 }
 
-// Constants for interface IPv6 address flags (ifru_flags6).
-// They share the same values across supported BSD variants.
-//
-//   - macOS: https://github.com/apple-oss-distributions/xnu/blob/94d3b452840153a99b38a3a9659680b2a006908e/bsd/netinet6/in6_var.h#L785-L821
-//   - DragonFly BSD: https://github.com/DragonFlyBSD/DragonFlyBSD/blob/ba1276acd1c8c22d225b1bcf370a14c878644f44/sys/netinet6/in6_var.h#L457-L472
-//   - FreeBSD: https://github.com/freebsd/freebsd-src/blob/7bbcbd43c53b49360969ca82b152fd6d971e9055/sys/netinet6/in6_var.h#L492-L505
-//   - NetBSD: https://github.com/NetBSD/src/blob/2b3021f92cac3b692b6b23305b68f7bb4212bffd/sys/netinet6/in6_var.h#L400-L417
-//   - OpenBSD: https://github.com/openbsd/src/blob/c0b7aa147b16eeebb8c9dc6debf303af3c74b7d5/sys/netinet6/in6_var.h#L287-L293
-const (
-	IN6_IFF_DEPRECATED = 0x10
-	IN6_IFF_TEMPORARY  = 0x80
-)
+type IfaFlags6 int32
+
+func (f IfaFlags6) AppendText(b []byte) ([]byte, error) {
+	bLen := len(b)
+	for _, flag := range ifaFlags6Names {
+		if f&flag.mask != 0 {
+			b = append(b, flag.name...)
+			b = append(b, ' ')
+		}
+	}
+	if len(b) > bLen {
+		b = b[:len(b)-1]
+	}
+	return b, nil
+}
+
+func (f IfaFlags6) MarshalText() ([]byte, error) {
+	return f.AppendText(nil)
+}
 
 type inet6Ifreq struct {
 	Name [unix.IFNAMSIZ]byte
-	Ifru [68]int32
+	Ifru [272]byte
 }
 
 // IoctlGetIfaFlagInet6 calls ioctl(SIOCGIFAFLAG_IN6) on f to retrieve the interface IPv6 address flags for sa.
-func IoctlGetIfaFlagInet6(fd int, name string, sa *unix.RawSockaddrInet6) (flags int32, err error) {
+func IoctlGetIfaFlagInet6(fd int, name string, sa *unix.RawSockaddrInet6) (flags IfaFlags6, err error) {
 	const SIOCGIFAFLAG_IN6 = 0xc1206949
 	var ifr inet6Ifreq
 	_ = copy(ifr.Name[:], name)
@@ -114,7 +121,7 @@ func IoctlGetIfaFlagInet6(fd int, name string, sa *unix.RawSockaddrInet6) (flags
 	if err := ioctlPtr(fd, SIOCGIFAFLAG_IN6, unsafe.Pointer(&ifr)); err != nil {
 		return 0, os.NewSyscallError("ioctl", err)
 	}
-	return ifr.Ifru[0], nil
+	return *(*IfaFlags6)(unsafe.Pointer(&ifr.Ifru)), nil
 }
 
 //go:linkname ioctlPtr golang.org/x/sys/unix.ioctlPtr

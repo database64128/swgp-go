@@ -64,30 +64,33 @@ func (m MsgType) string() string {
 	}
 }
 
-/*
-struct bits {
-	int	b_mask;
-	char	b_val;
-};
-static const struct bits bits[] = {
-	{ RTF_UP,	'U' },
-	{ RTF_GATEWAY,	'G' },
-	{ RTF_HOST,	'H' },
-	{ RTF_REJECT,	'R' },
-	{ RTF_BLACKHOLE, 'B' },
-	{ RTF_DYNAMIC,	'D' },
-	{ RTF_MODIFIED,	'M' },
-	{ RTF_DONE,	'd' },
-	{ RTF_CLONING,	'C' },
-	{ RTF_XRESOLVE,	'X' },
-	{ RTF_LLINFO,	'L' },
-	{ RTF_STATIC,	'S' },
-	{ RTF_PROTO1,	'1' },
-	{ RTF_PROTO2,	'2' },
-	{ RTF_PROTO3,	'3' },
-	{ 0, 0 }
-};
-*/
+// Source: https://github.com/DragonFlyBSD/DragonFlyBSD/blob/master/sbin/route/show.c
+//
+// /*
+//  * Definitions for showing gateway flags.
+//  */
+// struct bits {
+// 	int	b_mask;
+// 	char	b_val;
+// };
+// static const struct bits bits[] = {
+// 	{ RTF_UP,	'U' },
+// 	{ RTF_GATEWAY,	'G' },
+// 	{ RTF_HOST,	'H' },
+// 	{ RTF_REJECT,	'R' },
+// 	{ RTF_BLACKHOLE, 'B' },
+// 	{ RTF_DYNAMIC,	'D' },
+// 	{ RTF_MODIFIED,	'M' },
+// 	{ RTF_DONE,	'd' }, /* Completed -- for routing messages only */
+// 	{ RTF_CLONING,	'C' },
+// 	{ RTF_XRESOLVE,	'X' },
+// 	{ RTF_LLINFO,	'L' },
+// 	{ RTF_STATIC,	'S' },
+// 	{ RTF_PROTO1,	'1' },
+// 	{ RTF_PROTO2,	'2' },
+// 	{ RTF_PROTO3,	'3' },
+// 	{ 0, 0 }
+// };
 
 var routeFlagNames = [...]struct {
 	mask RouteFlags
@@ -165,4 +168,34 @@ var ifaceFlagNames = [...]struct {
 	{unix.IFF_STATICARP, "STATICARP"},
 	{unix.IFF_NPOLLING, "NPOLLING"},
 	{unix.IFF_IDIRECT, "IDIRECT"},
+}
+
+// Constants for interface IPv6 address flags (ia6_flags, ifru_flags6).
+//
+// Source: https://github.com/DragonFlyBSD/DragonFlyBSD/blob/master/sys/netinet6/in6_var.h
+const (
+	IN6_IFF_ANYCAST    = 0x0001 // anycast address
+	IN6_IFF_TENTATIVE  = 0x0002 // tentative address
+	IN6_IFF_DUPLICATED = 0x0004 // DAD detected duplicate
+	IN6_IFF_DETACHED   = 0x0008 // may be detached from the link
+	IN6_IFF_DEPRECATED = 0x0010 // deprecated address
+	IN6_IFF_NODAD      = 0x0020 // don't perform DAD on this address (used only at first SIOC* call)
+	IN6_IFF_AUTOCONF   = 0x0040 // autoconfigurable address.
+	IN6_IFF_TEMPORARY  = 0x0080 // temporary (anonymous) address.
+	IN6_IFF_NOPFX      = 0x8000 // skip kernel prefix management. XXX: this should be temporary.
+)
+
+var ifaFlags6Names = [...]struct {
+	mask IfaFlags6
+	name string
+}{
+	{IN6_IFF_ANYCAST, "anycast"},
+	{IN6_IFF_TENTATIVE, "tentative"},
+	{IN6_IFF_DUPLICATED, "duplicated"},
+	{IN6_IFF_DETACHED, "detached"},
+	{IN6_IFF_DEPRECATED, "deprecated"},
+	{IN6_IFF_NODAD, "nodad"},
+	{IN6_IFF_AUTOCONF, "autoconf"},
+	{IN6_IFF_TEMPORARY, "temporary"},
+	{IN6_IFF_NOPFX, "nopfx"},
 }
