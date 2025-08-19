@@ -106,9 +106,10 @@ type inet6Ifreq struct {
 }
 
 // IoctlGetIfaFlagInet6 calls ioctl(SIOCGIFAFLAG_IN6) on f to retrieve the interface IPv6 address flags for sa.
-func IoctlGetIfaFlagInet6(fd int, sa *unix.RawSockaddrInet6) (flags int32, err error) {
+func IoctlGetIfaFlagInet6(fd int, name string, sa *unix.RawSockaddrInet6) (flags int32, err error) {
 	const SIOCGIFAFLAG_IN6 = 0xc1206949
 	var ifr inet6Ifreq
+	_ = copy(ifr.Name[:], name)
 	*(*unix.RawSockaddrInet6)(unsafe.Pointer(&ifr.Ifru)) = *sa
 	if err := ioctlPtr(fd, SIOCGIFAFLAG_IN6, unsafe.Pointer(&ifr)); err != nil {
 		return 0, os.NewSyscallError("ioctl", err)
