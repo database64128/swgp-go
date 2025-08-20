@@ -6,29 +6,22 @@ on:
       - 'v*'
 
 jobs:
-  publish_upload:
-    name: Publish and upload
+  release:
+    name: Release
     runs-on: ubuntu-latest
-    container:
-      image: archlinux/archlinux:base-devel
 
     steps:
-      - name: Install Git & Go
-        run: pacman -Syu --needed --noconfirm gcc git go
+      - uses: actions/checkout@v5
 
-      - name: Disable Git's stupid security theater
-        run: git config --global safe.directory '*'
-
-      - name: Git Checkout Tag
-        run: |
-          cd ../
-          rm -rf ${{ github.event.repository.name }}
-          git clone --branch ${{ github.ref_name }} https://github.com/${{ github.repository }}.git
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: stable
 
       - name: Build
         run: |
-          mkdir package-archlinux-x86-64-v2 \
-                package-archlinux-x86-64-v3 \
+          mkdir package-linux-glibc-x86-64-v2 \
+                package-linux-glibc-x86-64-v3 \
                 package-linux-x86-64-v2 \
                 package-linux-x86-64-v3 \
                 package-linux-arm64 \
@@ -38,8 +31,8 @@ jobs:
                 package-macos-x86-64-v3 \
                 package-macos-arm64 \ 
 
-          env GOAMD64=v2 go build -v -trimpath -ldflags '-s -w' -o package-archlinux-x86-64-v2/ ./cmd/swgp-go
-          env GOAMD64=v3 go build -v -trimpath -ldflags '-s -w' -o package-archlinux-x86-64-v3/ ./cmd/swgp-go
+          env GOAMD64=v2 go build -v -trimpath -ldflags '-s -w' -o package-linux-glibc-x86-64-v2/ ./cmd/swgp-go
+          env GOAMD64=v3 go build -v -trimpath -ldflags '-s -w' -o package-linux-glibc-x86-64-v3/ ./cmd/swgp-go
           env CGO_ENABLED=0 GOAMD64=v2 go build -v -trimpath -ldflags '-s -w' -o package-linux-x86-64-v2/ ./cmd/swgp-go
           env CGO_ENABLED=0 GOAMD64=v3 go build -v -trimpath -ldflags '-s -w' -o package-linux-x86-64-v3/ ./cmd/swgp-go
           env CGO_ENABLED=0 GOARCH=arm64 go build -v -trimpath -ldflags '-s -w' -o package-linux-arm64/ ./cmd/swgp-go
@@ -52,12 +45,12 @@ jobs:
       - name: Package
         env:
           ZSTD_CLEVEL: 19
-          ZSTD_NBTHREADS: 2
+          ZSTD_NBTHREADS: 0
         run: |
-          cd package-archlinux-x86-64-v2/
-          tar -acf ../swgp-go-${{ github.ref_name }}-archlinux-x86-64-v2.tar.zst .
-          cd ../package-archlinux-x86-64-v3/
-          tar -acf ../swgp-go-${{ github.ref_name }}-archlinux-x86-64-v3.tar.zst .
+          cd package-linux-glibc-x86-64-v2/
+          tar -acf ../swgp-go-${{ github.ref_name }}-linux-glibc-x86-64-v2.tar.zst .
+          cd ../package-linux-glibc-x86-64-v3/
+          tar -acf ../swgp-go-${{ github.ref_name }}-linux-glibc-x86-64-v3.tar.zst .
           cd ../package-linux-x86-64-v2/
           tar -acf ../swgp-go-${{ github.ref_name }}-linux-x86-64-v2.tar.zst .
           cd ../package-linux-x86-64-v3/
