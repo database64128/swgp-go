@@ -18,7 +18,6 @@ import (
 	"github.com/database64128/swgp-go/internal/wireguard"
 	"github.com/database64128/swgp-go/service/internal/packetseq"
 	"github.com/database64128/swgp-go/tslog"
-	"github.com/database64128/swgp-go/tslogtest"
 	"golang.org/x/sys/unix"
 )
 
@@ -27,8 +26,8 @@ func TestClientServerMmsgSendDrain(t *testing.T) {
 		t.Skip("Skipping client-server send/drain test in short mode")
 	}
 
-	logCfg := tslogtest.Config{Level: slog.LevelInfo}
-	logger := logCfg.NewTestLogger(t)
+	logCfg := tslog.Config{Level: slog.LevelInfo}
+	logger := logCfg.NewLogger(t.Output())
 
 	for _, proxyModeCase := range proxyModeCases {
 		t.Run(proxyModeCase.name, func(t *testing.T) {
@@ -100,11 +99,9 @@ func testClientServerMmsgConn(
 
 	t.Run("C->S", func(t *testing.T) {
 		var wg sync.WaitGroup
-		wg.Add(1)
-		go func() {
+		wg.Go(func() {
 			serverConnPeer = testDrainMmsgConn(t, logger, serverMmsgRConn, serverConnInfo, segmentSize, true)
-			wg.Done()
-		}()
+		})
 		testSendMmsgConn(t, logger, clientMmsgWConn, clientConnInfo, netip.AddrPort{}, segmentSize)
 		wg.Wait()
 	})
@@ -115,11 +112,9 @@ func testClientServerMmsgConn(
 
 	t.Run("S->C", func(t *testing.T) {
 		var wg sync.WaitGroup
-		wg.Add(1)
-		go func() {
+		wg.Go(func() {
 			_ = testDrainMmsgConn(t, logger, clientMmsgRConn, clientConnInfo, segmentSize, false)
-			wg.Done()
-		}()
+		})
 		testSendMmsgConn(t, logger, serverMmsgWConn, serverConnInfo, serverConnPeer, segmentSize)
 		wg.Wait()
 	})

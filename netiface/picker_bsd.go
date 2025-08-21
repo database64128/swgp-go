@@ -72,13 +72,11 @@ func (p *picker) start(ctx context.Context) error {
 	}
 	p.handleRouteMessage(ioctlFd, ifaceCandidateByIndex, ifaceCandidateByAddr, b)
 
-	p.wg.Add(1)
-	go func() {
+	p.wg.Go(func() {
 		p.monitorRoutingSocket(f, ioctlFd, ifaceCandidateByIndex, ifaceCandidateByAddr)
 		_ = f.Close()
 		_ = unix.Close(ioctlFd)
-		p.wg.Done()
-	}()
+	})
 
 	if ctxDone := ctx.Done(); ctxDone != nil {
 		go func() {

@@ -46,12 +46,9 @@ func (s *server) startMmsg(ctx context.Context) error {
 		slog.String("listenAddress", s.proxyListenAddress),
 	)
 
-	s.mwg.Add(1)
-
-	go func() {
+	s.mwg.Go(func() {
 		s.recvFromProxyConnRecvmmsg(ctx, logger, proxyConn.NewRConn(), proxyConnInfo)
-		s.mwg.Done()
-	}()
+	})
 
 	logger.Info("Started service",
 		tslog.ConnAddrp("wgAddress", &s.wgAddr),
@@ -275,9 +272,8 @@ func (s *server) recvFromProxyConnRecvmmsg(ctx context.Context, logger *tslog.Lo
 				wgConnSendCh := make(chan queuedPacket, s.sendChannelCapacity)
 				natEntry.wgConnSendCh = wgConnSendCh
 				s.table[clientAddrPort] = natEntry
-				s.wg.Add(1)
 
-				go func() {
+				s.wg.Go(func() {
 					var sendChClean bool
 
 					defer func() {
@@ -291,8 +287,6 @@ func (s *server) recvFromProxyConnRecvmmsg(ctx context.Context, logger *tslog.Lo
 								s.putPacketBuf(queuedPacket.buf)
 							}
 						}
-
-						s.wg.Done()
 					}()
 
 					wgAddress := s.wgAddr.String()
@@ -360,9 +354,7 @@ func (s *server) recvFromProxyConnRecvmmsg(ctx context.Context, logger *tslog.Lo
 						slog.Bool("udpGRO", wgConnInfo.UDPGenericReceiveOffload),
 					)
 
-					s.wg.Add(1)
-
-					go func() {
+					s.wg.Go(func() {
 						s.relayProxyToWgSendmmsg(
 							wgConn.NewWConn(),
 							wgConnInfo,
@@ -370,8 +362,7 @@ func (s *server) recvFromProxyConnRecvmmsg(ctx context.Context, logger *tslog.Lo
 							sesLogger,
 						)
 						wgConn.Close()
-						s.wg.Done()
-					}()
+					})
 
 					s.relayWgToProxySendmmsg(
 						clientAddrPort,
@@ -384,7 +375,7 @@ func (s *server) recvFromProxyConnRecvmmsg(ctx context.Context, logger *tslog.Lo
 						maxProxyPacketSize,
 						sesLogger,
 					)
-				}()
+				})
 
 				if logger.Enabled(slog.LevelDebug) {
 					logger.Debug("New server session",
