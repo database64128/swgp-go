@@ -78,14 +78,9 @@ func (p *picker) start(ctx context.Context) error {
 		_ = unix.Close(ioctlFd)
 	})
 
-	if ctxDone := ctx.Done(); ctxDone != nil {
-		go func() {
-			<-ctxDone
-			if err := f.SetReadDeadline(conn.ALongTimeAgo); err != nil {
-				p.logger.Error("Failed to set read deadline on routing socket", tslog.Err(err))
-			}
-		}()
-	}
+	_ = context.AfterFunc(ctx, func() {
+		_ = f.SetReadDeadline(conn.ALongTimeAgo)
+	})
 
 	p.logger.Info("Started interface picker")
 	return nil
