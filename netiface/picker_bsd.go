@@ -174,7 +174,7 @@ func (p *picker) handleRouteMessage(
 				p.logger.Debug("Processing if_msghdr for physical interface",
 					slog.Any("flags", bsdroute.IfaceFlags(ifm.Flags)),
 					tslog.Uint("index", ifm.Index),
-					slog.String("ifpAddr", ifpAddr),
+					tslog.ByteString("ifpAddr", ifpAddr),
 				)
 			}
 
@@ -184,10 +184,10 @@ func (p *picker) handleRouteMessage(
 				switch {
 				case !ok:
 					ifaceCandidateByIndex[ifm.Index] = &ifaceCandidate{
-						name: ifpAddr,
+						name: string(ifpAddr),
 					}
-				case ifpAddr != "" && iface.name == "":
-					iface.name = ifpAddr
+				case len(ifpAddr) > 0 && string(ifpAddr) != iface.name:
+					iface.name = string(ifpAddr)
 				}
 			} else {
 				// Interface is down, remove it from the candidate map.
@@ -231,8 +231,8 @@ func (p *picker) handleRouteMessage(
 			}
 
 			ifpAddr := ifnameFromSockaddr(addrs[unix.RTAX_IFP])
-			if ifpAddr != "" && iface.name == "" {
-				iface.name = ifpAddr
+			if len(ifpAddr) > 0 && string(ifpAddr) != iface.name {
+				iface.name = string(ifpAddr)
 			}
 
 			if p.logger.Enabled(slog.LevelDebug) {
@@ -240,7 +240,7 @@ func (p *picker) handleRouteMessage(
 					slog.Any("type", bsdroute.MsgType(ifam.Type)),
 					tslog.Uint("index", ifam.Index),
 					tslog.Addr("ifaAddr", ifaAddr),
-					slog.String("ifpAddr", ifpAddr),
+					tslog.ByteString("ifpAddr", ifpAddr),
 				)
 			}
 
@@ -450,14 +450,13 @@ func addrFromSockaddr(sa *unix.RawSockaddr, ifaceCandidateByIndex map[uint16]*if
 	}
 }
 
-func ifnameFromSockaddr(sa *unix.RawSockaddr) string {
+func ifnameFromSockaddr(sa *unix.RawSockaddr) []byte {
 	if sa != nil && sa.Len >= unix.SizeofSockaddrDatalink && sa.Family == unix.AF_LINK {
 		if sa := (*unix.RawSockaddrDatalink)(unsafe.Pointer(sa)); int(sa.Nlen) <= len(sa.Data) {
-			ifnameBuf := unsafe.Slice((*byte)(unsafe.Pointer(&sa.Data)), sa.Nlen)
-			return string(ifnameBuf)
+			return unsafe.Slice((*byte)(unsafe.Pointer(&sa.Data)), sa.Nlen)
 		}
 	}
-	return ""
+	return nil
 }
 
 func (p *picker) stop() error {
