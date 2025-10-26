@@ -54,7 +54,6 @@ func (p *picker) start(ctx context.Context) error {
 	}
 
 	ifaceCandidateByIndex := make(map[uint16]*ifaceCandidate)
-	ifindexByAddr4 := make(map[netip.Addr]uint16)
 
 	b, err := bsdroute.SysctlGetBytes([]int32{unix.CTL_NET, unix.AF_ROUTE, 0, unix.AF_UNSPEC, unix.NET_RT_IFLIST, 0})
 	if err != nil {
@@ -62,7 +61,7 @@ func (p *picker) start(ctx context.Context) error {
 		_ = unix.Close(ioctlFd)
 		return fmt.Errorf("failed to get interface dump: %w", err)
 	}
-	p.handleRouteMessage(ioctlFd, ifaceCandidateByIndex, ifindexByAddr4, b)
+	p.handleRouteMessage(ioctlFd, ifaceCandidateByIndex, b)
 
 	b, err = bsdroute.SysctlGetBytes([]int32{unix.CTL_NET, unix.AF_ROUTE, 0, unix.AF_UNSPEC, unix.NET_RT_DUMP, 0})
 	if err != nil {
@@ -70,10 +69,10 @@ func (p *picker) start(ctx context.Context) error {
 		_ = unix.Close(ioctlFd)
 		return fmt.Errorf("failed to get route dump: %w", err)
 	}
-	p.handleRouteMessage(ioctlFd, ifaceCandidateByIndex, ifindexByAddr4, b)
+	p.handleRouteMessage(ioctlFd, ifaceCandidateByIndex, b)
 
 	p.wg.Go(func() {
-		p.monitorRoutingSocket(f, ioctlFd, ifaceCandidateByIndex, ifindexByAddr4)
+		p.monitorRoutingSocket(f, ioctlFd, ifaceCandidateByIndex)
 		_ = f.Close()
 		_ = unix.Close(ioctlFd)
 	})
@@ -90,7 +89,6 @@ func (p *picker) monitorRoutingSocket(
 	f *os.File,
 	ioctlFd int,
 	ifaceCandidateByIndex map[uint16]*ifaceCandidate,
-	ifindexByAddr4 map[netip.Addr]uint16,
 ) {
 	// route(8) monitor uses this buffer size.
 	// Each read only returns a single message.
@@ -105,14 +103,13 @@ func (p *picker) monitorRoutingSocket(
 			p.logger.Error("Failed to read from routing socket", tslog.Err(err))
 			continue
 		}
-		p.handleRouteMessage(ioctlFd, ifaceCandidateByIndex, ifindexByAddr4, b[:n])
+		p.handleRouteMessage(ioctlFd, ifaceCandidateByIndex, b[:n])
 	}
 }
 
 func (p *picker) handleRouteMessage(
 	ioctlFd int,
 	ifaceCandidateByIndex map[uint16]*ifaceCandidate,
-	ifindexByAddr4 map[netip.Addr]uint16,
 	b []byte,
 ) {
 	for len(b) >= bsdroute.SizeofMsghdr {
@@ -225,18 +222,18 @@ func (p *picker) handleRouteMessage(
 			var addrs [unix.RTAX_MAX]*unix.RawSockaddr
 			bsdroute.ParseAddrs(&addrs, addrsBuf, ifam.Addrs)
 
-			ifaAddr := addrFromSockaddr(addrs[unix.RTAX_IFA], ifaceCandidateByIndex)
-			if !ifaAddr.IsValid() {
-				continue
-			}
-
 			ifpAddr := ifnameFromSockaddr(addrs[unix.RTAX_IFP])
 			if len(ifpAddr) > 0 && string(ifpAddr) != iface.name {
 				iface.name = string(ifpAddr)
 			}
 
+			ifaAddr := ipFromSockaddr(addrs[unix.RTAX_IFA], ifaceCandidateByIndex)
+			if !ifaAddr.Is6() || ifaAddr.IsLinkLocalUnicast() {
+				continue
+			}
+
 			if p.logger.Enabled(slog.LevelDebug) {
-				p.logger.Debug("Processing ifa_msghdr for physical interface address",
+				p.logger.Debug("Processing ifa_msghdr for physical interface IPv6 address",
 					slog.Any("type", bsdroute.MsgType(ifam.Type)),
 					tslog.Uint("index", ifam.Index),
 					tslog.Addr("ifaAddr", ifaAddr),
@@ -246,51 +243,41 @@ func (p *picker) handleRouteMessage(
 
 			switch m.Type {
 			case unix.RTM_NEWADDR:
-				switch {
-				case ifaAddr.Is4():
-					ifindexByAddr4[ifaAddr] = ifam.Index
+				ifaFlags, err := bsdroute.IoctlGetIfaFlagInet6(ioctlFd, iface.name, (*unix.RawSockaddrInet6)(unsafe.Pointer(addrs[unix.RTAX_IFA])))
+				if err != nil {
+					p.logger.Warn("Failed to get interface IPv6 address flags",
+						tslog.Uint("index", ifam.Index),
+						tslog.Addr("ifaAddr", ifaAddr),
+						slog.String("ifname", iface.name),
+						tslog.Err(err),
+					)
+					continue
+				}
 
-				case !ifaAddr.IsLinkLocalUnicast():
-					ifaFlags, err := bsdroute.IoctlGetIfaFlagInet6(ioctlFd, iface.name, (*unix.RawSockaddrInet6)(unsafe.Pointer(addrs[unix.RTAX_IFA])))
-					if err != nil {
-						p.logger.Warn("Failed to get interface IPv6 address flags",
-							tslog.Uint("index", ifam.Index),
-							tslog.Addr("ifaAddr", ifaAddr),
-							slog.String("ifname", iface.name),
-							tslog.Err(err),
-						)
-						continue
-					}
+				if ifaFlags&bsdroute.IN6_IFF_DEPRECATED != 0 ||
+					ifaFlags&bsdroute.IN6_IFF_TEMPORARY != 0 {
+					continue
+				}
 
-					if ifaFlags&bsdroute.IN6_IFF_DEPRECATED != 0 ||
-						ifaFlags&bsdroute.IN6_IFF_TEMPORARY != 0 {
-						continue
+				// macOS does not send routing messages for IPv6 default route changes.
+				// We could initiate a route dump here, but that does not appear to be necessary.
+				if p.pktinfo6.Addr != ifaAddr || p.pktinfo6.Ifindex != uint32(ifam.Index) {
+					pktinfo6 := conn.Pktinfo{
+						Addr:    ifaAddr,
+						Ifindex: uint32(ifam.Index),
 					}
-
-					// macOS does not send routing messages for IPv6 default route changes.
-					// We could initiate a route dump here, but that does not appear to be necessary.
-					if p.pktinfo6.Addr != ifaAddr || p.pktinfo6.Ifindex != uint32(ifam.Index) {
-						pktinfo6 := conn.Pktinfo{
-							Addr:    ifaAddr,
-							Ifindex: uint32(ifam.Index),
-						}
-						p.logger.Info("Updating default pktinfo6",
-							tslog.Addr("oldAddr", p.pktinfo6.Addr),
-							tslog.Uint("oldIfindex", p.pktinfo6.Ifindex),
-							tslog.Addr("newAddr", pktinfo6.Addr),
-							tslog.Uint("newIfindex", pktinfo6.Ifindex),
-						)
-						p.pktinfo6 = pktinfo6
-						p.pktinfo6p.Store(&pktinfo6)
-					}
+					p.logger.Info("Updating default pktinfo6",
+						tslog.Addr("oldAddr", p.pktinfo6.Addr),
+						tslog.Uint("oldIfindex", p.pktinfo6.Ifindex),
+						tslog.Addr("newAddr", pktinfo6.Addr),
+						tslog.Uint("newIfindex", pktinfo6.Ifindex),
+					)
+					p.pktinfo6 = pktinfo6
+					p.pktinfo6p.Store(&pktinfo6)
 				}
 
 			case unix.RTM_DELADDR:
-				switch {
-				case ifaAddr.Is4():
-					delete(ifindexByAddr4, ifaAddr)
-
-				case p.pktinfo6.Addr == ifaAddr && p.pktinfo6.Ifindex == uint32(ifam.Index):
+				if p.pktinfo6.Addr == ifaAddr && p.pktinfo6.Ifindex == uint32(ifam.Index) {
 					p.logger.Info("Deleting default pktinfo6",
 						tslog.Addr("oldAddr", p.pktinfo6.Addr),
 						tslog.Uint("oldIfindex", p.pktinfo6.Ifindex),
@@ -342,31 +329,32 @@ func (p *picker) handleRouteMessage(
 			var addrs [unix.RTAX_MAX]*unix.RawSockaddr
 			bsdroute.ParseAddrs(&addrs, addrsBuf, rtm.Addrs)
 
-			dstAddr := addrFromSockaddr(addrs[unix.RTAX_DST], ifaceCandidateByIndex)
+			dstAddr := ipFromSockaddr(addrs[unix.RTAX_DST], ifaceCandidateByIndex)
 			if !dstAddr.IsUnspecified() {
 				continue
 			}
 
-			netmaskAddr := addrFromSockaddr(addrs[unix.RTAX_NETMASK], ifaceCandidateByIndex)
+			netmaskAddr := ipFromSockaddr(addrs[unix.RTAX_NETMASK], ifaceCandidateByIndex)
 			if netmaskAddr.IsValid() && !netmaskAddr.IsUnspecified() {
 				continue
 			}
 
-			ifaAddr := addrFromSockaddr(addrs[unix.RTAX_IFA], ifaceCandidateByIndex)
+			ifpAddr := ifindexFromSockaddr(addrs[unix.RTAX_IFP])
+
+			ifaAddr := ipFromSockaddr(addrs[unix.RTAX_IFA], ifaceCandidateByIndex)
 			if !ifaAddr.Is4() {
 				continue
 			}
 
 			ifindex := rtm.Index
 			if ifindex == 0 {
-				ifindex, ok = ifindexByAddr4[ifaAddr]
-				if !ok {
+				ifindex = ifpAddr
+				if ifindex == 0 {
 					continue
 				}
-			} else {
-				if _, ok := ifaceCandidateByIndex[ifindex]; !ok {
-					continue
-				}
+			}
+			if _, ok := ifaceCandidateByIndex[ifindex]; !ok {
+				continue
 			}
 
 			if p.logger.Enabled(slog.LevelDebug) {
@@ -378,6 +366,7 @@ func (p *picker) handleRouteMessage(
 					tslog.Int("seq", rtm.Seq),
 					tslog.Addr("dstAddr", dstAddr),
 					tslog.Addr("netmaskAddr", netmaskAddr),
+					tslog.Uint("ifpAddr", ifpAddr),
 					tslog.Addr("ifaAddr", ifaAddr),
 				)
 			}
@@ -420,7 +409,7 @@ type ifaceCandidate struct {
 	name string
 }
 
-func addrFromSockaddr(sa *unix.RawSockaddr, ifaceCandidateByIndex map[uint16]*ifaceCandidate) netip.Addr {
+func ipFromSockaddr(sa *unix.RawSockaddr, ifaceCandidateByIndex map[uint16]*ifaceCandidate) netip.Addr {
 	if sa == nil {
 		return netip.Addr{}
 	}
@@ -448,6 +437,13 @@ func addrFromSockaddr(sa *unix.RawSockaddr, ifaceCandidateByIndex map[uint16]*if
 	default:
 		return netip.Addr{}
 	}
+}
+
+func ifindexFromSockaddr(sa *unix.RawSockaddr) uint16 {
+	if sa == nil || sa.Len < unix.SizeofSockaddrDatalink || sa.Family != unix.AF_LINK {
+		return 0
+	}
+	return (*unix.RawSockaddrDatalink)(unsafe.Pointer(sa)).Index
 }
 
 func ifnameFromSockaddr(sa *unix.RawSockaddr) []byte {
