@@ -5,10 +5,10 @@ import (
 	"os"
 )
 
-// Open opens the JSON file at path and decodes it into v.
+// Load opens the JSON file at path and decodes it into v.
 //
 // Unknown fields in the JSON file will cause an error.
-func Open(path string, v any) error {
+func Load(path string, v any) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return err

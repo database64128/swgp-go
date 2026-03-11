@@ -61,7 +61,7 @@ func main() {
 	logger.Info("swgp-go", slog.String("version", swgp.Version))
 
 	var sc service.Config
-	if err := jsoncfg.Open(confPath, &sc); err != nil {
+	if err := jsoncfg.Load(confPath, &sc); err != nil {
 		logger.Error("Failed to load config",
 			slog.String("path", confPath),
 			tslog.Err(err),
