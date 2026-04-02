@@ -272,16 +272,14 @@ func (p *picker) handleMibUnicastIpAddressRowNotification(nmsg mibNotification) 
 			iface.Addr4 = addr
 
 			if iface == p.activeIfaceInfo4 {
-				p.logger.Info("Updating default pktinfo4 addr",
-					tslog.Uint("ifindex", nmsg.InterfaceIndex),
-					tslog.Addr("oldAddr", iface.Addr4),
-					tslog.Addr("newAddr", addr),
-				)
-				iface.Addr4 = addr
 				pktinfo4 := conn.Pktinfo{
 					Addr:    addr,
 					Ifindex: nmsg.InterfaceIndex,
 				}
+				p.logger.Info("Updating default pktinfo4 addr",
+					tslog.Addrp("addr", &pktinfo4.Addr),
+					tslog.Uint("ifindex", pktinfo4.Ifindex),
+				)
 				p.pktinfo4p.Store(&pktinfo4)
 			}
 		} else {
@@ -295,16 +293,14 @@ func (p *picker) handleMibUnicastIpAddressRowNotification(nmsg mibNotification) 
 			iface.Addr6 = addr
 
 			if iface == p.activeIfaceInfo6 {
-				p.logger.Info("Updating default pktinfo6 addr",
-					tslog.Uint("ifindex", nmsg.InterfaceIndex),
-					tslog.Addr("oldAddr", iface.Addr6),
-					tslog.Addr("newAddr", addr),
-				)
-				iface.Addr6 = addr
 				pktinfo6 := conn.Pktinfo{
 					Addr:    addr,
 					Ifindex: nmsg.InterfaceIndex,
 				}
+				p.logger.Info("Updating default pktinfo6 addr",
+					tslog.Addrp("addr", &pktinfo6.Addr),
+					tslog.Uint("ifindex", pktinfo6.Ifindex),
+				)
 				p.pktinfo6p.Store(&pktinfo6)
 			}
 		}
@@ -563,7 +559,7 @@ func (p *picker) handleNewMibIpForwardRow2(
 					Ifindex: interfaceIndex,
 				}
 				p.logger.Info("Updating default pktinfo4",
-					tslog.Addr("addr", pktinfo4.Addr),
+					tslog.Addrp("addr", &pktinfo4.Addr),
 					tslog.Uint("ifindex", pktinfo4.Ifindex),
 				)
 				p.pktinfo4p.Store(&pktinfo4)
@@ -589,7 +585,7 @@ func (p *picker) handleNewMibIpForwardRow2(
 					Ifindex: interfaceIndex,
 				}
 				p.logger.Info("Updating default pktinfo6",
-					tslog.Addr("addr", pktinfo6.Addr),
+					tslog.Addrp("addr", &pktinfo6.Addr),
 					tslog.Uint("ifindex", pktinfo6.Ifindex),
 				)
 				p.pktinfo6p.Store(&pktinfo6)
