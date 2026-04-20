@@ -6,7 +6,10 @@ on:
       - 'v*'
 
 permissions:
+  artifact-metadata: write
+  attestations: write
   contents: write
+  id-token: write
 
 jobs:
   release:
@@ -79,3 +82,8 @@ jobs:
           tag: ${{ github.ref }}
           file_glob: true
           draft: true
+
+      - name: Generate artifact attestation
+        uses: actions/attest@v4
+        with:
+          subject-path: 'swgp-go-*.tar.zst'
