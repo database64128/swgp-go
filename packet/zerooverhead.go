@@ -57,6 +57,7 @@ func (h *zeroOverheadHandler) WithMaxPacketSize(maxPacketSize int) Handler {
 	return &zeroOverheadHandler{
 		cb:                     h.cb,
 		aead:                   h.aead,
+		maxPacketSize:          maxPacketSize,
 		maxHandshakePacketSize: zeroOverheadHandlerMaxHandshakePacketSizeFromMaxPacketSize(maxPacketSize),
 	}
 }
