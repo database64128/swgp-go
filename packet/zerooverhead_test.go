@@ -49,21 +49,50 @@ func verifyZeroOverheadHandlerPacket(t *testing.T, wgPacket, swgpPacket, decrypt
 func TestZeroOverheadHandler(t *testing.T) {
 	h := newZeroOverheadHandler(t)
 
-	for _, msg := range []struct {
-		name    string
-		msgType byte
-	}{
-		{"HandshakeInitiation", wireguard.MessageTypeHandshakeInitiation},
-		{"HandshakeResponse", wireguard.MessageTypeHandshakeResponse},
-		{"HandshakeCookieReply", wireguard.MessageTypeHandshakeCookieReply},
-		{"Data", wireguard.MessageTypeData},
-	} {
+	for _, msg := range msgTypeCases {
 		t.Run(msg.name, func(t *testing.T) {
-			for _, length := range []int{0, 1, 16, 128, 1280} {
+			for _, length := range msgLengthCases {
 				t.Run(strconv.Itoa(length), func(t *testing.T) {
 					testHandler(t, msg.msgType, length, h, verifyZeroOverheadHandlerPacket)
 				})
 			}
+		})
+	}
+}
+
+func newZeroOverhead2026Handler(t *testing.T) Handler {
+	t.Helper()
+
+	psk := make([]byte, 32)
+	rand.Read(psk)
+
+	h, err := NewZeroOverhead2026Handler(psk, 1452)
+	if err != nil {
+		t.Fatalf("NewZeroOverhead2026Handler failed: %v", err)
+	}
+	return h
+}
+
+func TestZeroOverhead2026Handler(t *testing.T) {
+	h := newZeroOverhead2026Handler(t)
+
+	for _, msg := range msgTypeCases {
+		t.Run(msg.name, func(t *testing.T) {
+			for _, length := range msgLengthCases {
+				t.Run(strconv.Itoa(length), func(t *testing.T) {
+					testHandler(t, msg.msgType, length, h, verifyZeroOverheadHandlerPacket)
+				})
+			}
+		})
+	}
+}
+
+func TestZeroOverhead2026HandlerReplayRepeatedNonce(t *testing.T) {
+	h := newZeroOverhead2026Handler(t)
+
+	for _, msg := range replayRepeatedNonceCases {
+		t.Run(msg.name, func(t *testing.T) {
+			testHandlerReplayRepeatedNonce(t, msg.msgType, msg.length, h)
 		})
 	}
 }

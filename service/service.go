@@ -429,8 +429,14 @@ func newPacketHandler(proxyMode, proxyPSKFilePath string, proxyPSK []byte, maxPa
 	case "zero-overhead":
 		h, err = packet.NewZeroOverheadHandler(proxyPSK, maxPacketSize)
 		return h, 0, err
+	case "zero-overhead-2026":
+		h, err = packet.NewZeroOverhead2026Handler(proxyPSK, maxPacketSize)
+		return h, 0, err
 	case "paranoid":
 		h, err = packet.NewParanoidHandler(proxyPSK, maxPacketSize)
+		return h, packet.ParanoidHandlerOverhead, err
+	case "paranoid-2026":
+		h, err = packet.NewParanoid2026Handler(proxyPSK, maxPacketSize)
 		return h, packet.ParanoidHandlerOverhead, err
 	default:
 		return nil, 0, fmt.Errorf("unknown proxy mode: %q", proxyMode)

@@ -10,8 +10,12 @@
 
 ### 1. Zero overhead
 
-- Encrypts the first 16 bytes as an AES block.
-- Adds padding of random length to handshake packets, then encrypts all bytes after the first 16 using XChaCha20-Poly1305.
+Mode identifier: `"zero-overhead-2026"`
+
+- The first 16 bytes are encrypted as an AES block for obfuscation.
+- Data packets have no further processing.
+- For handshake packets, the rest of the packet is randomly padded and encrypted with XChaCha20-Poly1305 AEAD.
+- Replayed handshake packets are dropped by checking the nonce and an encrypted timestamp.
 
 #### When to use
 
@@ -19,6 +23,8 @@
 - ✅ Minimal processing of data packets.
 
 ### 2. Paranoid
+
+Mode identifier: `"paranoid-2026"`
 
 Packets are padded to the maximum packet size allowed by the MTU, then encrypted using XChaCha20-Poly1305.
 
@@ -30,6 +36,10 @@ Packets are padded to the maximum packet size allowed by the MTU, then encrypted
     - Many IPv6 websites cap their outgoing MTU to 1280 for maximum compatibility.
 - ❗️ Slight reduction of tunnel MTU.
 - ❗️ Increased bandwidth usage.
+
+### 3. Legacy modes
+
+The `"zero-overhead"` and `"paranoid"` modes are also supported for backward compatibility with previous versions. These modes do not provide replay protection at the obfuscation layer, and do not require the client and server to have synchronized clocks.
 
 ## Deployment
 
@@ -95,7 +105,7 @@ In this example, `swgp-go` runs a proxy server instance on port 20220. Decrypted
         {
             "name": "server",
             "proxyListen": ":20220",
-            "proxyMode": "zero-overhead",
+            "proxyMode": "zero-overhead-2026",
             "proxyPSK": "sAe5RvzLJ3Q0Ll88QRM1N01dYk83Q4y0rXMP1i4rDmI=",
             "proxyFwmark": 0,
             "wgEndpoint": "[::1]:20221",
@@ -118,7 +128,7 @@ In this example, `swgp-go` runs a proxy client instance on port 20222. Encrypted
             "wgListen": ":20222",
             "wgFwmark": 0,
             "proxyEndpoint": "[2001:db8:1f74:3c86:aef9:a75:5d2a:425e]:20220",
-            "proxyMode": "zero-overhead",
+            "proxyMode": "zero-overhead-2026",
             "proxyPSK": "sAe5RvzLJ3Q0Ll88QRM1N01dYk83Q4y0rXMP1i4rDmI=",
             "proxyFwmark": 0,
             "mtu": 1500

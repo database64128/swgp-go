@@ -19,28 +19,36 @@ import (
 	"github.com/database64128/swgp-go/tslog"
 )
 
+func generatePSK32() []byte {
+	psk := make([]byte, 32)
+	rand.Read(psk)
+	return psk
+}
+
 var proxyModeCases = [...]struct {
 	name        string
 	proxyMode   string
 	generatePSK func() []byte
 }{
 	{
-		name:      "ZeroOverhead",
-		proxyMode: "zero-overhead",
-		generatePSK: func() []byte {
-			psk := make([]byte, 32)
-			rand.Read(psk)
-			return psk
-		},
+		name:        "ZeroOverhead",
+		proxyMode:   "zero-overhead",
+		generatePSK: generatePSK32,
 	},
 	{
-		name:      "Paranoid",
-		proxyMode: "paranoid",
-		generatePSK: func() []byte {
-			psk := make([]byte, 32)
-			rand.Read(psk)
-			return psk
-		},
+		name:        "ZeroOverhead2026",
+		proxyMode:   "zero-overhead-2026",
+		generatePSK: generatePSK32,
+	},
+	{
+		name:        "Paranoid",
+		proxyMode:   "paranoid",
+		generatePSK: generatePSK32,
+	},
+	{
+		name:        "Paranoid2026",
+		proxyMode:   "paranoid-2026",
+		generatePSK: generatePSK32,
 	},
 }
 

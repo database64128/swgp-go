@@ -67,8 +67,9 @@ type ClientConfig struct {
 
 	// ProxyMode specifies the proxy protocol.
 	//
-	//  - "zero-overhead": Lightweight protocol with minimal overhead.
-	//  - "paranoid": Full-packet AEAD.
+	//  - "zero-overhead-2026": Lightweight protocol with minimal overhead.
+	//  - "paranoid-2026": Full-packet AEAD.
+	//  - "zero-overhead", "paranoid": Legacy modes without replay protection at the obfuscation layer.
 	//
 	// See README for more information on the protocols.
 	ProxyMode string `json:"proxyMode"`
