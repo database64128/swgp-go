@@ -13,7 +13,6 @@ import (
 	"unsafe"
 
 	"github.com/database64128/swgp-go/conn"
-	"github.com/database64128/swgp-go/netiface/internal/iphlpapi"
 	"github.com/database64128/swgp-go/tslog"
 	"golang.org/x/sys/windows"
 )
@@ -369,8 +368,8 @@ func (p *picker) handleMibUnicastIpAddressRowNotification(nmsg mibNotification) 
 		}
 		p.initialNotificationReceivedUnicastIpAddressChange = true
 
-		var table *iphlpapi.MibUnicastIpAddressTable
-		if err := iphlpapi.GetUnicastIpAddressTable(windows.AF_UNSPEC, &table); err != nil {
+		var table *windows.MibUnicastIpAddressTable
+		if err := windows.GetUnicastIpAddressTable(windows.AF_UNSPEC, &table); err != nil {
 			p.logger.Error("Failed to get IP address table",
 				tslog.Err(os.NewSyscallError("GetUnicastIpAddressTable", err)),
 			)
@@ -382,7 +381,7 @@ func (p *picker) handleMibUnicastIpAddressRowNotification(nmsg mibNotification) 
 			currentIfaceInfo *ifaceInfo
 		)
 
-		rows := table.Rows()
+		rows := unsafe.Slice(&table.Table[0], table.NumEntries)
 		for i := range rows {
 			row := &rows[i]
 
