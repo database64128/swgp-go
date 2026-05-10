@@ -4,4 +4,4 @@
 package swgp
 
 // Version is the current version of swgp-go.
-const Version = "1.9.0"
+const Version = "1.10.0"
