@@ -50,6 +50,12 @@ Release and VCS packages are available in the AUR:
 - [![swgp-go AUR package](https://img.shields.io/aur/version/swgp-go?label=swgp-go)](https://aur.archlinux.org/packages/swgp-go)
 - [![swgp-go-git AUR package](https://img.shields.io/aur/version/swgp-go-git?label=swgp-go-git)](https://aur.archlinux.org/packages/swgp-go-git)
 
+### Homebrew
+
+[![Homebrew Formula Version](https://img.shields.io/homebrew/v/swgp-go)](https://formulae.brew.sh/formula/swgp-go)
+
+Run `brew install swgp-go`.
+
 ### Prebuilt binaries
 
 Download from [releases](https://github.com/database64128/swgp-go/releases).
