@@ -20,14 +20,14 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func (c *client) start(ctx context.Context) error {
+func (c *Client) start(ctx context.Context) error {
 	if c.disableMmsg {
 		return c.startGeneric(ctx)
 	}
 	return c.startMmsg(ctx)
 }
 
-func (c *client) startMmsg(ctx context.Context) error {
+func (c *Client) startMmsg(ctx context.Context) error {
 	wgConn, wgConnInfo, err := c.wgConnConfig.ListenMmsgConn(ctx, c.wgListenNetwork, c.wgListenAddress)
 	if err != nil {
 		return err
@@ -73,7 +73,7 @@ func (c *client) startMmsg(ctx context.Context) error {
 	return nil
 }
 
-func (c *client) recvFromWgConnRecvmmsg(ctx context.Context, logger *tslog.Logger, wgConn *conn.MmsgRConn, wgConnInfo conn.SocketInfo) {
+func (c *Client) recvFromWgConnRecvmmsg(ctx context.Context, logger *tslog.Logger, wgConn *conn.MmsgRConn, wgConnInfo conn.SocketInfo) {
 	cmsgBuf := make([]byte, c.mainRecvBatchSize*conn.SocketControlMessageBufferSize)
 	namevec := make([]unix.RawSockaddrInet6, c.mainRecvBatchSize)
 	iovec := make([]unix.Iovec, c.mainRecvBatchSize)
@@ -348,7 +348,7 @@ func (c *client) recvFromWgConnRecvmmsg(ctx context.Context, logger *tslog.Logge
 	)
 }
 
-func (c *client) relayWgToProxySendmmsg(
+func (c *Client) relayWgToProxySendmmsg(
 	proxyConn *conn.MmsgWConn,
 	proxyConnInfo conn.SocketInfo,
 	proxyConnSendCh <-chan queuedPacket,
@@ -562,7 +562,7 @@ main:
 	)
 }
 
-func (c *client) relayProxyToWgSendmmsg(
+func (c *Client) relayProxyToWgSendmmsg(
 	clientAddrPort netip.AddrPort,
 	clientPktinfop *conn.Pktinfo,
 	atomicClientPktinfop *atomic.Pointer[conn.Pktinfo],
@@ -842,6 +842,6 @@ func (c *client) relayProxyToWgSendmmsg(
 }
 
 // putPacketBufUnchecked puts the packet buffer back into the pool without checking its capacity.
-func (c *client) putPacketBufUnchecked(packetBufp *byte) {
+func (c *Client) putPacketBufUnchecked(packetBufp *byte) {
 	c.packetBufPool.Put(packetBufp)
 }

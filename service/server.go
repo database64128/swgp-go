@@ -118,7 +118,10 @@ type serverNatEntry struct {
 	wgConnSendCh       chan<- queuedPacket
 }
 
-type server struct {
+// Server is a swgp server service.
+//
+// Server implements [Service].
+type Server struct {
 	name                 string
 	proxyListenNetwork   string
 	proxyListenAddress   string
@@ -149,7 +152,7 @@ type server struct {
 
 // Server creates a swgp server service from the server config.
 // Call the Start method on the returned service to start it.
-func (sc *ServerConfig) Server(logger *tslog.Logger, socketConfigCache conn.UDPSocketConfigCache) (*server, error) {
+func (sc *ServerConfig) Server(logger *tslog.Logger, socketConfigCache conn.UDPSocketConfigCache) (*Server, error) {
 	// Require MTU to be at least 1280.
 	if sc.MTU < minimumMTU {
 		return nil, ErrMTUTooSmall
@@ -192,7 +195,7 @@ func (sc *ServerConfig) Server(logger *tslog.Logger, socketConfigCache conn.UDPS
 	wgTunnelMTUv4 := wgTunnelMTUFromMaxPacketSize(maxProxyPacketSizev4 - handlerOverhead)
 	wgTunnelMTUv6 := wgTunnelMTUFromMaxPacketSize(maxProxyPacketSizev6 - handlerOverhead)
 
-	s := server{
+	s := Server{
 		name:                 sc.Name,
 		proxyListenNetwork:   sc.ProxyListenNetwork,
 		proxyListenAddress:   sc.ProxyListenAddress,
@@ -239,16 +242,16 @@ func (sc *ServerConfig) Server(logger *tslog.Logger, socketConfigCache conn.UDPS
 }
 
 // SlogAttr implements [Service.SlogAttr].
-func (s *server) SlogAttr() slog.Attr {
+func (s *Server) SlogAttr() slog.Attr {
 	return slog.String("server", s.name)
 }
 
 // Start implements [Service.Start].
-func (s *server) Start(ctx context.Context) (err error) {
+func (s *Server) Start(ctx context.Context) (err error) {
 	return s.start(ctx)
 }
 
-func (s *server) startGeneric(ctx context.Context) error {
+func (s *Server) startGeneric(ctx context.Context) error {
 	proxyConn, proxyConnInfo, err := s.proxyConnConfig.Listen(ctx, s.proxyListenNetwork, s.proxyListenAddress)
 	if err != nil {
 		return err
@@ -281,7 +284,7 @@ func (s *server) startGeneric(ctx context.Context) error {
 	return nil
 }
 
-func (s *server) recvFromProxyConnGeneric(ctx context.Context, logger *tslog.Logger, proxyConn *net.UDPConn, proxyConnInfo conn.SocketInfo) {
+func (s *Server) recvFromProxyConnGeneric(ctx context.Context, logger *tslog.Logger, proxyConn *net.UDPConn, proxyConnInfo conn.SocketInfo) {
 	packetBuf := make([]byte, s.packetBufSize)
 	cmsgBuf := make([]byte, conn.SocketControlMessageBufferSize)
 	qp := queuedPacket{
@@ -613,7 +616,7 @@ func (s *server) recvFromProxyConnGeneric(ctx context.Context, logger *tslog.Log
 	)
 }
 
-func (s *server) relayProxyToWgGeneric(
+func (s *Server) relayProxyToWgGeneric(
 	wgAddrPort netip.AddrPort,
 	wgConn *net.UDPConn,
 	wgConnInfo conn.SocketInfo,
@@ -689,7 +692,7 @@ func (s *server) relayProxyToWgGeneric(
 	)
 }
 
-func (s *server) relayWgToProxyGeneric(
+func (s *Server) relayWgToProxyGeneric(
 	clientAddrPort netip.AddrPort,
 	clientPktinfop *conn.Pktinfo,
 	atomicClientPktinfop *atomic.Pointer[conn.Pktinfo],
@@ -916,12 +919,12 @@ func (s *server) relayWgToProxyGeneric(
 }
 
 // getPacketBuf retrieves a packet buffer from the pool.
-func (s *server) getPacketBuf() []byte {
+func (s *Server) getPacketBuf() []byte {
 	return unsafe.Slice(s.packetBufPool.Get().(*byte), s.packetBufSize)[:0]
 }
 
 // putPacketBuf puts the packet buffer back into the pool.
-func (s *server) putPacketBuf(packetBuf []byte) {
+func (s *Server) putPacketBuf(packetBuf []byte) {
 	if cap(packetBuf) < s.packetBufSize {
 		panic(fmt.Sprintf("putPacketBuf: packetBuf capacity %d, expected at least %d", cap(packetBuf), s.packetBufSize))
 	}
@@ -929,7 +932,7 @@ func (s *server) putPacketBuf(packetBuf []byte) {
 }
 
 // Stop implements [Service.Stop].
-func (s *server) Stop() error {
+func (s *Server) Stop() error {
 	if err := s.proxyConn.SetReadDeadline(conn.ALongTimeAgo); err != nil {
 		return fmt.Errorf("failed to SetReadDeadline on proxyConn: %w", err)
 	}
@@ -967,4 +970,12 @@ func (s *server) Stop() error {
 
 	s.logger.Info("Stopped service", slog.String("server", s.name))
 	return nil
+}
+
+// ProxyListenAddress returns the actual address the server socket is bound to for receiving proxy packets,
+// which may be different from the configured [ServerConfig.ProxyListenAddress].
+//
+// If the server is not started, this is the same as [ServerConfig.ProxyListenAddress].
+func (s *Server) ProxyListenAddress() string {
+	return s.proxyListenAddress
 }

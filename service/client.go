@@ -131,7 +131,10 @@ type clientNatEntry struct {
 	proxyConnSendCh    chan<- queuedPacket
 }
 
-type client struct {
+// Client is a swgp client service.
+//
+// Client implements [Service].
+type Client struct {
 	name                   string
 	wgListenNetwork        string
 	wgListenAddress        string
@@ -163,7 +166,7 @@ type client struct {
 
 // Client creates a swgp client service from the client config.
 // Call the Start method on the returned service to start it.
-func (cc *ClientConfig) Client(logger *tslog.Logger, socketConfigCache conn.UDPSocketConfigCache, ifacePicker *netiface.Picker) (*client, error) {
+func (cc *ClientConfig) Client(logger *tslog.Logger, socketConfigCache conn.UDPSocketConfigCache, ifacePicker *netiface.Picker) (*Client, error) {
 	// Require MTU to be at least 1280.
 	if cc.MTU < minimumMTU {
 		return nil, ErrMTUTooSmall
@@ -214,7 +217,7 @@ func (cc *ClientConfig) Client(logger *tslog.Logger, socketConfigCache conn.UDPS
 		}
 	}
 
-	c := client{
+	c := Client{
 		name:                   cc.Name,
 		wgListenNetwork:        cc.WgListenNetwork,
 		wgListenAddress:        cc.WgListenAddress,
@@ -262,16 +265,16 @@ func (cc *ClientConfig) Client(logger *tslog.Logger, socketConfigCache conn.UDPS
 }
 
 // SlogAttr implements [Service.SlogAttr].
-func (c *client) SlogAttr() slog.Attr {
+func (c *Client) SlogAttr() slog.Attr {
 	return slog.String("client", c.name)
 }
 
 // Start implements [Service.Start].
-func (c *client) Start(ctx context.Context) (err error) {
+func (c *Client) Start(ctx context.Context) (err error) {
 	return c.start(ctx)
 }
 
-func (c *client) startGeneric(ctx context.Context) error {
+func (c *Client) startGeneric(ctx context.Context) error {
 	wgConn, wgConnInfo, err := c.wgConnConfig.Listen(ctx, c.wgListenNetwork, c.wgListenAddress)
 	if err != nil {
 		return err
@@ -317,7 +320,7 @@ func (c *client) startGeneric(ctx context.Context) error {
 	return nil
 }
 
-func (c *client) recvFromWgConnGeneric(ctx context.Context, logger *tslog.Logger, wgConn *net.UDPConn, wgConnInfo conn.SocketInfo) {
+func (c *Client) recvFromWgConnGeneric(ctx context.Context, logger *tslog.Logger, wgConn *net.UDPConn, wgConnInfo conn.SocketInfo) {
 	packetBuf := c.getPacketBuf()
 	cmsgBuf := make([]byte, conn.SocketControlMessageBufferSize)
 
@@ -576,7 +579,7 @@ func (c *client) recvFromWgConnGeneric(ctx context.Context, logger *tslog.Logger
 	)
 }
 
-func (c *client) relayWgToProxyGeneric(
+func (c *Client) relayWgToProxyGeneric(
 	proxyAddrPort netip.AddrPort,
 	proxyPktinfop *atomic.Pointer[conn.Pktinfo],
 	proxyConn *net.UDPConn,
@@ -746,7 +749,7 @@ func (c *client) relayWgToProxyGeneric(
 	)
 }
 
-func (c *client) relayProxyToWgGeneric(
+func (c *Client) relayProxyToWgGeneric(
 	clientAddrPort netip.AddrPort,
 	clientPktinfop *conn.Pktinfo,
 	atomicClientPktinfop *atomic.Pointer[conn.Pktinfo],
@@ -973,12 +976,12 @@ func (c *client) relayProxyToWgGeneric(
 }
 
 // getPacketBuf retrieves a packet buffer from the pool.
-func (c *client) getPacketBuf() []byte {
+func (c *Client) getPacketBuf() []byte {
 	return unsafe.Slice(c.packetBufPool.Get().(*byte), c.packetBufSize)
 }
 
 // putPacketBuf puts the packet buffer back into the pool.
-func (c *client) putPacketBuf(packetBuf []byte) {
+func (c *Client) putPacketBuf(packetBuf []byte) {
 	if cap(packetBuf) < c.packetBufSize {
 		panic(fmt.Sprintf("putPacketBuf: packetBuf capacity %d, expected at least %d", cap(packetBuf), c.packetBufSize))
 	}
@@ -986,7 +989,7 @@ func (c *client) putPacketBuf(packetBuf []byte) {
 }
 
 // Stop implements [Service.Stop].
-func (c *client) Stop() error {
+func (c *Client) Stop() error {
 	if err := c.wgConn.SetReadDeadline(conn.ALongTimeAgo); err != nil {
 		return fmt.Errorf("failed to SetReadDeadline on wgConn: %w", err)
 	}
@@ -1024,4 +1027,12 @@ func (c *client) Stop() error {
 
 	c.logger.Info("Stopped service", slog.String("client", c.name))
 	return nil
+}
+
+// WgListenAddress returns the actual address the server socket is bound to for receiving WireGuard packets,
+// which may be different from the configured [ClientConfig.WgListenAddress].
+//
+// If the client is not started, this is the same as [ClientConfig.WgListenAddress].
+func (c *Client) WgListenAddress() string {
+	return c.wgListenAddress
 }

@@ -82,7 +82,7 @@ func testClientServerMmsgConn(
 	logger *tslog.Logger,
 	clientConn, serverConn *net.UDPConn,
 	clientConnInfo, serverConnInfo conn.SocketInfo,
-	client *client, _ *server,
+	client *Client, _ *Server,
 ) {
 	var serverConnPeer netip.AddrPort
 	segmentSize := client.wgTunnelMTUv6 + wireguard.DataPacketOverhead

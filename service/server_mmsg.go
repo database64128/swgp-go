@@ -20,14 +20,14 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-func (s *server) start(ctx context.Context) error {
+func (s *Server) start(ctx context.Context) error {
 	if s.disableMmsg {
 		return s.startGeneric(ctx)
 	}
 	return s.startMmsg(ctx)
 }
 
-func (s *server) startMmsg(ctx context.Context) error {
+func (s *Server) startMmsg(ctx context.Context) error {
 	proxyConn, proxyConnInfo, err := s.proxyConnConfig.ListenMmsgConn(ctx, s.proxyListenNetwork, s.proxyListenAddress)
 	if err != nil {
 		return err
@@ -60,7 +60,7 @@ func (s *server) startMmsg(ctx context.Context) error {
 	return nil
 }
 
-func (s *server) recvFromProxyConnRecvmmsg(ctx context.Context, logger *tslog.Logger, proxyConn *conn.MmsgRConn, proxyConnInfo conn.SocketInfo) {
+func (s *Server) recvFromProxyConnRecvmmsg(ctx context.Context, logger *tslog.Logger, proxyConn *conn.MmsgRConn, proxyConnInfo conn.SocketInfo) {
 	packetBuf := make([]byte, s.mainRecvBatchSize*s.packetBufSize)
 	cmsgBuf := make([]byte, s.mainRecvBatchSize*conn.SocketControlMessageBufferSize)
 	namevec := make([]unix.RawSockaddrInet6, s.mainRecvBatchSize)
@@ -418,7 +418,7 @@ func (s *server) recvFromProxyConnRecvmmsg(ctx context.Context, logger *tslog.Lo
 	)
 }
 
-func (s *server) relayProxyToWgSendmmsg(
+func (s *Server) relayProxyToWgSendmmsg(
 	wgConn *conn.MmsgWConn,
 	wgConnInfo conn.SocketInfo,
 	wgConnSendCh <-chan queuedPacket,
@@ -562,7 +562,7 @@ func (s *server) relayProxyToWgSendmmsg(
 	)
 }
 
-func (s *server) relayWgToProxySendmmsg(
+func (s *Server) relayWgToProxySendmmsg(
 	clientAddrPort netip.AddrPort,
 	clientPktinfop *conn.Pktinfo,
 	atomicClientPktinfop *atomic.Pointer[conn.Pktinfo],

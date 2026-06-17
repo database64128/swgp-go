@@ -229,7 +229,7 @@ func TestClientServer(t *testing.T) {
 															_ *tslog.Logger,
 															clientConn, serverConn *net.UDPConn,
 															_, _ conn.SocketInfo,
-															client *client, _ *server,
+															client *Client, _ *Server,
 														) {
 															t.Run("Handshake", func(t *testing.T) {
 																testClientServerHandshake(t, clientConn, serverConn)
@@ -272,7 +272,7 @@ func testClientServerConn(
 		logger *tslog.Logger,
 		clientConn, serverConn *net.UDPConn,
 		clientConnInfo, serverConnInfo conn.SocketInfo,
-		client *client, server *server,
+		client *Client, server *Server,
 	),
 ) {
 	ctx := t.Context()
@@ -410,7 +410,7 @@ func testClientServerHandshake(t *testing.T, clientConn, serverConn *net.UDPConn
 	}
 }
 
-func testClientServerDataPackets(t *testing.T, clientConn, serverConn *net.UDPConn, client *client) {
+func testClientServerDataPackets(t *testing.T, clientConn, serverConn *net.UDPConn, client *Client) {
 	// Make packets.
 	dataPacketLen := client.wgTunnelMTUv6 + wireguard.DataPacketOverhead
 	dataPacket := make([]byte, dataPacketLen, 65535)
@@ -522,7 +522,7 @@ func testClientServerSendDrain(
 	logger *tslog.Logger,
 	clientConn, serverConn *net.UDPConn,
 	clientConnInfo, serverConnInfo conn.SocketInfo,
-	client *client, _ *server,
+	client *Client, _ *Server,
 ) {
 	var serverConnPeer netip.AddrPort
 	clientConnPeer := client.wgConn.LocalAddr().(*net.UDPAddr).AddrPort()
