@@ -50,7 +50,7 @@ func (c Config) NewHandler(w io.Writer) slog.Handler {
 			Level: c.Level,
 		})
 	}
-	return tint.NewHandler(w, &tint.Options{
+	return tint.NewTextHandler(w, &tint.Options{
 		Level:   c.Level,
 		NoColor: c.NoColor,
 	})
