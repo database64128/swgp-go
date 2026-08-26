@@ -19,14 +19,12 @@ func (c *Config) newService(logger *tslog.Logger) (*Service, error) {
 	}
 
 	return &Service{
-		service: service{
-			logger:  logger,
-			network: network,
-			server: http.Server{
-				Addr:     c.ListenAddress,
-				Handler:  logPprofRequests(logger, http.DefaultServeMux),
-				ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelError),
-			},
+		logger:  logger,
+		network: network,
+		server: http.Server{
+			Addr:     c.ListenAddress,
+			Handler:  logPprofRequests(logger, http.DefaultServeMux),
+			ErrorLog: slog.NewLogLogger(logger.Handler(), slog.LevelError),
 		},
 	}, nil
 }

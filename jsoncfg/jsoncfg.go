@@ -1,7 +1,8 @@
 package jsoncfg
 
 import (
-	"encoding/json"
+	"encoding/json/jsontext"
+	"encoding/json/v2"
 	"os"
 )
 
@@ -15,9 +16,7 @@ func Load(path string, v any) error {
 	}
 	defer f.Close()
 
-	dec := json.NewDecoder(f)
-	dec.DisallowUnknownFields()
-	return dec.Decode(v)
+	return json.UnmarshalRead(f, v, json.RejectUnknownMembers(true))
 }
 
 // Save encodes v into JSON and saves it to the file at path.
@@ -28,8 +27,5 @@ func Save(path string, v any) error {
 	}
 	defer f.Close()
 
-	enc := json.NewEncoder(f)
-	enc.SetEscapeHTML(false)
-	enc.SetIndent("", "    ")
-	return enc.Encode(v)
+	return json.MarshalWrite(f, v, jsontext.Multiline(true))
 }
