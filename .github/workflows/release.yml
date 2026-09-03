@@ -35,7 +35,7 @@ jobs:
                 package-windows-x86-64-v3 \
                 package-windows-arm64 \
                 package-macos-x86-64-v3 \
-                package-macos-arm64 \ 
+                package-macos-arm64
 
           env GOAMD64=v2 go build -v -trimpath -ldflags '-s -w' -o package-linux-glibc-x86-64-v2/ ./cmd/swgp-go
           env GOAMD64=v3 go build -v -trimpath -ldflags '-s -w' -o package-linux-glibc-x86-64-v3/ ./cmd/swgp-go
