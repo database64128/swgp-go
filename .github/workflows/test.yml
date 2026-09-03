@@ -15,7 +15,7 @@ on:
       - 'docs/**'
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   test:
