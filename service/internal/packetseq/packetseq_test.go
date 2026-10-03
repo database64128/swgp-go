@@ -2,7 +2,6 @@ package packetseq
 
 import (
 	"crypto/rand"
-	"slices"
 	"testing"
 )
 
@@ -18,7 +17,8 @@ func TestSenderReceiver(t *testing.T) {
 	// Stamp ID 0.
 	s.Stamp(b)
 
-	b0 := slices.Clone(b)
+	b0 := make([]byte, 0, 1024)
+	b0 = append(b0, b...)
 
 	// Validate ID 0.
 	if err := r.Validate(b); err != nil {
@@ -55,7 +55,7 @@ func TestSenderReceiver(t *testing.T) {
 	}
 
 	// Validate bad checksum.
-	b0[0] = 0xFF
+	b0[len(b0)-1]++
 	if err := r.Validate(b0); err != ErrPacketChecksumMismatch {
 		t.Errorf("r.Validate(b0) = %v, want ErrPacketChecksumMismatch", err)
 	}
