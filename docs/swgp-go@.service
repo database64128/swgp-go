@@ -4,6 +4,7 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
+Type=notify
 ExecStart=/usr/bin/swgp-go -confPath /etc/swgp-go/%i.json -logNoTime
 
 [Install]

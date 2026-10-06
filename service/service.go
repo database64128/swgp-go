@@ -365,13 +365,25 @@ func (m *Manager) Run(ctx context.Context) error {
 		if err := s.Start(ctx); err != nil {
 			m.logger.Error("Failed to start service", s.SlogAttr(), tslog.Err(err))
 			errs = append(errs, newManagerError("start", s, err))
-			cancel()
 			break
 		}
 		runningSvcs = append(runningSvcs, s)
 	}
 
-	<-ctx.Done()
+	notifyStatus := newStatusNotifier(ctx)
+	var stopReason slog.Attr
+	if len(errs) == 0 {
+		m.logger.Info("Ready", slog.Int("services", len(m.services)))
+		notifyStatus.Ready()
+		<-ctx.Done()
+		stopReason = slog.Any("reason", context.Cause(ctx))
+	} else {
+		cancel()
+		stopReason = slog.String("reason", "one or more services failed to start")
+	}
+	m.logger.Info("Stopping", stopReason)
+	notifyStatus.Stopping()
+	notifyStatus.Close()
 
 	for _, s := range runningSvcs {
 		if err := s.Stop(); err != nil {

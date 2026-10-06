@@ -91,16 +91,10 @@ func main() {
 		return
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-
-	go func() {
-		sigCh := make(chan os.Signal, 1)
-		signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-		sig := <-sigCh
-		logger.Info("Received exit signal", slog.Any("signal", sig))
-		signal.Stop(sigCh)
-		cancel()
-	}()
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	_ = context.AfterFunc(ctx, func() {
+		stop()
+	})
 
 	if err = m.Run(ctx); err != nil {
 		os.Exit(1)
