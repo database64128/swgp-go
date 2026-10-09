@@ -2,6 +2,8 @@
 
 package conn
 
+const defaultUDPSocketBufferSize = 0
+
 func (UDPSocketOptions) buildSetFns() setFuncSlice {
 	return setFuncSlice{}
 }

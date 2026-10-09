@@ -6,6 +6,8 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+const defaultUDPSocketBufferSize = 8 * 1024 * 1024
+
 func setSendBufferSize(fd, size int) error {
 	_ = windows.SetsockoptInt(windows.Handle(fd), windows.SOL_SOCKET, windows.SO_SNDBUF, size)
 	return nil

@@ -333,14 +333,24 @@ func (opts UDPSocketOptions) socketConfig() UDPSocketConfig {
 	}
 }
 
-// DefaultUDPSocketBufferSize is the default send and receive buffer size of UDP sockets.
+// DefaultUDPSocketBufferSize is the default send and receive buffer sizes we set on UDP sockets.
 //
-// We use the same value of 7 MiB as wireguard-go:
-// https://github.com/WireGuard/wireguard-go/blob/12269c2761734b15625017d8565745096325392f/conn/controlfns.go#L13-L18
-//
-// Some platforms will silently clamp the value to other maximums, such as Linux clamping to net.core.{r,w}mem_max.
-// Other platforms may return an error, which we simply ignore.
-const DefaultUDPSocketBufferSize = 7 << 20
+//   - On Linux, the default is 4 MiB, which has been the default net.core.{r,w}mem_max since 6.18.
+//     setsockopt(2) doubles it to 8 MiB. Higher values are silently clamped to net.core.{r,w}mem_max.
+//   - On Windows, the default is 8 MiB. Windows allows setting socket buffer sizes to any int32 value.
+//   - On macOS, the default is 8 MiB, which is the default kern.ipc.maxsockbuf.
+//     SB_MAX_ADJUST was dropped in 2024, so the ~7 MiB cap no longer applies.
+//     Higher values are silently clamped to kern.ipc.maxsockbuf.
+//   - On FreeBSD, the default is 4 MiB, although sb_max_adj permits slightly above 7 MiB.
+//     Setting any higher value returns -ENOBUFS.
+//   - On OpenBSD, the default is 2 MiB, which is the default SB_MAX.
+//     Setting any higher value returns -ENOBUFS.
+//   - On DragonFly BSD, the default is 4 MiB, although it is silently clamped to sb_max_adj,
+//     which is slightly below 512 KiB.
+//   - On NetBSD, sb_max_adj is less than 256 KiB. Setting any value higher than that returns -ENOBUFS.
+//     So we don't set a default.
+//   - On other platforms, we don't know the behavior, so we don't set a default.
+const DefaultUDPSocketBufferSize = defaultUDPSocketBufferSize
 
 var (
 	// DefaultUDPServerSocketOptions is the default [UDPSocketOptions] for UDP servers.

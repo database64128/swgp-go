@@ -6,6 +6,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+const defaultUDPSocketBufferSize = 4 * 1024 * 1024
+
 func setFwmark(fd, fwmark int) error {
 	if err := unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_USER_COOKIE, fwmark); err != nil {
 		return fmt.Errorf("failed to set socket option SO_MARK: %w", err)

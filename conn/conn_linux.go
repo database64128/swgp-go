@@ -6,6 +6,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+const defaultUDPSocketBufferSize = 4 * 1024 * 1024
+
 func setSendBufferSize(fd, size int) error {
 	_ = unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_SNDBUF, size)
 	_ = unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_SNDBUFFORCE, size)

@@ -1,5 +1,7 @@
 package conn
 
+const defaultUDPSocketBufferSize = 8 * 1024 * 1024
+
 func (opts UDPSocketOptions) buildSetFns() setFuncSlice {
 	return setFuncSlice{}.
 		appendSetSendBufferSize(opts.SendBufferSize).
