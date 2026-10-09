@@ -496,6 +496,17 @@ func wgTunnelMTUFromMaxPacketSize(maxPacketSize int) int {
 	return (maxPacketSize - wireguard.DataPacketOverhead) & wireguard.DataPacketLengthMask
 }
 
+func socketBufferSize(opt int) int {
+	switch {
+	case opt == 0:
+		return conn.DefaultUDPSocketBufferSize
+	case opt < 0:
+		return 0
+	default:
+		return opt
+	}
+}
+
 func listenUDPNetworkForUnmappedRemoteAddr(remoteAddr netip.Addr) string {
 	if remoteAddr.Is4() {
 		return "udp4"

@@ -37,6 +37,22 @@ type ClientConfig struct {
 	// WgListenAddress specifies the address to bind the server socket to.
 	WgListenAddress string `json:"wgListen"`
 
+	// WgSocketSendBufferSize optionally specifies the send buffer size of the WireGuard-facing socket.
+	//
+	// If zero, [conn.DefaultUDPSocketBufferSize] is used.
+	// If negative, the send buffer size is never modified.
+	//
+	// Available on POSIX systems.
+	WgSocketSendBufferSize int `json:"wgSocketSendBufferSize,omitzero"`
+
+	// WgSocketReceiveBufferSize optionally specifies the receive buffer size of the WireGuard-facing socket.
+	//
+	// If zero, [conn.DefaultUDPSocketBufferSize] is used.
+	// If negative, the receive buffer size is never modified.
+	//
+	// Available on POSIX systems.
+	WgSocketReceiveBufferSize int `json:"wgSocketReceiveBufferSize,omitzero"`
+
 	// WgFwmark optionally specifies the server socket's fwmark on Linux, or user cookie on FreeBSD.
 	//
 	// Available on Linux and FreeBSD.
@@ -85,6 +101,22 @@ type ClientConfig struct {
 	//
 	// Only one of ProxyPSK and ProxyPSKFilePath can be specified.
 	ProxyPSKFilePath string `json:"proxyPSKFilePath,omitzero"`
+
+	// ProxySocketSendBufferSize optionally specifies the send buffer size of the proxy-facing socket.
+	//
+	// If zero, [conn.DefaultUDPSocketBufferSize] is used.
+	// If negative, the send buffer size is never modified.
+	//
+	// Available on POSIX systems.
+	ProxySocketSendBufferSize int `json:"proxySocketSendBufferSize,omitzero"`
+
+	// ProxySocketReceiveBufferSize optionally specifies the receive buffer size of the proxy-facing socket.
+	//
+	// If zero, [conn.DefaultUDPSocketBufferSize] is used.
+	// If negative, the receive buffer size is never modified.
+	//
+	// Available on POSIX systems.
+	ProxySocketReceiveBufferSize int `json:"proxySocketReceiveBufferSize,omitzero"`
 
 	// ProxyFwmark optionally specifies the proxy-facing socket's fwmark on Linux, or user cookie on FreeBSD.
 	//
@@ -237,8 +269,8 @@ func (cc *ClientConfig) Client(logger *tslog.Logger, socketConfigCache conn.UDPS
 		logger:                 logger,
 		proxyIfacePicker:       ifacePicker,
 		wgConnConfig: socketConfigCache.Get(conn.UDPSocketOptions{
-			SendBufferSize:           conn.DefaultUDPSocketBufferSize,
-			ReceiveBufferSize:        conn.DefaultUDPSocketBufferSize,
+			SendBufferSize:           socketBufferSize(cc.WgSocketSendBufferSize),
+			ReceiveBufferSize:        socketBufferSize(cc.WgSocketReceiveBufferSize),
 			Fwmark:                   cc.WgFwmark,
 			TrafficClass:             cc.WgTrafficClass,
 			PathMTUDiscovery:         cc.PathMTUDiscovery.UDP(),
@@ -247,8 +279,8 @@ func (cc *ClientConfig) Client(logger *tslog.Logger, socketConfigCache conn.UDPS
 			ReceivePacketInfo:        true,
 		}),
 		proxyConnConfig: socketConfigCache.Get(conn.UDPSocketOptions{
-			SendBufferSize:           conn.DefaultUDPSocketBufferSize,
-			ReceiveBufferSize:        conn.DefaultUDPSocketBufferSize,
+			SendBufferSize:           socketBufferSize(cc.ProxySocketSendBufferSize),
+			ReceiveBufferSize:        socketBufferSize(cc.ProxySocketReceiveBufferSize),
 			Fwmark:                   cc.ProxyFwmark,
 			TrafficClass:             cc.ProxyTrafficClass,
 			PathMTUDiscovery:         cc.PathMTUDiscovery.UDP(),
