@@ -282,14 +282,10 @@ func (m *PMTUDMode) UnmarshalText(text []byte) error {
 type UDPSocketOptions struct {
 	// SendBufferSize sets the send buffer size of the socket.
 	//
-	// This is best-effort and does not return an error if the operation fails.
-	//
 	// Available on POSIX systems.
 	SendBufferSize int
 
 	// ReceiveBufferSize sets the receive buffer size of the socket.
-	//
-	// This is best-effort and does not return an error if the operation fails.
 	//
 	// Available on POSIX systems.
 	ReceiveBufferSize int

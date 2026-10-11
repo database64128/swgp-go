@@ -9,12 +9,16 @@ import (
 const defaultUDPSocketBufferSize = 8 * 1024 * 1024
 
 func setSendBufferSize(fd, size int) error {
-	_ = windows.SetsockoptInt(windows.Handle(fd), windows.SOL_SOCKET, windows.SO_SNDBUF, size)
+	if err := windows.SetsockoptInt(windows.Handle(fd), windows.SOL_SOCKET, windows.SO_SNDBUF, size); err != nil {
+		return fmt.Errorf("failed to set socket option SO_SNDBUF to %d: %w", size, err)
+	}
 	return nil
 }
 
 func setRecvBufferSize(fd, size int) error {
-	_ = windows.SetsockoptInt(windows.Handle(fd), windows.SOL_SOCKET, windows.SO_RCVBUF, size)
+	if err := windows.SetsockoptInt(windows.Handle(fd), windows.SOL_SOCKET, windows.SO_RCVBUF, size); err != nil {
+		return fmt.Errorf("failed to set socket option SO_RCVBUF to %d: %w", size, err)
+	}
 	return nil
 }
 

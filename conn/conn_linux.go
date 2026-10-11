@@ -2,6 +2,7 @@ package conn
 
 import (
 	"fmt"
+	"sync"
 
 	"golang.org/x/sys/unix"
 )
@@ -9,15 +10,77 @@ import (
 const defaultUDPSocketBufferSize = 4 * 1024 * 1024
 
 func setSendBufferSize(fd, size int) error {
-	_ = unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_SNDBUF, size)
-	_ = unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_SNDBUFFORCE, size)
+	if err := unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_SNDBUF, size); err != nil {
+		return fmt.Errorf("failed to set socket option SO_SNDBUF to %d: %w", size, err)
+	}
+	if !hasLargerDefaultMaxSocketBufferSize() {
+		got, err := unix.GetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_SNDBUF)
+		if err != nil {
+			return fmt.Errorf("failed to get socket option SO_SNDBUF: %w", err)
+		}
+		if got < size {
+			_ = unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_SNDBUFFORCE, size)
+		}
+	}
 	return nil
 }
 
 func setRecvBufferSize(fd, size int) error {
-	_ = unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_RCVBUF, size)
-	_ = unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_RCVBUFFORCE, size)
+	if err := unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_RCVBUF, size); err != nil {
+		return fmt.Errorf("failed to set socket option SO_RCVBUF to %d: %w", size, err)
+	}
+	if !hasLargerDefaultMaxSocketBufferSize() {
+		got, err := unix.GetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_RCVBUF)
+		if err != nil {
+			return fmt.Errorf("failed to get socket option SO_RCVBUF: %w", err)
+		}
+		if got < size {
+			_ = unix.SetsockoptInt(fd, unix.SOL_SOCKET, unix.SO_RCVBUFFORCE, size)
+		}
+	}
 	return nil
+}
+
+var hasLargerDefaultMaxSocketBufferSize = sync.OnceValue(func() bool {
+	// https://github.com/torvalds/linux/commit/a6d4f25888b83b8300aef28d9ee22765c1cc9b34
+	// raised the default net.core.{r,w}mem_max to 4 MiB.
+	return kernelVersionGE(6, 18)
+})
+
+func kernelVersionGE(major, minor int) bool {
+	kMajor, kMinor := kernelVersion()
+	return kMajor > major || (kMajor == major && kMinor >= minor)
+}
+
+var kernelVersion = sync.OnceValues(func() (major, minor int) {
+	var uname unix.Utsname
+	if err := unix.Uname(&uname); err != nil {
+		return 0, 0
+	}
+	return parseUtsnameRelease(uname.Release)
+})
+
+func parseUtsnameRelease(release [65]byte) (major, minor int) {
+	var (
+		n       int
+		isMinor bool
+	)
+	for _, c := range release {
+		switch {
+		case '0' <= c && c <= '9':
+			n = (n * 10) + int(c-'0')
+		case c == '.':
+			if isMinor {
+				return major, n
+			}
+			isMinor = true
+			major = n
+			n = 0
+		default:
+			return 0, 0
+		}
+	}
+	return 0, 0
 }
 
 func setFwmark(fd, fwmark int) error {
