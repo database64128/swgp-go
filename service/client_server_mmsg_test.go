@@ -18,6 +18,7 @@ import (
 	"github.com/database64128/swgp-go/internal/wireguard"
 	"github.com/database64128/swgp-go/service/internal/packetseq"
 	"github.com/database64128/swgp-go/tslog"
+	"github.com/database64128/swgp-go/tslogtest"
 	"golang.org/x/sys/unix"
 )
 
@@ -26,8 +27,7 @@ func TestClientServerMmsgSendDrain(t *testing.T) {
 		t.Skip("Skipping client-server send/drain test in short mode")
 	}
 
-	logCfg := tslog.Config{Level: slog.LevelInfo}
-	logger := logCfg.NewLogger(t.Output())
+	logger := tslogtest.NewLogger(t)
 
 	for _, proxyModeCase := range proxyModeCases {
 		t.Run(proxyModeCase.name, func(t *testing.T) {

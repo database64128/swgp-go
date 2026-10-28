@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
@@ -21,8 +22,7 @@ var (
 	testConf   bool
 	logNoColor bool
 	logNoTime  bool
-	logKVPairs bool
-	logJSON    bool
+	logFormat  tslog.Format
 	logLevel   slog.Level
 	confPath   string
 )
@@ -33,8 +33,7 @@ func init() {
 	flag.BoolVar(&testConf, "testConf", false, "Test the configuration file and exit")
 	flag.BoolVar(&logNoColor, "logNoColor", false, "Disable colors in log output")
 	flag.BoolVar(&logNoTime, "logNoTime", false, "Disable timestamps in log output")
-	flag.BoolVar(&logKVPairs, "logKVPairs", false, "Use key=value pairs in log output")
-	flag.BoolVar(&logJSON, "logJSON", false, "Use JSON in log output")
+	flag.TextVar(&logFormat, "logFormat", tslog.FormatDefault, "Log format, one of: default, slog-text, slog-json, tint-text")
 	flag.TextVar(&logLevel, "logLevel", slog.LevelInfo, "Log level, one of: DEBUG, INFO, WARN, ERROR")
 	flag.StringVar(&confPath, "confPath", "config.json", "Path to the configuration file")
 }
@@ -51,13 +50,16 @@ func main() {
 	}
 
 	logCfg := tslog.Config{
-		Level:          logLevel,
-		NoColor:        logNoColor,
-		NoTime:         logNoTime,
-		UseTextHandler: logKVPairs,
-		UseJSONHandler: logJSON,
+		Level:   logLevel,
+		NoColor: logNoColor,
+		NoTime:  logNoTime,
+		Format:  logFormat,
 	}
-	logger := logCfg.NewLogger(os.Stderr)
+	logger, err := logCfg.NewLogger(os.Stderr)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to create logger: %v\n", err)
+		os.Exit(1)
+	}
 	logger.Info("swgp-go", slog.String("version", swgp.Version))
 
 	var sc service.Config
